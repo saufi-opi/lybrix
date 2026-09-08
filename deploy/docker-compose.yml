@@ -149,7 +149,7 @@ services:
 
   web:
     <<: *restart
-    build: {context: .., dockerfile: services/web/Dockerfile}
+    build: {context: ../services/web, dockerfile: Dockerfile}
     environment:
       API_URL: http://api:8000
     depends_on: [api]
