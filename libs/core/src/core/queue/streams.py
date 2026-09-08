@@ -29,10 +29,12 @@ CONSUMER_GROUP = "rag-workers"
 
 def make_redis(settings: Settings | None = None) -> Redis:
     s = settings or get_settings()
-    # protocol=2: redis-py 8.x RESP3 raises a spurious TimeoutError when a
-    # blocking XREADGROUP's block expires (reproduced: block=5000 → raise
-    # after 5.03s, socket_timeout=None); RESP2 returns [] cleanly.
-    return Redis.from_url(s.redis_url, decode_responses=True, protocol=2)
+    # socket_timeout MUST exceed the blocking XREADGROUP block (5s): redis-py
+    # 8.x sets the socket deadline to exactly the block duration when unset,
+    # so the client read races the server's empty reply and raises a spurious
+    # TimeoutError every idle poll (measured: raise at 5.03s; socket_timeout
+    # 10 → 2/2 clean; protocol 2 vs 3 is irrelevant — empirically verified).
+    return Redis.from_url(s.redis_url, decode_responses=True, socket_timeout=15)
 
 
 def ensure_streams(r: Redis, streams: tuple[str, ...] = ALL_STREAMS) -> None:
