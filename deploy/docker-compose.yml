@@ -197,7 +197,7 @@ services:
     command: ["python", "-m", "workers.embedder"]
     environment:
       <<: *ingest-env
-      EMBED_BATCH_SIZE: "32"
+      EMBED_BATCH_SIZE: "8"
       EMBED_CONCURRENCY: "4"
     mem_limit: 3g
     depends_on: [tei-ingest]
@@ -209,7 +209,7 @@ services:
     profiles: [ingest]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
-      --max-batch-tokens 16384
+      --max-batch-tokens 4096
       --max-concurrent-requests 128
       --dtype float32
       --pooling cls
