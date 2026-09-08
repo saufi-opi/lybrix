@@ -79,7 +79,7 @@ def record_job_error(
         message=str(exc),
         doc_id=job.get("doc_id"),
         shard_idx=job.get("idx"),
-        code=code.value if code is not None else None,
+        code=code.value if hasattr(code, "value") else code,
         worker_id=worker_id,
     )
 
