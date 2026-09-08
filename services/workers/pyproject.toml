@@ -9,6 +9,7 @@ dependencies = [
     "rag-chunking",
     "rag-embedding",
     "rag-retrieval",
+    "pikepdf>=9.0",
 ]
 
 [build-system]
