@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "argon2-cffi>=23.1",
+    "alembic>=1.15",
 ]
 
 [build-system]
