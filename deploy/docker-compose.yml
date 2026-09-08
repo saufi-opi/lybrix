@@ -1,0 +1,181 @@
+# deploy/docker-compose.yml — PRD §13.1
+name: rag-platform
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT: http://minio:9000
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  QDRANT_URL: http://qdrant:6333
+  TEI_INGEST_URL: http://tei-ingest:80
+  TEI_QUERY_URL: http://tei-query:80
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: rag
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag"]
+      interval: 10s
+      retries: 5
+    networks: [internal]
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+    networks: [internal]
+
+  minio:
+    <<: *restart
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+    networks: [internal]
+
+  qdrant:
+    <<: *restart
+    image: qdrant/qdrant:latest
+    volumes: [qdrantdata:/qdrant/storage]
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    networks: [internal, gpu]
+
+  tei-ingest:
+    <<: *restart
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9
+    command: >
+      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --max-batch-tokens 65536
+      --max-concurrent-requests 512
+      --dtype float16
+    volumes: [hfcache:/data]
+    networks: [gpu]
+
+  tei-query:
+    <<: *restart
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9
+    command: >
+      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --max-batch-tokens 8192
+      --max-concurrent-requests 64
+      --dtype float16
+    volumes: [hfcache:/data]
+    networks: [gpu]
+
+  api:
+    <<: *restart
+    build: {context: .., dockerfile: services/api/Dockerfile}
+    environment: {<<: *app-env}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/v1/system/health"]
+      interval: 15s
+    networks: [edge, internal, gpu]
+
+  worker-splitter:
+    <<: *restart
+    build: {context: .., dockerfile: services/workers/Dockerfile}
+    command: ["python", "-m", "workers.splitter"]
+    environment: {<<: *app-env, WORKER_PREFETCH: "1"}
+    mem_limit: 1g
+    tmpfs: ["/tmp:size=2g"]
+    depends_on: [postgres, redis, minio]
+    networks: [internal]
+
+  worker-parser:
+    <<: *restart
+    build: {context: .., dockerfile: services/workers/Dockerfile}
+    command: ["python", "-m", "workers.parser"]
+    environment:
+      <<: *app-env
+      WORKER_PREFETCH: "1"
+      WORKER_CONCURRENCY: "1"
+      PARSER_RECYCLE_AFTER: "10"
+      PARSER_SOFT_RSS_MB: "6144"
+      SHARD_LEASE_SECONDS: "600"
+      OMP_NUM_THREADS: "2"          # stops OpenMP from grabbing every core
+    mem_limit: 8g
+    cpus: 2.0
+    tmpfs: ["/tmp:size=2g"]
+    depends_on: [postgres, redis, minio]
+    networks: [internal]
+
+  worker-embedder:
+    <<: *restart
+    build: {context: .., dockerfile: services/workers/Dockerfile}
+    command: ["python", "-m", "workers.embedder"]
+    environment: {<<: *app-env, EMBED_BATCH_SIZE: "48", EMBED_CONCURRENCY: "6"}
+    mem_limit: 3g
+    depends_on: [postgres, redis, minio, qdrant]
+    networks: [internal, gpu]
+
+  worker-janitor:
+    <<: *restart
+    build: {context: .., dockerfile: services/workers/Dockerfile}
+    command: ["python", "-m", "workers.janitor"]
+    environment: {<<: *app-env, JANITOR_INTERVAL: "30"}
+    mem_limit: 512m
+    networks: [internal]
+
+  mcp:
+    <<: *restart
+    build: {context: .., dockerfile: services/mcp/Dockerfile}
+    environment: {<<: *app-env}
+    depends_on: [postgres, qdrant, tei-query]
+    networks: [edge, internal, gpu]
+
+  web:
+    <<: *restart
+    build: {context: .., dockerfile: services/web/Dockerfile}
+    environment:
+      API_URL: http://api:8000
+    depends_on: [api]
+    networks: [edge]
+
+  caddy:
+    <<: *restart
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on: [api, web, mcp]
+    networks: [edge]
+
+  migrate:
+    build: {context: .., dockerfile: services/api/Dockerfile}
+    command: ["alembic", "upgrade", "head"]
+    environment: {<<: *app-env}
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+    networks: [internal]
+
+volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}, caddydata: {}}
+networks:
+  edge: {}
+  internal: {internal: true}
+  gpu: {internal: true}

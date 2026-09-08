@@ -1,0 +1,14 @@
+# deploy/docker-compose.gpu.yml — PRD §13.2
+# Both TEI containers can share one GPU — bge-m3 at fp16 is ~2.5GB, so two
+# instances plus KV overhead fits comfortably in 24GB.
+services:
+  tei-ingest:
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+  tei-query:
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, device_ids: ["0"], capabilities: [gpu]}]

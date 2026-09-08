@@ -1,0 +1,22 @@
+# deploy/caddy/Caddyfile — PRD §11: Caddy terminates TLS, single ingress.
+# Only caddy publishes ports; every other service stays on internal networks.
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOST} {
+	# Admin UI
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# Control-plane API
+	handle /v1/* {
+		reverse_proxy api:8000
+	}
+
+	# MCP (streamable HTTP)
+	handle /mcp* {
+		reverse_proxy mcp:8430
+	}
+}
