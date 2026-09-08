@@ -1,44 +1,58 @@
-# rag-platform Makefile — PRD §12: "up, down, logs, migrate, seed, test, scale".
-# Nobody should have to remember the overlay ordering (§13.4).
+# rag-platform Makefile — split-host: core on VM2, ingest on nsspq.
+# Same .env on both hosts; profile picks the service set.
 
-COMPOSE_FILE := deploy/docker-compose.yml
-GPU ?= 1
-ifeq ($(GPU),1)
-  OVERLAYS := -f $(COMPOSE_FILE) -f deploy/docker-compose.gpu.yml
-else
-  OVERLAYS := -f $(COMPOSE_FILE)
-endif
-DEV_OVERLAY := $(OVERLAYS) -f deploy/docker-compose.dev.yml
+COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
+GPU ?= 0
 
-.PHONY: help up down dev logs migrate test lint scale drain seed ps
+.PHONY: help up-core up-ingest up down-core down-ingest down logs-core logs-ingest \
+        migrate test lint ps-core ps-ingest restart-core restart-ingest pull-core pull-ingest
 
 help:
-	@echo "make up        - start the stack (GPU=0 for CPU-only TEI)"
-	@echo "make dev       - start with dev overlay (hot reload, exposed ports)"
-	@echo "make down      - stop the stack"
-	@echo "make logs      - follow all logs"
-	@echo "make migrate   - run alembic migrations"
-	@echo "make test      - run the test suite"
-	@echo "make lint      - ruff check"
-	@echo "make scale N=8 - set worker-parser replicas (the throughput dial)"
-	@echo "make drain     - stop splitters+parsers, let in-flight shards finish"
+	@echo "core (VM2):    make up-core / down-core / logs-core / ps-core / pull-core"
+	@echo "ingest (nsspq): make up-ingest / down-ingest / logs-ingest / ps-ingest / pull-ingest"
+	@echo "first boot:    make migrate (on VM2, after up-core started postgres)"
 
-up:
-	docker compose $(OVERLAYS) run --rm migrate
-	docker compose $(OVERLAYS) up -d
+up-core:
+	$(COMPOSE) --profile core up -d
 
-dev:
-	docker compose $(DEV_OVERLAYS) run --rm migrate
-	docker compose $(DEV_OVERLAYS) up -d
-
-down:
-	docker compose $(OVERLAYS) down
-
-logs:
-	docker compose $(OVERLAYS) logs -f --tail=100
+up-ingest:
+	$(COMPOSE) --profile ingest up -d
 
 migrate:
-	docker compose $(OVERLAYS) run --rm migrate
+	$(COMPOSE) --profile core run --rm migrate
+
+down-core:
+	$(COMPOSE) --profile core down
+
+down-ingest:
+	$(COMPOSE) --profile ingest down
+
+up: up-core up-ingest
+down: down-core down-ingest
+
+logs-core:
+	$(COMPOSE) --profile core logs -f --tail=50
+
+logs-ingest:
+	$(COMPOSE) --profile ingest logs -f --tail=50
+
+ps-core:
+	$(COMPOSE) --profile core ps
+
+ps-ingest:
+	$(COMPOSE) --profile ingest ps
+
+pull-core:
+	$(COMPOSE) --profile core pull
+
+pull-ingest:
+	$(COMPOSE) --profile ingest pull
+
+restart-core:
+	$(COMPOSE) --profile core up -d --force-recreate
+
+restart-ingest:
+	$(COMPOSE) --profile ingest up -d --force-recreate
 
 test:
 	uv sync --locked --group dev --all-packages
@@ -46,14 +60,3 @@ test:
 
 lint:
 	uvx ruff check .
-
-scale:
-	docker compose $(OVERLAYS) up -d --no-deps --scale worker-parser=$(N) worker-parser
-
-drain:
-	docker compose $(OVERLAYS) stop worker-splitter
-	@echo "splitters stopped; parsers will finish in-flight shards."
-	@echo "Watch 'make logs' until doc.parse drains, then: make down"
-
-seed:
-	uv run python -m scripts.backfill data/seed --collection default

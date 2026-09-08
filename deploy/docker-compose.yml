@@ -1,13 +1,31 @@
-# deploy/docker-compose.yml — PRD §13.1
+# deploy/docker-compose.yml — split-host deployment per PRD §4.3/§13.4.
+#
+# Two planes, two hosts:
+#   core   (VM2, low RAM)  — postgres redis minio qdrant api mcp web migrate janitor
+#   ingest (nsspq, 31GB)   — worker-splitter worker-parser worker-embedder tei-ingest tei-query
+#
+# Cross-host wiring: stores publish ports ONLY on the host's tailscale IP
+# (RAG_TAILSCALE_IP), so ingest workers on nsspq reach them over tailscale
+# and nothing is exposed to the LAN/internet. Images are pulled from GHCR
+# (CI-built :edge) — never build on VM2.
 name: rag-platform
 
-x-app-env: &app-env
+x-core-store-env: &core-store-env
   DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag
   REDIS_URL: redis://redis:6379/0
-  S3_ENDPOINT: http://minio:9000
+  S3_ENDPOINT: ${S3_PUBLIC_ENDPOINT}   # tailscale URL so presigned PUTs work cross-host
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
   QDRANT_URL: http://qdrant:6333
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-ingest-env: &ingest-env
+  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@${RAG_TAILSCALE_IP}:5432/rag
+  REDIS_URL: redis://${RAG_TAILSCALE_IP}:6379/0
+  S3_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  QDRANT_URL: http://${RAG_TAILSCALE_IP}:6333
   TEI_INGEST_URL: http://tei-ingest:80
   TEI_QUERY_URL: http://tei-query:80
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -15,15 +33,20 @@ x-app-env: &app-env
 x-restart: &restart
   restart: unless-stopped
 
+# ---------------- core (VM2) ----------------
+
 services:
   postgres:
     <<: *restart
     image: postgres:16-alpine
+    profiles: [core]
     environment:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: rag
     volumes: [pgdata:/var/lib/postgresql/data]
+    ports:
+      - "${RAG_TAILSCALE_IP}:5432:5432"   # ingest plane on nsspq
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rag"]
       interval: 10s
@@ -33,8 +56,11 @@ services:
   redis:
     <<: *restart
     image: redis:7-alpine
+    profiles: [core]
     command: redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction
     volumes: [redisdata:/data]
+    ports:
+      - "${RAG_TAILSCALE_IP}:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -43,11 +69,14 @@ services:
   minio:
     <<: *restart
     image: minio/minio
-    command: server /data --console-address ":9001"
+    profiles: [core]
+    command: server /data --address ":9000"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes: [miniodata:/data]
+    ports:
+      - "${RAG_TAILSCALE_IP}:9000:9000"   # presigned PUTs from anywhere on tailnet
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
@@ -55,127 +84,161 @@ services:
 
   qdrant:
     <<: *restart
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.19.1
+    profiles: [core]
     volumes: [qdrantdata:/qdrant/storage]
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
-    networks: [internal, gpu]
-
-  tei-ingest:
-    <<: *restart
-    image: ghcr.io/huggingface/text-embeddings-inference:1.9
-    command: >
-      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
-      --max-batch-tokens 65536
-      --max-concurrent-requests 512
-      --dtype float16
-    volumes: [hfcache:/data]
-    networks: [gpu]
-
-  tei-query:
-    <<: *restart
-    image: ghcr.io/huggingface/text-embeddings-inference:1.9
-    command: >
-      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
-      --max-batch-tokens 8192
-      --max-concurrent-requests 64
-      --dtype float16
-    volumes: [hfcache:/data]
-    networks: [gpu]
+    ports:
+      - "${RAG_TAILSCALE_IP}:6333:6333"
+    networks: [internal]
 
   api:
     <<: *restart
-    build: {context: .., dockerfile: services/api/Dockerfile}
-    environment: {<<: *app-env}
+    image: ghcr.io/saufi-opi/rag-platform/api:edge
+    profiles: [core]
+    environment: {<<: *core-store-env}
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8000/v1/system/health"]
       interval: 15s
-    networks: [edge, internal, gpu]
-
-  worker-splitter:
-    <<: *restart
-    build: {context: .., dockerfile: services/workers/Dockerfile}
-    command: ["python", "-m", "workers.splitter"]
-    environment: {<<: *app-env, WORKER_PREFETCH: "1"}
-    mem_limit: 1g
-    tmpfs: ["/tmp:size=2g"]
-    depends_on: [postgres, redis, minio]
     networks: [internal]
-
-  worker-parser:
-    <<: *restart
-    build: {context: .., dockerfile: services/workers/Dockerfile}
-    command: ["python", "-m", "workers.parser"]
-    environment:
-      <<: *app-env
-      WORKER_PREFETCH: "1"
-      WORKER_CONCURRENCY: "1"
-      PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "6144"
-      SHARD_LEASE_SECONDS: "600"
-      OMP_NUM_THREADS: "2"          # stops OpenMP from grabbing every core
-    mem_limit: 8g
-    cpus: 2.0
-    tmpfs: ["/tmp:size=2g"]
-    depends_on: [postgres, redis, minio]
-    networks: [internal]
-
-  worker-embedder:
-    <<: *restart
-    build: {context: .., dockerfile: services/workers/Dockerfile}
-    command: ["python", "-m", "workers.embedder"]
-    environment: {<<: *app-env, EMBED_BATCH_SIZE: "48", EMBED_CONCURRENCY: "6"}
-    mem_limit: 3g
-    depends_on: [postgres, redis, minio, qdrant]
-    networks: [internal, gpu]
 
   worker-janitor:
     <<: *restart
-    build: {context: .., dockerfile: services/workers/Dockerfile}
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [core]
     command: ["python", "-m", "workers.janitor"]
-    environment: {<<: *app-env, JANITOR_INTERVAL: "30"}
+    environment:
+      <<: *core-store-env
+      JANITOR_INTERVAL: "30"
     mem_limit: 512m
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
     networks: [internal]
 
   mcp:
     <<: *restart
-    build: {context: .., dockerfile: services/mcp/Dockerfile}
-    environment: {<<: *app-env}
-    depends_on: [postgres, qdrant, tei-query]
-    networks: [edge, internal, gpu]
+    image: ghcr.io/saufi-opi/rag-platform/mcp:edge
+    profiles: [core]
+    environment:
+      <<: *core-store-env
+      TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on nsspq over tailscale
+      MCP_API_KEY: ${MCP_API_KEY}
+    depends_on: [postgres, qdrant]
+    ports:
+      - "${RAG_TAILSCALE_IP}:8430:8430"
+    networks: [internal]
 
   web:
     <<: *restart
-    build: {context: ../services/web, dockerfile: Dockerfile}
+    image: ghcr.io/saufi-opi/rag-platform/web:edge
+    profiles: [core]
     environment:
       API_URL: http://api:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     depends_on: [api]
-    networks: [edge]
-
-  caddy:
-    <<: *restart
-    image: caddy:2-alpine
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddydata:/data
-    depends_on: [api, web, mcp]
-    networks: [edge]
+    ports:
+      - "${RAG_TAILSCALE_IP}:3000:3000"
+    networks: [internal]
 
   migrate:
-    build: {context: .., dockerfile: services/api/Dockerfile}
+    image: ghcr.io/saufi-opi/rag-platform/api:edge
+    profiles: [core]
     command: ["alembic", "upgrade", "head"]
-    environment: {<<: *app-env}
+    environment: {<<: *core-store-env}
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
     networks: [internal]
 
-volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}, caddydata: {}}
+  # ------------- ingest (nsspq) -------------
+
+  worker-splitter:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.splitter"]
+    environment: {<<: *ingest-env}
+    mem_limit: 1g
+    tmpfs: ["/tmp:size=2g"]
+    networks: [ingestnet]
+
+  worker-parser:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.parser"]
+    environment:
+      <<: *ingest-env
+      WORKER_PREFETCH: "1"
+      WORKER_CONCURRENCY: "1"
+      PARSER_RECYCLE_AFTER: "10"
+      PARSER_SOFT_RSS_MB: "3072"
+      SHARD_LEASE_SECONDS: "900"
+      OMP_NUM_THREADS: "2"
+    mem_limit: 4g
+    cpus: 2.0
+    tmpfs: ["/tmp:size=2g"]
+    networks: [ingestnet]
+
+  worker-embedder:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.embedder"]
+    environment:
+      <<: *ingest-env
+      EMBED_BATCH_SIZE: "32"
+      EMBED_CONCURRENCY: "4"
+    mem_limit: 3g
+    depends_on: [tei-ingest]
+    networks: [ingestnet]
+
+  tei-ingest:
+    <<: *restart
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9   # CPU variant
+    profiles: [ingest]
+    command: >
+      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --max-batch-tokens 32768
+      --max-concurrent-requests 128
+      --dtype float32
+      --pooling cls
+    volumes: [hfcache:/data]
+    mem_limit: 6g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:80/health || exit 1"]
+      interval: 20s
+      retries: 20
+      start_period: 10m    # first boot downloads ~2.3GB from HF
+    networks: [ingestnet]
+
+  tei-query:
+    <<: *restart
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9
+    profiles: [ingest]
+    command: >
+      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --max-batch-tokens 8192
+      --max-concurrent-requests 64
+      --dtype float32
+      --pooling cls
+    volumes: [hfcache:/data]
+    mem_limit: 5g
+    ports:
+      - "${RAG_TAILSCALE_IP}:8082:80"   # mcp on VM2 reaches query embeddings here
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:80/health || exit 1"]
+      interval: 20s
+      retries: 20
+      start_period: 10m
+    networks: [ingestnet]
+
+volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}}
 networks:
-  edge: {}
-  internal: {internal: true}
-  gpu: {internal: true}
+  internal: {}
+  ingestnet: {}
