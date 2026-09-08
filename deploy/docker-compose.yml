@@ -22,7 +22,7 @@ x-core-store-env: &core-store-env
 x-ingest-env: &ingest-env
   DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@${RAG_TAILSCALE_IP}:5432/rag
   REDIS_URL: redis://${RAG_TAILSCALE_IP}:6379/0
-  S3_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+  S3_ENDPOINT: http://minio:9000   # minio runs on THIS host (ingestnet) — parser pulls full PDFs per shard
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
   QDRANT_URL: http://${RAG_TAILSCALE_IP}:6333
@@ -46,7 +46,7 @@ services:
       POSTGRES_DB: rag
     volumes: [pgdata:/var/lib/postgresql/data]
     ports:
-      - "${RAG_TAILSCALE_IP}:5432:5432"   # ingest plane on nsspq
+      - "${BIND_IP}:5432:5432"   # ingest plane on nsspq
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rag"]
       interval: 10s
@@ -60,7 +60,7 @@ services:
     command: redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction
     volumes: [redisdata:/data]
     ports:
-      - "${RAG_TAILSCALE_IP}:6379:6379"
+      - "${BIND_IP}:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -69,14 +69,17 @@ services:
   minio:
     <<: *restart
     image: minio/minio
-    profiles: [core]
+    # Runs on the INGEST host (next to the parser that downloads the full
+    # source PDF per shard). Small-plane users (api presign, backfill, web
+    # UI) reach it over tailscale — payloads there are tiny.
+    profiles: [ingest]
     command: server /data --address ":9000"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes: [miniodata:/data]
     ports:
-      - "${RAG_TAILSCALE_IP}:9000:9000"   # presigned PUTs from anywhere on tailnet
+      - "${BIND_IP}:9000:9000"   # presigned PUTs from any tailnet host
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
@@ -90,7 +93,7 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     ports:
-      - "${RAG_TAILSCALE_IP}:6333:6333"
+      - "${BIND_IP}:6333:6333"
     networks: [internal]
 
   api:
@@ -130,7 +133,7 @@ services:
       MCP_API_KEY: ${MCP_API_KEY}
     depends_on: [postgres, qdrant]
     ports:
-      - "${RAG_TAILSCALE_IP}:8430:8430"
+      - "${BIND_IP}:8430:8430"
     networks: [internal]
 
   web:
@@ -142,7 +145,7 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     depends_on: [api]
     ports:
-      - "${RAG_TAILSCALE_IP}:3000:3000"
+      - "${BIND_IP}:3000:3000"
     networks: [internal]
 
   migrate:
@@ -230,7 +233,7 @@ services:
     volumes: [hfcache:/data]
     mem_limit: 5g
     ports:
-      - "${RAG_TAILSCALE_IP}:8082:80"   # mcp on VM2 reaches query embeddings here
+      - "${BIND_IP}:8082:80"   # mcp on VM2 reaches query embeddings here
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:80/health || exit 1"]
       interval: 20s
