@@ -1,0 +1,34 @@
+[project]
+name = "rag-platform"
+version = "0.1.0"
+description = "Document Ingestion & Retrieval Platform — sharded Docling parsing, TEI embeddings, Qdrant hybrid retrieval, MCP server. Spec: docs/prd.md."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "ruff>=0.14",
+]
+
+# Root is a non-packaged workspace shell: all real code lives in libs/* and
+# services/*, which uv installs editable into the root venv on `uv sync`.
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["libs/*", "services/api", "services/workers", "services/mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501", # long lines allowed in docstrings/comments where wrapping hurts
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
