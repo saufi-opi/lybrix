@@ -41,6 +41,7 @@ migrate:
 	docker compose $(OVERLAYS) run --rm migrate
 
 test:
+	uv sync --locked --group dev --all-packages
 	uv run pytest tests/ -q
 
 lint:

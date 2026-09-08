@@ -28,8 +28,11 @@ jobs:
       # No live Postgres/Redis/Qdrant/MinIO in CI — the unit suite is
       # deliberately DB-free; stateful paths are exercised in staging
       # (docker compose up), mirroring books-rag's no-live-services stance.
+      # --all-packages: root is a non-packaged workspace shell; without it
+      # only the root project syncs and workspace members (core, parsing…)
+      # are missing from the venv.
       - name: Install dependencies
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --all-packages
 
       - name: Run tests
         run: uv run pytest tests/ -q
@@ -62,7 +65,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --all-packages
 
       # `--with pip-audit` overlays the tool onto the synced venv for this
       # run only — it never modifies pyproject.toml or uv.lock.
