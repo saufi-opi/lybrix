@@ -87,7 +87,12 @@ class Document(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     state: Mapped[DocState] = mapped_column(
-        SAEnum(DocState, name="doc_state", native_enum=True),
+        SAEnum(
+            DocState,
+            name="doc_state",
+            native_enum=True,
+            values_callable=lambda obj: [e.value for e in obj],  # store VALUES ('uploaded'), not NAMES
+        ),
         default=DocState.UPLOADED,
     )
     total_shards: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -120,7 +125,12 @@ class Shard(Base):
     page_start: Mapped[int] = mapped_column(Integer)  # inclusive, 1-based
     page_end: Mapped[int] = mapped_column(Integer)  # inclusive
     state: Mapped[ShardState] = mapped_column(
-        SAEnum(ShardState, name="shard_state", native_enum=True),
+        SAEnum(
+            ShardState,
+            name="shard_state",
+            native_enum=True,
+            values_callable=lambda obj: [e.value for e in obj],  # store VALUES, not NAMES
+        ),
         default=ShardState.PENDING,
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0)
