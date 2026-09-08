@@ -2,7 +2,7 @@
 name = "rag-chunking"
 version = "0.1.0"
 description = "Chunking over stitched docs: token-budgeted windows, heading paths, overlap dedupe (PRD §6.4)."
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "rag-core",
 ]

@@ -5,9 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
-
 from core.db.models import DocState
+from pydantic import BaseModel, Field
 
 
 class PresignRequest(BaseModel):

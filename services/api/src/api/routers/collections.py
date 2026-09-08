@@ -7,13 +7,13 @@ migration (scripts/reembed.py).
 
 from __future__ import annotations
 
+from core.db.models import Chunk, Collection, Document
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_session, require_scope
 from api.schemas import CollectionCreate
-from core.db.models import Collection, Chunk, Document
 
 router = APIRouter(prefix="/v1/collections", tags=["collections"])
 

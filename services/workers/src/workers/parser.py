@@ -24,7 +24,6 @@ from pathlib import Path
 
 from core.config import Settings, get_settings
 from core.db import repo
-from core.db.models import DocState
 from core.errors import ErrorCode, PlatformError
 from core.queue import contracts, streams
 from core.storage import s3

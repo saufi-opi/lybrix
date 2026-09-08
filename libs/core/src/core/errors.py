@@ -8,10 +8,10 @@ next to the retryability metadata rather than scattered across workers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Stage(str, Enum):
+class Stage(StrEnum):
     SPLIT = "split"
     PARSE = "parse"
     EMBED = "embed"
@@ -26,7 +26,7 @@ class ErrorSpec:
     ui_treatment: str
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     PDF_ENCRYPTED = "PDF_ENCRYPTED"
     PDF_CORRUPT = "PDF_CORRUPT"
     SHARD_OOM = "SHARD_OOM"

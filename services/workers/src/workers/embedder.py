@@ -10,18 +10,17 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+from chunking import chunk_markdown, drop_duplicate_neighbours
 from core.config import get_settings
 from core.db import repo
-from core.db.models import Chunk, DocState, Document
+from core.db.models import Chunk, DocState
 from core.errors import ErrorCode, PlatformError
 from core.queue import streams
 from core.storage import s3
-from chunking import drop_duplicate_neighbours, chunk_markdown
 from embedding.client import TeiClient
 from retrieval.qdrant import ensure_collection, upsert_chunks
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 
 def handle_embed(session: Session, job: dict) -> None:
@@ -84,7 +83,7 @@ def handle_embed(session: Session, job: dict) -> None:
         batches = [chunks[i : i + s.embed_batch_size] for i in range(0, len(chunks), s.embed_batch_size)]
         for group in batches:
             vectors = tei.embed([c.text for c in group])
-            for c, vec in zip(group, vectors):
+            for c, vec in zip(group, vectors, strict=True):
                 points.append(
                     {
                         "chunk_hash": c.chunk_hash,

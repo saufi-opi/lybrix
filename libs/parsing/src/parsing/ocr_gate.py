@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pypdfium2 as pdfium
-
 from core.config import Settings, get_settings
 
 

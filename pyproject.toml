@@ -3,7 +3,7 @@ name = "rag-platform"
 version = "0.1.0"
 description = "Document Ingestion & Retrieval Platform — sharded Docling parsing, TEI embeddings, Qdrant hybrid retrieval, MCP server. Spec: docs/prd.md."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = []
 
 [dependency-groups]
@@ -27,7 +27,8 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = [
-    "E501", # long lines allowed in docstrings/comments where wrapping hurts
+    "E501",  # long lines allowed in docstrings/comments where wrapping hurts
+    "B008",  # function-call-in-default-argument: FastAPI's Depends() pattern
 ]
 
 [tool.pytest.ini_options]

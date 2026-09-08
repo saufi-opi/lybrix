@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import uuid
 
+from core.config import get_settings
+from core.db import repo
+from core.db.models import DocState, Document, Shard
+from core.queue import contracts, streams
+from core.storage import s3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from redis import Redis
 from sqlalchemy import select
@@ -16,11 +21,6 @@ from sqlalchemy.orm import Session
 
 from api.deps import get_session, require_scope
 from api.schemas import CommitRequest, DocumentOut, PresignRequest, PresignResponse, RetryRequest
-from core.config import get_settings
-from core.db.models import DocState, Document, Shard
-from core.db import repo
-from core.queue import contracts, streams
-from core.storage import s3
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 

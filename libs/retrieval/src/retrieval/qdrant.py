@@ -11,10 +11,9 @@ import hashlib
 import uuid
 from typing import Any
 
+from core.config import Settings, get_settings
 from qdrant_client import QdrantClient
 from qdrant_client import models as qm
-
-from core.config import Settings, get_settings
 
 COLLECTION_NAME = "chunks"
 
@@ -52,15 +51,15 @@ def ensure_collection(client: QdrantClient, settings: Settings | None = None) ->
         payload_schema=None,  # payload indexes created below
     )
     # Payload indexes for filtered hybrid search (PRD §7.1 step 2).
+    import contextlib
+
     for field, kind in (
         ("doc_id", qm.PayloadSchemaType.KEYWORD),
         ("collection_id", qm.PayloadSchemaType.KEYWORD),
         ("page_start", qm.PayloadSchemaType.INTEGER),
     ):
-        try:
+        with contextlib.suppress(Exception):  # index already exists
             client.create_payload_index(name, field_name=field, field_schema=kind)
-        except Exception:
-            pass  # index already exists
     return name
 
 

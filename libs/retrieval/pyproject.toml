@@ -2,7 +2,7 @@
 name = "rag-retrieval"
 version = "0.1.0"
 description = "Qdrant collection mgmt, hybrid search with RRF fusion, hydration, rerank (PRD §5.3, §7.1)."
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "rag-core",
     "qdrant-client>=1.19",

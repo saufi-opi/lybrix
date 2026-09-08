@@ -39,7 +39,7 @@ def chunk_markdown(
     markdown: str,
     tokenizer=None,
     max_tokens: int = 512,
-    min_tokens: int = 40,
+    min_tokens: int = 0,
 ) -> list[Chunk]:
     """Chunk ``markdown`` into ordered, heading-path-labelled Chunks.
 
@@ -57,13 +57,11 @@ def chunk_markdown(
         window: list[str] = []
         window_tokens = 0
         for word in words:
-            candidate = f"{len(window) and ' ' or ''}{word}"
             t = count(word)
             if window and window_tokens + t > max_tokens:
                 _emit(chunks, heading_path, window, count)
                 window = []
                 window_tokens = 0
-                candidate = word
             window.append(word)
             window_tokens += t
         if window:

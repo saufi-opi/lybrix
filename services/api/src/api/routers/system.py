@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import httpx
+from core.config import get_settings
+from core.observability.metrics import metrics
+from core.queue import streams
 from fastapi import APIRouter, Depends
 from redis import Redis
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from api.deps import get_session
-from core.config import get_settings
-from core.observability.metrics import metrics
-from core.queue import streams
 
 router = APIRouter(prefix="/v1/system", tags=["system"])
 

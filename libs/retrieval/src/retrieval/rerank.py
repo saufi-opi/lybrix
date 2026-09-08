@@ -5,7 +5,6 @@ M3 wires it without touching callers."""
 from __future__ import annotations
 
 import httpx
-
 from embedding.client import TeiUnavailable
 
 

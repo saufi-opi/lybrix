@@ -7,18 +7,16 @@ to destroy p99 latency.
 
 from __future__ import annotations
 
-import hashlib
-
+from core.config import get_settings
+from embedding.client import TeiClient, TeiUnavailable
 from fastapi import APIRouter, Depends, HTTPException
 from qdrant_client import QdrantClient
+from retrieval import search as rs
+from retrieval.qdrant import COLLECTION_NAME
 from sqlalchemy.orm import Session
 
 from api.deps import get_session, require_scope
 from api.schemas import SearchRequest
-from core.config import get_settings
-from embedding.client import TeiClient, TeiUnavailable
-from retrieval import search as rs
-from retrieval.qdrant import COLLECTION_NAME
 
 router = APIRouter(prefix="/v1/search", tags=["search"])
 

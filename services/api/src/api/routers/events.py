@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 
+from core.db.models import Event
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_session
-from core.db.models import Event
 
 router = APIRouter(prefix="/v1/events", tags=["events"])
 

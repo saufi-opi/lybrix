@@ -13,11 +13,10 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 from core.db.session import session_scope
 from core.events import write_event
 from core.queue import contracts, streams
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

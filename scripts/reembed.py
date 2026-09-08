@@ -12,14 +12,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from qdrant_client import QdrantClient
-from sqlalchemy import select
-
 from core.config import get_settings
 from core.db.models import Chunk, Collection, Document
 from core.db.session import make_engine, make_session_factory
 from embedding.client import TeiClient
+from qdrant_client import QdrantClient
 from retrieval.qdrant import ensure_collection, upsert_chunks
+from sqlalchemy import select
 
 
 def reembed(collection_id: str, new_model: str, batch: int = 48) -> int:
@@ -68,7 +67,7 @@ def reembed(collection_id: str, new_model: str, batch: int = 48) -> int:
                             "page_end": c.page_end,
                             "heading_path": c.heading_path,
                         }
-                        for c, vec in zip(group, vectors)
+                        for c, vec in zip(group, vectors, strict=True)
                     ],
                     s,
                 )

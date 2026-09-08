@@ -40,7 +40,7 @@ def stitch(docs: list[dict[str, Any]]) -> dict[str, Any]:
         return {"texts": [], "markdown": ""}
 
     lines: list[str] = []
-    for i, doc in enumerate(docs):
+    for _i, doc in enumerate(docs):
         md = _markdown_of(doc)
         if not md:
             continue

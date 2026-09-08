@@ -10,10 +10,9 @@ from __future__ import annotations
 import hashlib
 import uuid
 
+from core.db.models import ApiKey
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from core.db.models import ApiKey
 
 VALID_SCOPES = {"search", "ingest", "admin"}
 

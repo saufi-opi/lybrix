@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-
-from sqlalchemy import select, update
+from datetime import UTC, datetime, timedelta
 
 from core.config import Settings, get_settings
 from core.db import repo
-from core.db.models import DocState, Document, Event, Shard
+from core.db.models import DocState, Document, Shard
 from core.db.session import session_scope
 from core.queue import streams
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ _TERMINAL_STATES = {DocState.READY, DocState.FAILED, DocState.ARCHIVED, DocState
 
 def janitor_pass(session, redis, settings: Settings) -> dict:
     """One sweep; returns counters for logging/metrics."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # 1. Reaper: expired running leases → pending (§6.6)
     requeued = repo.requeue_expired_leases(session)

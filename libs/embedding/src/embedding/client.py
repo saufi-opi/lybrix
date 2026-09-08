@@ -14,7 +14,6 @@ import random
 import time
 
 import httpx
-
 from core.errors import ErrorCode, PlatformError
 
 
@@ -53,7 +52,11 @@ class TeiClient:
 
     # -- public API ---------------------------------------------------------
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """POST /embed with jittered exponential backoff on 429/503."""
+        """POST /embed with jittered exponential backoff on 429/503.
+
+        Transport errors and 429/503 retry; any other 4xx is a caller bug
+        and fails fast without retry; the breaker aborts mid-ladder.
+        """
         if self._consecutive_failures >= self._breaker_threshold:
             raise CircuitOpen(self._consecutive_failures)
         if not texts:
@@ -66,20 +69,23 @@ class TeiClient:
                 resp = self._client.post(
                     f"{self._base_url}/embed", json={"inputs": texts}
                 )
+            except httpx.TransportError as exc:
+                self._record_failure()
+                last_exc = TeiUnavailable(f"transport error: {exc}")
+            else:
                 if resp.status_code in (429, 503):
+                    # _record_failure raises CircuitOpen once the threshold
+                    # is crossed — that aborts the ladder immediately.
                     self._record_failure()
                     last_exc = TeiUnavailable(f"TEI returned {resp.status_code}")
                 elif resp.status_code >= 400:
-                    # 4xx others are caller bugs — fail fast, no retry.
-                    raise TeiUnavailable(f"TEI returned {resp.status_code}: {resp.text[:200]}")
+                    # caller bug: fail fast, no retry
+                    raise TeiUnavailable(
+                        f"TEI returned {resp.status_code}: {resp.text[:200]}"
+                    )
                 else:
                     self._record_success()
                     return resp.json()
-            except (httpx.TransportError, TeiUnavailable) as exc:
-                if isinstance(exc, CircuitOpen):
-                    raise
-                self._record_failure()
-                last_exc = exc
 
             if attempt < self._max_retries:
                 time.sleep(delay + random.uniform(0, delay / 2))

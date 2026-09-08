@@ -8,7 +8,7 @@ bump — is testable in one place.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -72,7 +72,7 @@ def claim_shard(
     """Atomic claim (PRD §6.3 step 1): UPDATE ... WHERE state IN
     (pending, failed) RETURNING — skip if zero rows (someone else got it)."""
     s = settings or get_settings()
-    lease_until = datetime.now(timezone.utc) + timedelta(seconds=s.shard_lease_seconds)
+    lease_until = datetime.now(UTC) + timedelta(seconds=s.shard_lease_seconds)
     stmt = (
         update(Shard)
         .where(
@@ -146,7 +146,7 @@ def book_settled(doc: Document) -> bool:
 def requeue_expired_leases(session: Session) -> int:
     """Janitor Reaper (PRD §6.6): running shards whose lease expired go
     back to pending. This is how a docker kill on a parser recovers."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = (
         update(Shard)
         .where(Shard.state == ShardState.RUNNING, Shard.lease_until < now)

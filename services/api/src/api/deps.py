@@ -3,14 +3,12 @@ with scope enforcement (PRD §11)."""
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Generator
-
-from fastapi import Depends, Header, HTTPException, status
-from sqlalchemy.orm import Session
 
 from core.db.models import ApiKey
 from core.db.session import make_engine, make_session_factory
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.orm import Session
 
 _engine = None
 _factory = None

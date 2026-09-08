@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     @model_validator(mode="after")
-    def _validate(self) -> "Settings":
+    def _validate(self) -> Settings:
         if self.embed_batch_size < 1:
             raise SettingsError("EMBED_BATCH_SIZE must be >= 1")
         if self.search_default_top_k > self.search_max_top_k:

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.config import Settings, get_settings
-
 
 @dataclass(frozen=True)
 class ShardBound:
@@ -51,7 +49,7 @@ def fixed_bounds(
 def chapter_aligned_bounds(
     outline: list[tuple[int, str]],
     page_count: int,
-    settings: Settings | None = None,
+    shard_pages: int = 20,
 ) -> list[ShardBound]:
     """Snap shard boundaries to bookmarks (1-based target pages).
 
@@ -61,8 +59,7 @@ def chapter_aligned_bounds(
     rather than spill into the next chapter. A leading preamble (pages
     before the first bookmark) is sharded with fixed bounds too.
     """
-    s = settings or get_settings()
-    shard_pages = s.shard_pages
+    shard_pages = max(1, shard_pages)
     clean = sorted({(max(1, min(p, page_count)), t) for p, t in outline})
 
     bounds: list[ShardBound] = []

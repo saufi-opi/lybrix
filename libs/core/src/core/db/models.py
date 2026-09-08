@@ -15,7 +15,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Index,
     Integer,
@@ -25,6 +24,9 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import (
+    Enum as SAEnum,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -33,7 +35,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class DocState(str, enum.Enum):
+class DocState(enum.StrEnum):
     UPLOADED = "uploaded"
     SPLITTING = "splitting"
     PARSING = "parsing"
@@ -45,7 +47,7 @@ class DocState(str, enum.Enum):
     ARCHIVED = "archived"
 
 
-class ShardState(str, enum.Enum):
+class ShardState(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"

@@ -13,11 +13,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from qdrant_client import QdrantClient, models as qm
+from core.db.models import Chunk, Document
+from qdrant_client import QdrantClient
+from qdrant_client import models as qm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from core.db.models import Chunk, Document
 
 
 @dataclass(frozen=True)

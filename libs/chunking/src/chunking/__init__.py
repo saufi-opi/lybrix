@@ -5,7 +5,7 @@ token counting is pluggable (whitespace heuristic by default, a real
 HF tokenizer callable in production).
 """
 
-from .hybrid import Chunk, chunk_markdown
 from .dedupe import drop_duplicate_neighbours
+from .hybrid import Chunk, chunk_markdown
 
 __all__ = ["Chunk", "chunk_markdown", "drop_duplicate_neighbours"]

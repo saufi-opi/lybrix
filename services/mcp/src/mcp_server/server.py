@@ -20,11 +20,10 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import func, select
-
 from core.config import Settings, get_settings
 from core.db.models import Chunk, DocState, Document
 from core.db.session import make_engine, make_session_factory
+from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +45,8 @@ def search_impl(
 ) -> list[dict[str, Any]]:
     """Business logic behind the `search` tool — unit-testable without a
     running Qdrant: pass fakes for qdrant/embedder."""
-    from retrieval.search import hybrid_search
     from retrieval.qdrant import COLLECTION_NAME
+    from retrieval.search import hybrid_search
 
     limit = _clamp_top_k(settings, top_k)
     dense = query_embedder(f"search_query: {query}")

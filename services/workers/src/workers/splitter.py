@@ -21,7 +21,6 @@ from parsing.splitter import chapter_aligned_bounds, extract_outline, fixed_boun
 
 def handle_split(session, job: dict, redis) -> None:
     settings = get_settings()
-    from core.db.session import Session  # typing only
 
     doc_id = job["doc_id"]
     doc = repo.get_document(session, doc_id)
