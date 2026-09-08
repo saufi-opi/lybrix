@@ -77,6 +77,31 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             reenqueued += 1
 
     # 4. Stuck detector: same non-terminal state > STUCK_MINUTES → warn (§6.6)
+    # 4. Reclaim: PEL entries stranded by dead consumers (worker recreated /
+    #    crashed between XREADGROUP and XACK). XAUTOCLAIM them, re-add as
+    #    fresh stream entries, ack the old one. PG-lease idempotency makes
+    #    duplicates safe; min_idle must exceed the longest legit job
+    #    (SHARD_LEASE_SECONDS=900) so live parses are never double-claimed.
+    reclaimed = 0
+    for stream in streams.ALL_STREAMS:
+        try:
+            res = redis.xautoclaim(
+                stream, streams.CONSUMER_GROUP, "janitor-reclaim",
+                min_idle_time=20 * 60 * 1000, count=50,
+            )
+        except Exception:
+            continue
+        entries = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else []
+        for entry_id, fields in entries:
+            job = (fields or {}).get("job")
+            if not job:
+                redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
+                continue
+            redis.xadd(stream, {"job": job})
+            redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
+            reclaimed += 1
+
+    # 5. Stuck-document warning (§6.6) — informational only
     warned = 0
     cutoff = now - timedelta(minutes=settings.stuck_minutes)
     for doc in docs:
@@ -93,7 +118,7 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             )
             warned += 1
 
-    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "stuck_warned": warned}
+    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "reclaimed": reclaimed, "stuck_warned": warned}
 
 
 def write_evt(session, **kwargs) -> None:
