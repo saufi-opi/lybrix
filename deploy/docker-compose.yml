@@ -78,12 +78,12 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes: [miniodata:/data]
+    networks: [ingestnet]
     ports:
       - "${BIND_IP}:9000:9000"   # presigned PUTs from any tailnet host
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
-    networks: [internal]
 
   qdrant:
     <<: *restart
