@@ -12,9 +12,18 @@ ENV UV_COMPILE_BYTECODE=1 \
     OMP_NUM_THREADS=2 \
     PATH="/app/.venv/bin:$PATH"
 
-# libgomp1: required by the torch/onnxruntime wheels docling pulls in.
+# libgomp1: torch/onnxruntime wheels. The X11 set + glib + libgl: docling's
+# docling-ibm-models pulls opencv which dlopens libxcb/libX11/libXext at
+# runtime — without them conversion dies with "libxcb.so.1: cannot open
+# shared object file" (proven package set from remote-docling-worker image).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        libxcb1 \
+        libx11-6 \
+        libxext6 \
+        libglib2.0-0 \
+        libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

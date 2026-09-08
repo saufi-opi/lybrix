@@ -28,12 +28,12 @@ def handle_split(session, job: dict, redis) -> None:
         raise PlatformError(ErrorCode.PDF_CORRUPT, f"document {doc_id} vanished")
 
     # Idempotency: re-delivered split jobs (janitor requeue / PEL reclaim)
-    # must not re-insert shard rows. If shards exist this doc is already
-    # split — just advance UPLOADED → PARSING so the state machine converges.
+    # must not re-insert shard rows. Shards PK is (doc_id, idx) — probe with
+    # the composite key. If shards exist this doc is already split — just
+    # advance UPLOADED → PARSING so the state machine converges.
     from core.db.models import Shard
-    from sqlalchemy import select as _select
 
-    already = session.execute(_select(Shard.id).where(Shard.doc_id == doc_id).limit(1)).first()
+    already = session.get(Shard, (doc_id, 0))
     if already is not None:
         if doc.state == DocState.UPLOADED:
             repo.set_doc_state(session, doc_id, DocState.PARSING)
