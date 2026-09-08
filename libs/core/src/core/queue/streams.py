@@ -29,7 +29,10 @@ CONSUMER_GROUP = "rag-workers"
 
 def make_redis(settings: Settings | None = None) -> Redis:
     s = settings or get_settings()
-    return Redis.from_url(s.redis_url, decode_responses=True)
+    # protocol=2: redis-py 8.x RESP3 raises a spurious TimeoutError when a
+    # blocking XREADGROUP's block expires (reproduced: block=5000 → raise
+    # after 5.03s, socket_timeout=None); RESP2 returns [] cleanly.
+    return Redis.from_url(s.redis_url, decode_responses=True, protocol=2)
 
 
 def ensure_streams(r: Redis, streams: tuple[str, ...] = ALL_STREAMS) -> None:
