@@ -1,0 +1,137 @@
+"""Stage 3 — Embedder worker (PRD §6.4).
+
+Stitch shard JSONs → chunk the stitched doc → drop overlap duplicates →
+insert chunks into Postgres → embed in moderate batches against
+tei-ingest → upsert to Qdrant with chunk_hash as point id → set doc
+ready/partial with completeness.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from core.config import get_settings
+from core.db import repo
+from core.db.models import Chunk, DocState, Document
+from core.errors import ErrorCode, PlatformError
+from core.queue import streams
+from core.storage import s3
+from chunking import drop_duplicate_neighbours, chunk_markdown
+from embedding.client import TeiClient
+from retrieval.qdrant import ensure_collection, upsert_chunks
+
+
+def handle_embed(session: Session, job: dict) -> None:
+    s = get_settings()
+    doc_id = uuid.UUID(str(job["doc_id"]))
+    doc = repo.get_document(session, doc_id)
+    if doc is None:
+        raise PlatformError(ErrorCode.PDF_CORRUPT, f"document {doc_id} vanished")
+
+    from core.db.models import Shard
+
+    shard_rows = (
+        session.execute(
+            select(Shard).where(Shard.doc_id == doc_id, Shard.state == "done").order_by(Shard.idx)
+        )
+        .scalars()
+        .all()
+    )
+    if not shard_rows:
+        raise PlatformError(ErrorCode.PDF_CORRUPT, "no parsed shards to embed")
+
+    fetch: dict[int, str] = {}
+    s3c = s3.make_s3(s)
+    for shard in shard_rows:
+        key = s3.parsed_key(str(doc_id), shard.idx)
+        obj = s3c.get_object(Bucket=s.s3_bucket_parsed, Key=key)
+        fetch[shard.idx] = obj["Body"].read().decode("utf-8")
+
+    from parsing.stitch import load_shard_docs, stitch
+
+    stitched = stitch(load_shard_docs(fetch))
+    chunks = drop_duplicate_neighbours(
+        chunk_markdown(stitched.get("markdown", ""), max_tokens=512)
+    )
+
+    # idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING
+    for c in chunks:
+        session.add(
+            Chunk(
+                doc_id=doc_id,
+                chunk_hash=c.chunk_hash,
+                seq=c.seq,
+                text=c.text,
+                token_count=c.token_count,
+                page_start=c.page_start,
+                page_end=c.page_end,
+                heading_path=list(c.heading_path),
+            )
+        )
+    session.flush()
+
+    # Embed against tei-ingest in moderate batches; TEI's dynamic batcher
+    # packs them — our job is a steady stream of moderate requests (§6.4).
+    from qdrant_client import QdrantClient
+
+    qdrant = QdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key, timeout=10)
+    ensure_collection(qdrant, s)
+    points = []
+    with TeiClient(s.tei_ingest_url) as tei:
+        batches = [chunks[i : i + s.embed_batch_size] for i in range(0, len(chunks), s.embed_batch_size)]
+        for group in batches:
+            vectors = tei.embed([c.text for c in group])
+            for c, vec in zip(group, vectors):
+                points.append(
+                    {
+                        "chunk_hash": c.chunk_hash,
+                        "doc_id": doc_id,
+                        "collection_id": doc.collection_id or "",
+                        "vector": vec,
+                        "page_start": c.page_start,
+                        "page_end": c.page_end,
+                        "heading_path": list(c.heading_path),
+                    }
+                )
+    upsert_chunks(qdrant, points, s)
+
+    failed = doc.shards_failed
+    repo.set_doc_state(session, doc_id, DocState.PARTIAL if failed > 0 else DocState.READY)
+    session.flush()
+    doc = repo.get_document(session, doc_id)
+    doc.chunk_count = len(chunks)
+    if doc.total_shards:
+        doc.completeness = round((doc.total_shards - failed) / doc.total_shards, 4)
+
+
+def main() -> None:  # pragma: no cover - process entry
+    import logging
+
+    from core.db.session import make_engine, make_session_factory
+    from core.observability.logging import configure_logging
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    logging.getLogger(__name__).info("embedder worker starting")
+
+    factory = make_session_factory(make_engine(settings))
+    redis = streams.make_redis(settings)
+
+    from workers.runner import record_job_error, run_consumer
+
+    run_consumer(
+        stream=streams.STREAM_EMBED,
+        consumer=streams.new_consumer_name("embedder"),
+        handler=handle_embed,
+        session_factory=factory,
+        redis=redis,
+        prefetch=settings.worker_prefetch,
+        on_error=lambda s, j, e: record_job_error(s, j, e, stage="embed"),
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,26 @@
+[project]
+name = "rag-workers"
+version = "0.1.0"
+description = "Splitter, parser (Docling), embedder, janitor — one image, four entrypoints (PRD §12)."
+requires-python = ">=3.12"
+dependencies = [
+    "rag-core",
+    "rag-parsing",
+    "rag-chunking",
+    "rag-embedding",
+    "rag-retrieval",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workers"]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
+rag-parsing = { workspace = true }
+rag-chunking = { workspace = true }
+rag-embedding = { workspace = true }
+rag-retrieval = { workspace = true }
