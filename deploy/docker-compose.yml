@@ -101,6 +101,8 @@ services:
     image: ghcr.io/saufi-opi/rag-platform/api:edge
     profiles: [core]
     environment: {<<: *core-store-env}
+    ports:
+      - "${BIND_IP}:8000:8000"   # browser (NEXT_PUBLIC_API_URL) + backfill
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -151,7 +153,7 @@ services:
   migrate:
     image: ghcr.io/saufi-opi/rag-platform/api:edge
     profiles: [core]
-    command: ["alembic", "upgrade", "head"]
+    command: ["alembic", "-c", "/app/migrations/alembic.ini", "upgrade", "head"]
     environment: {<<: *core-store-env}
     depends_on:
       postgres: {condition: service_healthy}
@@ -203,7 +205,7 @@ services:
 
   tei-ingest:
     <<: *restart
-    image: ghcr.io/huggingface/text-embeddings-inference:1.9   # CPU variant
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9   # CPU variant
     profiles: [ingest]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
@@ -222,7 +224,7 @@ services:
 
   tei-query:
     <<: *restart
-    image: ghcr.io/huggingface/text-embeddings-inference:1.9
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     profiles: [ingest]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
