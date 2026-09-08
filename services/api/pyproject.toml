@@ -5,6 +5,7 @@ description = "Control-plane REST API: uploads/presign, documents, collections, 
 requires-python = ">=3.11"
 dependencies = [
     "rag-core",
+    "rag-embedding",
     "rag-retrieval",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
@@ -21,4 +22,5 @@ packages = ["src/api"]
 
 [tool.uv.sources]
 rag-core = { workspace = true }
+rag-embedding = { workspace = true }
 rag-retrieval = { workspace = true }

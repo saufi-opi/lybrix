@@ -29,6 +29,9 @@ RUN uv sync --frozen --no-dev --package rag-api --no-install-project
 
 COPY libs/ ./libs/
 COPY services/api/ ./services/api/
+# Alembic migrations + ini (script_location=%(here)s → resolves here) for the
+# one-shot `migrate` compose service; rag-core is already installed.
+COPY migrations/ ./migrations/
 RUN uv sync --frozen --no-dev --package rag-api
 
 # Non-root.
