@@ -1,0 +1,34 @@
+[project]
+name = "rag-parsing"
+version = "0.1.0"
+description = "Everything Docling: converter, chapter-aligned splitting, OCR gate, stitching, memory guard (PRD §6.2–6.3)."
+requires-python = ">=3.12"
+dependencies = [
+    "rag-core",
+    "docling==2.126.0",
+    "pypdfium2>=4.30",
+    # Explicit so tool.uv.sources can pin the index — docling pulls torch
+    # transitively otherwise, and plain-PyPI torch on linux now depends on
+    # the full NVIDIA CUDA toolkit (~3 GB) for no benefit on CPU-only
+    # parsing. Both must come from the same PyTorch release train (same
+    # footgun books-rag hit: torchvision::nms RuntimeError on mixed wheels).
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/parsing"]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

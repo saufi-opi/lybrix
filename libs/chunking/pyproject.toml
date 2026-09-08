@@ -1,0 +1,18 @@
+[project]
+name = "rag-chunking"
+version = "0.1.0"
+description = "Chunking over stitched docs: token-budgeted windows, heading paths, overlap dedupe (PRD §6.4)."
+requires-python = ">=3.12"
+dependencies = [
+    "rag-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chunking"]
+
+[tool.uv.sources]
+rag-core = { workspace = true }
