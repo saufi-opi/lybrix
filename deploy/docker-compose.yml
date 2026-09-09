@@ -206,7 +206,7 @@ services:
       # 8 cores / 3 parsers = 2 cores each matches OMP_NUM_THREADS=2.
       # Soft budget above sustained peak (3.0-3.1GB) with headroom; hard
       # limit 6g gives ~2x headroom before OOM-kill.
-      PARSER_SOFT_RSS_MB: "3584"
+      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
@@ -224,7 +224,7 @@ services:
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "3584"
+      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
@@ -242,7 +242,7 @@ services:
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "3584"
+      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
