@@ -83,7 +83,11 @@ def handle_embed(session: Session, job: dict) -> None:
     qdrant = QdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key, timeout=10)
     ensure_collection(qdrant, s)
     points = []
-    with TeiClient(s.tei_ingest_url) as tei:
+    with TeiClient(
+        s.tei_ingest_url,
+        backend=s.embed_backend,
+        model=s.embed_model,
+    ) as tei:
         batches = [chunks[i : i + s.embed_batch_size] for i in range(0, len(chunks), s.embed_batch_size)]
         for group in batches:
             vectors = tei.embed([c.text for c in group])

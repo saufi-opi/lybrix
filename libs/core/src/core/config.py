@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # -- embedding plane (PRD §4.3: ingest and query TEIs never share one)
     tei_ingest_url: str = Field(default="http://localhost:8081")
     tei_query_url: str = Field(default="http://localhost:8082")
+    embed_backend: str = Field(default="tei", description="tei or ollama")
     embed_model: str = Field(default="BAAI/bge-m3")
     embed_dim: int = Field(default=1024)
     embed_batch_size: int = Field(default=48)

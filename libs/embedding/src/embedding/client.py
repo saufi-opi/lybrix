@@ -34,8 +34,14 @@ class TeiClient:
         timeout_s: float = 60.0,
         max_retries: int = 5,
         breaker_threshold: int = 5,
+        backend: str = "tei",
+        model: str = "BAAI/bge-m3",
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._backend = backend.lower()
+        self._model = model
+        if self._backend not in {"tei", "ollama"}:
+            raise ValueError(f"unsupported EMBED_BACKEND: {backend}")
         self._client = httpx.Client(timeout=timeout_s)
         self._max_retries = max_retries
         self._breaker_threshold = breaker_threshold
@@ -66,9 +72,13 @@ class TeiClient:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             try:
-                resp = self._client.post(
-                    f"{self._base_url}/embed", json={"inputs": texts}
-                )
+                if self._backend == "ollama":
+                    endpoint = f"{self._base_url}/api/embed"
+                    payload = {"model": self._model, "input": texts}
+                else:
+                    endpoint = f"{self._base_url}/embed"
+                    payload = {"inputs": texts}
+                resp = self._client.post(endpoint, json=payload)
             except httpx.TransportError as exc:
                 self._record_failure()
                 last_exc = TeiUnavailable(f"transport error: {exc}")

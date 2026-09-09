@@ -84,8 +84,30 @@ def test_embed_normalizes_ollama_envelope_exactly():
 def test_embed_ollama_multi_input_order_preserved():
     payload = {"embeddings": [[0.1], [0.2], [0.3]]}
     c = _client([httpx.Response(200, json=payload)])
+    c._backend = "ollama"
+    c._model = "bge-m3"
     assert c.embed(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
     c.close()
+
+
+def test_ollama_uses_api_embed_and_model_payload():
+    class RoutedTransport(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/embed"
+            import json
+            body = json.loads(request.content)
+            assert body == {"model": "bge-m3", "input": ["hello"]}
+            return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    c = TeiClient("http://jetson:11434", backend="ollama", model="bge-m3")
+    c._client = httpx.Client(transport=RoutedTransport())
+    assert c.embed(["hello"]) == [[0.1, 0.2]]
+    c.close()
+
+
+def test_unsupported_embed_backend_rejected():
+    with pytest.raises(ValueError, match="unsupported EMBED_BACKEND"):
+        TeiClient("http://x", backend="invalid")
 
 
 

@@ -30,6 +30,8 @@ x-ingest-env: &ingest-env
   QDRANT_URL: http://${RAG_TAILSCALE_IP}:6333
   QDRANT_API_KEY: ${QDRANT_API_KEY}
   TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # set in .env to offload to GPU (ollama bge-m3 on Jetson, 1024-dim)
+  EMBED_BACKEND: ${EMBED_BACKEND:-tei}
+  EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
   TEI_QUERY_URL: http://tei-query:80
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
