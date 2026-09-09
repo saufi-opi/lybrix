@@ -8,16 +8,45 @@ docs/prd.md §6.3 and re-tested against the fixture corpus.
 
 from __future__ import annotations
 
+from core.config import Settings, get_settings
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import (
+    EasyOcrOptions,
+    PdfPipelineOptions,
+    RapidOcrOptions,
+    TesseractCliOcrOptions,
+    TesseractOcrOptions,
+)
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 
-def build_converter(need_ocr: bool) -> DocumentConverter:
+def build_converter(
+    need_ocr: bool,
+    settings: Settings | None = None,
+) -> DocumentConverter:
+    s = settings or get_settings()
+    import torch
+
+    torch.set_num_threads(s.parsing_torch_threads)
     opts = PdfPipelineOptions()
-    opts.do_ocr = need_ocr
-    opts.do_table_structure = True
+    opts.accelerator_options.num_threads = s.parsing_torch_threads
+    opts.accelerator_options.device = s.parsing_accelerator_device
+    engine = s.parsing_ocr_engine.lower()
+    if engine == "rapidocr":
+        opts.ocr_options = RapidOcrOptions(
+            lang=[s.parsing_ocr_lang], text_score=s.parsing_ocr_text_score
+        )
+    elif engine == "easyocr":
+        opts.ocr_options = EasyOcrOptions(lang=[s.parsing_ocr_lang])
+    elif engine == "tesseract":
+        opts.ocr_options = TesseractOcrOptions(lang=s.parsing_ocr_lang)
+    elif engine == "tesseract_cli":
+        opts.ocr_options = TesseractCliOcrOptions(lang=s.parsing_ocr_lang)
+    elif engine not in {"auto", "none"}:
+        raise ValueError(f"unsupported PARSING_OCR_ENGINE: {engine}")
+    opts.do_ocr = need_ocr and engine != "none"
+    opts.do_table_structure = s.parsing_do_table_structure
     opts.generate_page_images = False  # largest single memory win
     opts.generate_picture_images = False
     opts.images_scale = 1.0

@@ -57,6 +57,31 @@ class Settings(BaseSettings):
         default=20,
         description="Mean chars/page below this marks the shard needs_ocr.",
     )
+    parsing_ocr_engine: str = Field(
+        default="rapidocr",
+        description="OCR engine for text-layer-less shards: rapidocr|easyocr|tesseract|tesseract_cli|auto|none.",
+    )
+    parsing_ocr_lang: str = Field(
+        default="en",
+        description="OCR language code passed to the engine (rapidocr/easyocr).",
+    )
+    parsing_ocr_text_score: float = Field(
+        default=0.5,
+        description="Minimum OCR text confidence (rapidocr text_score).",
+    )
+    parsing_torch_threads: int = Field(
+        default=2,
+        ge=1,
+        description="torch.set_num_threads in parser processes.",
+    )
+    parsing_do_table_structure: bool = Field(
+        default=True,
+        description="Docling table structure extraction (disable on RAM-starved hosts).",
+    )
+    parsing_accelerator_device: str = Field(
+        default="cpu",
+        description="Docling accelerator: cpu|cuda|mps|auto.",
+    )
 
     # -- queues / backpressure (PRD §6.1)
     max_parse_backlog: int = Field(default=2000)
@@ -81,6 +106,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate(self) -> Settings:
+        valid_ocr = {"rapidocr", "easyocr", "tesseract", "tesseract_cli", "auto", "none"}
+        if self.parsing_ocr_engine.lower() not in valid_ocr:
+            raise SettingsError(
+                f"PARSING_OCR_ENGINE must be one of {sorted(valid_ocr)}"
+            )
         if self.embed_batch_size < 1:
             raise SettingsError("EMBED_BATCH_SIZE must be >= 1")
         if self.search_default_top_k > self.search_max_top_k:

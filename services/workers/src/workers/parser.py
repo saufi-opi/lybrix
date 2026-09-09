@@ -57,7 +57,7 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
 
     started = time.monotonic()
     verdict = needs_ocr(str(pdf_path), page_start, page_end, s)
-    converter = build_converter(need_ocr=verdict.needs_ocr)
+    converter = build_converter(need_ocr=verdict.needs_ocr, settings=s)
 
     result = converter.convert(
         str(pdf_path),
