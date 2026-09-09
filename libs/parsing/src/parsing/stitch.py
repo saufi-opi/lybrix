@@ -24,7 +24,13 @@ def load_shard_docs(
     """
     docs = []
     for idx in sorted(fetch):
-        docs.append(json.loads(fetch[idx]))
+        text = fetch[idx]
+        try:
+            docs.append(json.loads(text))
+        except json.JSONDecodeError:
+            # Parser uploads export_to_markdown() text directly — treat a
+            # non-JSON payload as the markdown body itself.
+            docs.append({"markdown": text})
     return docs
 
 

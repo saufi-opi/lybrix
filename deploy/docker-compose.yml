@@ -182,10 +182,10 @@ services:
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "3072"
+      PARSER_SOFT_RSS_MB: "3584"
       SHARD_LEASE_SECONDS: "900"
       OMP_NUM_THREADS: "2"
-    mem_limit: 4g
+    mem_limit: 6g
     cpus: 2.0
     tmpfs: ["/tmp:size=2g"]
     networks: [ingestnet]
