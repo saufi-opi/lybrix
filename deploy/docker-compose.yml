@@ -110,9 +110,16 @@ services:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:8000/v1/system/health"]
+      # image has no curl; use python (matches Dockerfile HEALTHCHECK)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/system/health', timeout=3).read()"]
       interval: 15s
-    networks: [internal]
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ragapi.rule=Host(`rag.loxikum.xyz`) && PathPrefix(`/v1`)"
+      - "traefik.http.routers.ragapi.entrypoints=web"
+      - "traefik.http.routers.ragapi.priority=200"
+      - "traefik.http.services.ragapi.loadbalancer.server.port=8000"
 
   worker-janitor:
     <<: *restart
@@ -147,11 +154,17 @@ services:
     profiles: [core]
     environment:
       API_URL: http://api:8000
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
     depends_on: [api]
     ports:
       - "${BIND_IP}:3000:3000"
-    networks: [internal]
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ragweb.rule=Host(`rag.loxikum.xyz`)"
+      - "traefik.http.routers.ragweb.entrypoints=web"
+      - "traefik.http.routers.ragweb.priority=100"
+      - "traefik.http.services.ragweb.loadbalancer.server.port=3000"
 
   migrate:
     image: ghcr.io/saufi-opi/rag-platform/api:edge
@@ -250,3 +263,7 @@ volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}}
 networks:
   internal: {}
   ingestnet: {}
+  # VM2's shared edge network (created by the main traefik stack). Ignored on
+  # the ingest host — only core-plane services reference it.
+  traefik-public:
+    external: true
