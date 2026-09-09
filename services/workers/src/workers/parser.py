@@ -61,7 +61,11 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
 
     result = converter.convert(
         str(pdf_path),
-        page_range=(page_start - 1, page_end),  # docling range is 0-based/half-open
+        # docling 2.126: page_range is 1-based INCLUSIVE — (start, end) both
+        # ≥1. Passing 0-based (page_start-1, ...) fails validation "start
+        # must be ≥ 1" on every first shard. Overlap semantics unchanged
+        # (page_end is inclusive both ways).
+        page_range=(page_start, page_end),
     )
     check_rss_budget(s)
     markdown = result.document.export_to_markdown()
