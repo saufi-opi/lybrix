@@ -17,6 +17,8 @@ x-core-store-env: &core-store-env
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
   QDRANT_URL: http://qdrant:6333
+  QDRANT_API_KEY: ${QDRANT_API_KEY}
+  TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on ingest host (nsspq) over tailscale
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
 x-ingest-env: &ingest-env
