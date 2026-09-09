@@ -32,6 +32,7 @@ x-ingest-env: &ingest-env
   TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # set in .env to offload to GPU (ollama bge-m3 on Jetson, 1024-dim)
   EMBED_BACKEND: ${EMBED_BACKEND:-tei}
   EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
+  TEI_MODEL: ${TEI_MODEL:-BAAI/bge-m3}
   TEI_QUERY_URL: http://tei-query:80
   EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
   EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-8}
@@ -283,7 +284,7 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9   # CPU fallback only
     profiles: [tei]
     command: >
-      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --model-id ${TEI_MODEL:-BAAI/bge-m3}
       --max-batch-tokens 8192
       --max-concurrent-requests 128
       --dtype float32
@@ -306,7 +307,7 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     profiles: [ingest]
     command: >
-      --model-id ${EMBED_MODEL:-BAAI/bge-m3}
+      --model-id ${TEI_MODEL:-BAAI/bge-m3}
       --max-batch-tokens 8192
       --max-concurrent-requests 64
       --dtype float32
