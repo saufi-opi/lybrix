@@ -85,7 +85,17 @@ class TeiClient:
                     )
                 else:
                     self._record_success()
-                    return resp.json()
+                    data = resp.json()
+                    # ollama (GPU offload backend) wraps vectors as
+                    # {"embeddings": [[...]]}; TEI returns bare [[...]].
+                    # Normalize both to bare [[...]] for callers.
+                    if isinstance(data, dict) and isinstance(data.get("embeddings"), list):
+                        return list(data["embeddings"])
+                    if isinstance(data, list):
+                        return list(data)
+                    raise TeiUnavailable(
+                        f"unexpected embedding response shape: {str(data)[:100]}"
+                    )
 
             if attempt < self._max_retries:
                 time.sleep(delay + random.uniform(0, delay / 2))
@@ -96,12 +106,16 @@ class TeiClient:
     def health(self) -> bool:
         try:
             resp = self._client.get(f"{self._base_url}/health")
+            if resp.status_code == 200:
+                return True
+            # ollama backend: no /health route; GET / answers 200.
+            resp = self._client.get(f"{self._base_url}/")
             return resp.status_code == 200
         except httpx.TransportError:
             return False
 
     # Context-manager protocol: callers use `with TeiClient(url) as tei:`
-    def __enter__(self) -> "TeiClient":
+    def __enter__(self) -> TeiClient:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

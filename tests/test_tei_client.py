@@ -74,3 +74,37 @@ def test_embed_4xx_fails_fast_without_retry():
     assert c._transport.calls == 1  # no retry on caller bug
     c.close()
 
+
+def test_embed_normalizes_ollama_envelope_exactly():
+    c = _client([httpx.Response(200, json={"embeddings": [[0.5, 0.6]]})])
+    assert c.embed(["hello"]) == [[0.5, 0.6]]
+    c.close()
+
+
+def test_embed_ollama_multi_input_order_preserved():
+    payload = {"embeddings": [[0.1], [0.2], [0.3]]}
+    c = _client([httpx.Response(200, json=payload)])
+    assert c.embed(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
+    c.close()
+
+
+
+def test_health_falls_back_to_root_for_ollama():
+    # ollama has no /health; GET / returns 200. health() must try /health
+    # first, then / so an ollama backend doesn't report "down".
+    class RoutedTransport(httpx.BaseTransport):
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            self.calls.append(request.url.path)
+            if request.url.path == "/":
+                return httpx.Response(200)
+            return httpx.Response(404)
+
+    t = RoutedTransport()
+    c = TeiClient("http://tei.test")
+    c._client = httpx.Client(transport=t)
+    assert c.health() is True
+    assert t.calls == ["/health", "/"]  # TEI first, ollama fallback
+    c.close()
