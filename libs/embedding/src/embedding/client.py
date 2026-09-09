@@ -100,5 +100,12 @@ class TeiClient:
         except httpx.TransportError:
             return False
 
+    # Context-manager protocol: callers use `with TeiClient(url) as tei:`
+    def __enter__(self) -> "TeiClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     def close(self) -> None:
         self._client.close()
