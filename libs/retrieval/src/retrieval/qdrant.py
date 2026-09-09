@@ -33,9 +33,10 @@ def ensure_collection(client: QdrantClient, settings: Settings | None = None) ->
 
     client.create_collection(
         collection_name=name,
-        vectors_config=qm.VectorsConfig(
-            {"dense": qm.VectorParams(size=s.embed_dim, distance=qm.Distance.COSINE)}
-        ),
+        # qdrant-client >= 1.10: VectorsConfig is a typing.Union — pass the
+        # named-vectors dict directly (instantiating the Union raises
+        # "Cannot instantiate typing.Union").
+        vectors_config={"dense": qm.VectorParams(size=s.embed_dim, distance=qm.Distance.COSINE)},
         sparse_vectors_config={
             "bm25": qm.SparseVectorParams(
                 index=qm.SparseIndexParams(on_disk=False, full_scan_threshold=1000)
