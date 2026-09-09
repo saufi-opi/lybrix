@@ -266,13 +266,14 @@ services:
       EMBED_BATCH_SIZE: "16"
       EMBED_CONCURRENCY: "8"
     mem_limit: 3g
-    depends_on: [tei-ingest]
+    # Embedding backend is selected by EMBED_BACKEND/TEI_INGEST_URL.
+    # Jetson offload must not start the memory-heavy local TEI service.
     networks: [ingestnet]
 
   tei-ingest:
     <<: *restart
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9   # CPU variant
-    profiles: [ingest]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9   # CPU fallback only
+    profiles: [tei]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
       --max-batch-tokens 8192
