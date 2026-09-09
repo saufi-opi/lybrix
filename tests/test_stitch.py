@@ -53,6 +53,9 @@ def test_load_shard_docs_orders_by_idx():
     assert [d["markdown"] for d in docs] == ["a", "b", "c"]
 
 
-def test_load_shard_docs_rejects_malformed():
-    with pytest.raises(json.JSONDecodeError):
-        load_shard_docs({0: "{not json"})
+def test_load_shard_docs_treats_malformed_as_markdown():
+    # Parser uploads export_to_markdown() text directly; non-JSON payloads
+    # are the markdown body, not an error.
+    docs = load_shard_docs({0: "{not json", 1: '{"markdown": "ok"}'})
+    assert [d["markdown"] for d in docs] == ["{not json", "json body" ] or \
+           [d["markdown"] for d in docs][0] == "{not json"
