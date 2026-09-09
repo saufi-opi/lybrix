@@ -56,20 +56,24 @@ def handle_embed(session: Session, job: dict) -> None:
         chunk_markdown(stitched.get("markdown", ""), max_tokens=512)
     )
 
-    # idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING
+    # Idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING
+    # (comments promised this; the bare add() actually raised UniqueViolation
+    # on any re-delivered embed job — janitor requeue / PEL reclaim make
+    # duplicate embed jobs normal, so the insert must be conflict-safe).
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
     for c in chunks:
-        session.add(
-            Chunk(
-                doc_id=doc_id,
-                chunk_hash=c.chunk_hash,
-                seq=c.seq,
-                text=c.text,
-                token_count=c.token_count,
-                page_start=c.page_start,
-                page_end=c.page_end,
-                heading_path=list(c.heading_path),
-            )
-        )
+        stmt = pg_insert(Chunk).values(
+            doc_id=doc_id,
+            chunk_hash=c.chunk_hash,
+            seq=c.seq,
+            text=c.text,
+            token_count=c.token_count,
+            page_start=c.page_start,
+            page_end=c.page_end,
+            heading_path=list(c.heading_path),
+        ).on_conflict_do_nothing(index_elements=["doc_id", "chunk_hash"])
+        session.execute(stmt)
     session.flush()
 
     # Embed against tei-ingest in moderate batches; TEI's dynamic batcher
