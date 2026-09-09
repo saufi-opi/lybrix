@@ -29,7 +29,7 @@ x-ingest-env: &ingest-env
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
   QDRANT_URL: http://${RAG_TAILSCALE_IP}:6333
   QDRANT_API_KEY: ${QDRANT_API_KEY}
-  TEI_INGEST_URL: http://tei-ingest:80
+  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # set in .env to offload to GPU (ollama bge-m3 on Jetson, 1024-dim)
   TEI_QUERY_URL: http://tei-query:80
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
@@ -278,7 +278,11 @@ services:
       --dtype float32
       --pooling cls
     volumes: [hfcache:/data]
-    mem_limit: 6g
+    # Tuned 2026-09-09: same fp32 load peak as tei-query (6.2-7.3GB); 6g
+    # OOM-crash-looped (854 restarts). 8g = headroom. Kept as warm fallback:
+    # when TEI_INGEST_URL in .env points at the Jetson GPU (ollama), this
+    # container idles but satisfies compose dependencies.
+    mem_limit: 8g
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:80/health || exit 1"]
       interval: 20s
@@ -297,7 +301,9 @@ services:
       --dtype float32
       --pooling cls
     volumes: [hfcache:/data]
-    mem_limit: 5g
+    # Tuned 2026-09-09: bge-m3 fp32 load peaks 6.2-7.3GB; 5g OOM-crash-looped
+    # (861 restarts). 8g covers the peak with headroom; host has 31G.
+    mem_limit: 8g
     ports:
       - "${BIND_IP}:8082:80"   # mcp on VM2 reaches query embeddings here
     healthcheck:
