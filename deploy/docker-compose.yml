@@ -33,6 +33,16 @@ x-ingest-env: &ingest-env
   EMBED_BACKEND: ${EMBED_BACKEND:-tei}
   EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
   TEI_QUERY_URL: http://tei-query:80
+  EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
+  EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-8}
+  PARSING_OCR_ENGINE: ${PARSING_OCR_ENGINE:-rapidocr}
+  PARSING_OCR_LANG: ${PARSING_OCR_LANG:-en}
+  PARSING_OCR_TEXT_SCORE: ${PARSING_OCR_TEXT_SCORE:-0.5}
+  PARSING_TORCH_THREADS: ${PARSING_TORCH_THREADS:-2}
+  PARSING_ACCELERATOR_DEVICE: ${PARSING_ACCELERATOR_DEVICE:-cpu}
+  PARSING_DO_TABLE_STRUCTURE: ${PARSING_DO_TABLE_STRUCTURE:-true}
+  WORKER_PREFETCH: ${WORKER_PREFETCH:-1}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
 x-restart: &restart
@@ -263,8 +273,6 @@ services:
       # parsers run; EMBED_CONCURRENCY=4 matches TEI warm throughput
       # (~800% CPU, batch 8 → ~1.1s/req). 8 keeps the queue flat without
       # starving the parser's 6 remaining cores.
-      EMBED_BATCH_SIZE: "16"
-      EMBED_CONCURRENCY: "8"
     mem_limit: 3g
     # Embedding backend is selected by EMBED_BACKEND/TEI_INGEST_URL.
     # Jetson offload must not start the memory-heavy local TEI service.
