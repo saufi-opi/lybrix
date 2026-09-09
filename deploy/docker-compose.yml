@@ -103,7 +103,11 @@ services:
     <<: *restart
     image: ghcr.io/saufi-opi/rag-platform/api:edge
     profiles: [core]
-    environment: {<<: *core-store-env}
+    environment:
+      <<: *core-store-env
+      # 900-book corpus ≈ 13k shard jobs; default 2000 cap would 429 mid-run.
+      # Redis RAM cost trivial (~300B/job ≈ 4MB total).
+      MAX_PARSE_BACKLOG: "20000"
     ports:
       - "${BIND_IP}:8000:8000"   # browser (NEXT_PUBLIC_API_URL) + backfill
     depends_on:
@@ -198,11 +202,51 @@ services:
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
+      # Tuned 2026-09-09: 2GB/replica × 3 replicas measured (6.2GiB total),
+      # 8 cores / 3 parsers = 2 cores each matches OMP_NUM_THREADS=2.
+      # Soft budget above sustained peak (3.0-3.1GB) with headroom; hard
+      # limit 6g gives ~2x headroom before OOM-kill.
       PARSER_SOFT_RSS_MB: "3584"
       SHARD_LEASE_SECONDS: "900"
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
-    cpus: 2.0
+    cpus: 2.6
+    tmpfs: ["/tmp:size=2g"]
+    networks: [ingestnet]
+
+  worker-parser-2:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.parser"]
+    environment:
+      <<: *ingest-env
+      WORKER_PREFETCH: "1"
+      WORKER_CONCURRENCY: "1"
+      PARSER_RECYCLE_AFTER: "10"
+      PARSER_SOFT_RSS_MB: "3584"
+      SHARD_LEASE_SECONDS: "900"
+      OMP_NUM_THREADS: "2"
+    mem_limit: 6g
+    cpus: 2.6
+    tmpfs: ["/tmp:size=2g"]
+    networks: [ingestnet]
+
+  worker-parser-3:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.parser"]
+    environment:
+      <<: *ingest-env
+      WORKER_PREFETCH: "1"
+      WORKER_CONCURRENCY: "1"
+      PARSER_RECYCLE_AFTER: "10"
+      PARSER_SOFT_RSS_MB: "3584"
+      SHARD_LEASE_SECONDS: "900"
+      OMP_NUM_THREADS: "2"
+    mem_limit: 6g
+    cpus: 2.6
     tmpfs: ["/tmp:size=2g"]
     networks: [ingestnet]
 
@@ -213,8 +257,12 @@ services:
     command: ["python", "-m", "workers.embedder"]
     environment:
       <<: *ingest-env
+      # Tuned 2026-09-09: parser produces ~3-6 chunks/12s/shard while 3
+      # parsers run; EMBED_CONCURRENCY=4 matches TEI warm throughput
+      # (~800% CPU, batch 8 → ~1.1s/req). 8 keeps the queue flat without
+      # starving the parser's 6 remaining cores.
       EMBED_BATCH_SIZE: "8"
-      EMBED_CONCURRENCY: "4"
+      EMBED_CONCURRENCY: "8"
     mem_limit: 3g
     depends_on: [tei-ingest]
     networks: [ingestnet]
