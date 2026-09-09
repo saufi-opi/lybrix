@@ -314,8 +314,8 @@ services:
       --pooling cls
     volumes: [hfcache:/data]
     # Tuned 2026-09-09: bge-m3 fp32 load peaks 6.2-7.3GB; 5g OOM-crash-looped
-    # (861 restarts). 8g covers the peak with headroom; host has 31G.
-    mem_limit: 8g
+    # (861 restarts). 10g covers warm-up; host has 31G and parsers are bounded.
+    mem_limit: 10g
     ports:
       - "${BIND_IP}:8082:80"   # mcp on VM2 reaches query embeddings here
     healthcheck:
