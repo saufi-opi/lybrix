@@ -261,7 +261,7 @@ services:
       # parsers run; EMBED_CONCURRENCY=4 matches TEI warm throughput
       # (~800% CPU, batch 8 → ~1.1s/req). 8 keeps the queue flat without
       # starving the parser's 6 remaining cores.
-      EMBED_BATCH_SIZE: "8"
+      EMBED_BATCH_SIZE: "16"
       EMBED_CONCURRENCY: "8"
     mem_limit: 3g
     depends_on: [tei-ingest]
@@ -273,7 +273,7 @@ services:
     profiles: [ingest]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
-      --max-batch-tokens 4096
+      --max-batch-tokens 8192
       --max-concurrent-requests 128
       --dtype float32
       --pooling cls
@@ -292,7 +292,7 @@ services:
     profiles: [ingest]
     command: >
       --model-id ${EMBED_MODEL:-BAAI/bge-m3}
-      --max-batch-tokens 4096
+      --max-batch-tokens 8192
       --max-concurrent-requests 64
       --dtype float32
       --pooling cls
