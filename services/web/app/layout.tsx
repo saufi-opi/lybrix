@@ -1,26 +1,45 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+import { ActiveNav } from "@/components/active-nav";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "rag-platform admin",
   description: "Document Ingestion & Retrieval Platform — admin UI (PRD §8)",
 };
 
+const NAV = [
+  { href: "/", label: "Dashboard" },
+  { href: "/pipeline", label: "Pipeline" },
+  { href: "/documents", label: "Documents" },
+  { href: "/upload", label: "Upload" },
+  { href: "/logs", label: "Logs" },
+  { href: "/collections", label: "Collections" },
+  { href: "/settings", label: "Settings" },
+];
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body>
-        <nav className="topnav">
-          <a href="/">Dashboard</a>
-          <a href="/documents">Documents</a>
-          <a href="/upload">Upload</a>
-          <a href="/logs">Logs</a>
-          <a href="/collections">Collections</a>
-          <a href="/settings">Settings</a>
-        </nav>
-        <main className="container">{children}</main>
+        <div className="shell">
+          <nav className="sidebar">
+            <span className="brand">
+              rag-platform
+              <small>ingestion &amp; retrieval</small>
+            </span>
+            <ActiveNav items={NAV} />
+          </nav>
+          <main className="container">{children}</main>
+        </div>
       </body>
     </html>
   );
