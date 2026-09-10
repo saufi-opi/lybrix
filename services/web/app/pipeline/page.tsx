@@ -57,16 +57,19 @@ function LaneRow({ name, lane }: { name: string; lane: Lane }) {
 }
 
 /** Visual queue lane between pipeline stages (mockup v2 style). */
-function Lane({ name, lane, sample }: { name: string; lane?: Lane; sample: string }) {
+function Lane({ name, lane }: { name: string; lane?: Lane }) {
   if (!lane) return <div className="lane" />;
+  // Short labels — the lane-box is narrow; pills must fit 2 lines max.
   const pills: { cls: string; label: string }[] = [];
   if (lane.in_flight && lane.in_flight > 0) {
-    pills.push({ cls: "r", label: `${lane.in_flight} in-flight` });
+    pills.push({ cls: "r", label: `${lane.in_flight} run` });
   }
   if (lane.stale > 0) {
-    pills.push({ cls: "s", label: `⏳ ${lane.stale} stale` });
+    pills.push({ cls: "s", label: `${lane.stale} stale` });
   }
-  pills.push({ cls: "w", label: `+${(lane.waiting ?? 0).toLocaleString()} waiting` });
+  if (lane.waiting) {
+    pills.push({ cls: "w", label: `+${lane.waiting.toLocaleString()}` });
+  }
   return (
     <div className="lane">
       <div className="lane-hd">
@@ -74,7 +77,7 @@ function Lane({ name, lane, sample }: { name: string; lane?: Lane; sample: strin
         <span className="n">{lane.waiting?.toLocaleString() ?? "—"}</span>
       </div>
       <div className="lane-box">
-        {pills.slice(0, 3).map((p, i) => (
+        {pills.map((p, i) => (
           <span key={i} className={`pill ${p.cls}`}>{p.label}</span>
         ))}
       </div>

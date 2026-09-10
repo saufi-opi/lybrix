@@ -383,9 +383,9 @@ textarea:focus-visible {
   border-radius: var(--radius-brand);
   padding: 6px 8px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
-  overflow: hidden;
+  gap: 4px;
   min-height: 40px;
 }
 
