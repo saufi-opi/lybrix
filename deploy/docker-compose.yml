@@ -267,6 +267,24 @@ services:
     # still had ample disk space.
     networks: [ingestnet]
 
+  worker-parser-4:
+    <<: *restart
+    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    profiles: [ingest]
+    command: ["python", "-m", "workers.parser"]
+    environment:
+      <<: *ingest-env
+      WORKER_PREFETCH: "1"
+      WORKER_CONCURRENCY: "1"
+      PARSER_RECYCLE_AFTER: "10"
+      PARSER_SOFT_RSS_MB: "4608"
+      SHARD_LEASE_SECONDS: "900"
+      OMP_NUM_THREADS: "1"
+    mem_limit: 6g
+    cpus: 1.5
+    # Use host-backed /tmp for large PDFs.
+    networks: [ingestnet]
+
   worker-embedder:
     <<: *restart
     image: ghcr.io/saufi-opi/rag-platform/workers:edge
