@@ -225,7 +225,8 @@ services:
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
     cpus: 2.6
-    tmpfs: ["/tmp:size=2g"]
+    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
+    # still had ample disk space.
     networks: [ingestnet]
 
   worker-parser-2:
@@ -243,7 +244,8 @@ services:
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
     cpus: 2.6
-    tmpfs: ["/tmp:size=2g"]
+    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
+    # still had ample disk space.
     networks: [ingestnet]
 
   worker-parser-3:
@@ -261,7 +263,8 @@ services:
       OMP_NUM_THREADS: "2"
     mem_limit: 6g
     cpus: 2.6
-    tmpfs: ["/tmp:size=2g"]
+    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
+    # still had ample disk space.
     networks: [ingestnet]
 
   worker-embedder:
