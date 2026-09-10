@@ -16,6 +16,7 @@ interface Pipeline {
   components: Record<string, string>;
   lanes: Record<string, Lane>;
   counts: Record<string, number>;
+  qdrant_points: number | null;
   in_flight_parse: {
     title: string | null;
     idx: number;
@@ -52,6 +53,33 @@ function LaneRow({ name, lane }: { name: string; lane: Lane }) {
       <td className={lane.stale > 0 ? "pwarn" : "muted"}>{lane.stale}</td>
       <td>{lane.consumers}</td>
     </tr>
+  );
+}
+
+/** Visual queue lane between pipeline stages (mockup v2 style). */
+function Lane({ name, lane, sample }: { name: string; lane?: Lane; sample: string }) {
+  if (!lane) return <div className="lane" />;
+  const pills: { cls: string; label: string }[] = [];
+  if (lane.in_flight && lane.in_flight > 0) {
+    pills.push({ cls: "r", label: `${lane.in_flight} in-flight` });
+  }
+  if (lane.stale > 0) {
+    pills.push({ cls: "s", label: `⏳ ${lane.stale} stale` });
+  }
+  pills.push({ cls: "w", label: `+${(lane.waiting ?? 0).toLocaleString()} waiting` });
+  return (
+    <div className="lane">
+      <div className="lane-hd">
+        <span className="nm">{name}</span>
+        <span className="n">{lane.waiting?.toLocaleString() ?? "—"}</span>
+      </div>
+      <div className="lane-box">
+        {pills.slice(0, 3).map((p, i) => (
+          <span key={i} className={`pill ${p.cls}`}>{p.label}</span>
+        ))}
+      </div>
+      <div className="wire" />
+    </div>
   );
 }
 
@@ -97,6 +125,8 @@ export default function PipelinePage() {
       : null;
   const readyPct =
     c.docs_total ? Math.round(((c.docs_ready ?? 0) / c.docs_total) * 100) : 0;
+  const inFlightParse = data.lanes["doc.parse"]?.in_flight ?? 0;
+  const qdrantPoints = data.qdrant_points;
 
   return (
     <>
@@ -155,6 +185,36 @@ export default function PipelinePage() {
               <Dot state={state} /> {COMP_LABELS[name] ?? name}
             </span>
           ))}
+        </div>
+      </div>
+
+      {/* ===== visual pipeline flow: stage → lane → stage ===== */}
+      <div className="panel" style={{ marginBottom: "1rem", overflowX: "auto" }}>
+        <h3>Flow</h3>
+        <div className="flow">
+          <div className="stage">
+            <h4><span className="stepno">1</span> Split</h4>
+            <div className="big">{c.docs_parsing + c.docs_ready} docs</div>
+            <div className="sm">splitter · nssp</div>
+          </div>
+          <Lane name="doc.split" lane={data.lanes["doc.split"]} sample="docs" />
+          <div className="stage">
+            <h4><span className="stepno">2</span> Parse ×{data.lanes["doc.parse"]?.consumers ?? "—"}</h4>
+            <div className="big">{inFlightParse} active</div>
+            <div className="sm">nssp×3 + nsschat×3<br/>avg 124s/shard</div>
+          </div>
+          <Lane name="doc.parse" lane={data.lanes["doc.parse"]} sample="shards" />
+          <div className="stage">
+            <h4><span className="stepno">3</span> Embed</h4>
+            <div className="big">{data.components.embed_backend === "ok" ? "jetson gpu" : "embed down"}</div>
+            <div className="sm">ollama bge-m3</div>
+          </div>
+          <Lane name="doc.embed" lane={data.lanes["doc.embed"]} sample="docs" />
+          <div className="stage">
+            <h4><span className="stepno">4</span> Index</h4>
+            <div className="big">{qdrantPoints ?? "—"} pts</div>
+            <div className="sm">qdrant chunks</div>
+          </div>
         </div>
       </div>
 

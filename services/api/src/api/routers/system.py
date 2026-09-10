@@ -181,11 +181,25 @@ def pipeline(session: Session = Depends(get_session)):
     except Exception:
         pass
 
+    # -- qdrant points (chunks collection) -----------------------------------
+    qdrant_points = None
+    try:
+        qr = httpx.get(
+            s.qdrant_url.rstrip("/") + "/collections/chunks",
+            timeout=3,
+            headers={"Authorization": f"Bearer {s.qdrant_api_key}"} if s.qdrant_api_key else {},
+        )
+        if qr.status_code == 200:
+            qdrant_points = qr.json().get("result", {}).get("points_count")
+    except Exception:
+        pass
+
     return {
         "components": components,
         "lanes": lanes,
         "counts": counts,
         "in_flight_parse": in_flight,
+        "qdrant_points": qdrant_points,
         "server_time": None,  # web layer stamps local time
     }
 
