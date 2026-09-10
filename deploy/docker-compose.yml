@@ -201,10 +201,9 @@ services:
     profiles: [ingest]
     command: ["python", "-m", "workers.splitter"]
     environment: {<<: *ingest-env}
-    # Large Calibre PDFs can make the splitter exceed 1g while inspecting
-    # page counts; 2g remains bounded alongside three 6g parsers and TEI.
+    # Large Calibre PDFs need host-backed temporary space; the 2g tmpfs
+    # exhausted while the host still had 162g free.
     mem_limit: 2g
-    tmpfs: ["/tmp:size=2g"]
     networks: [ingestnet]
 
   worker-parser:
