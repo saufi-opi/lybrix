@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     parser_soft_rss_mb: int = Field(default=6144)
     parser_recycle_after: int = Field(default=10)
     shard_lease_seconds: int = Field(default=600)
+    parser_pdf_cache_dir: str | None = Field(
+        default=None,
+        description=(
+            "Optional host-local cache of raw source PDFs. When set, a shard job "
+            "skips the MinIO download if this file already exists on the host: "
+            "{cache_dir}/{doc_id}.pdf. PDFs are immutable per doc_id, so cache "
+            "entries never need invalidation. Bind-mount the same host dir into "
+            "every parser container on that host."
+        ),
+    )
     ocr_min_chars_per_page: int = Field(
         default=20,
         description="Mean chars/page below this marks the shard needs_ocr.",

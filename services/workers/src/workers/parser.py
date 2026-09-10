@@ -17,6 +17,9 @@ Retry ladder (attempts are not identical):
 
 from __future__ import annotations
 
+import logging
+import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -51,9 +54,40 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
 
     tmpdir = Path(tempfile.mkdtemp(prefix="parse-"))
     pdf_path = tmpdir / "source.pdf"
-    s3.download_to(
-        s3.make_s3(s), s.s3_bucket_raw, s3.raw_key(str(doc_id)), str(pdf_path)
-    )
+    cache_dir = s.parser_pdf_cache_dir
+    cache_path = Path(cache_dir) / f"{doc_id}.pdf" if cache_dir else None
+    if cache_path is not None and cache_path.is_file():
+        # Cache hit — PDFs are immutable per doc_id, no download needed.
+        # Copy (not hardlink/ln): docling may write sidecar files next to the
+        # source, and tmpfs unlinking on recycle must never touch the cache.
+        t0 = time.monotonic()
+        shutil.copyfile(cache_path, pdf_path)
+        logging.getLogger(__name__).info(
+            "pdf cache HIT %s (%.1f MB saved download)",
+            doc_id,
+            cache_path.stat().st_size / 1e6,
+        )
+    else:
+        s3.download_to(
+            s3.make_s3(s), s.s3_bucket_raw, s3.raw_key(str(doc_id)), str(pdf_path)
+        )
+        if cache_path is not None:
+            # Atomic write into the host cache: tmp file in the same dir,
+            # then rename. Concurrent shard jobs of the same book may race —
+            # os.replace is atomic, losers just overwrite with identical bytes.
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_cache = cache_path.with_suffix(".tmp")
+                shutil.copyfile(pdf_path, tmp_cache)
+                os.replace(tmp_cache, cache_path)
+                logging.getLogger(__name__).info(
+                    "pdf cache MISS -> STORED %s", doc_id
+                )
+            except OSError as cache_exc:
+                # Cache is a pure optimization — never fail the shard over it.
+                logging.getLogger(__name__).warning(
+                    "pdf cache store failed (ignored): %s", cache_exc
+                )
 
     started = time.monotonic()
     verdict = needs_ocr(str(pdf_path), page_start, page_end, s)
