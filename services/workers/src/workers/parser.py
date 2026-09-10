@@ -60,7 +60,6 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
         # Cache hit — PDFs are immutable per doc_id, no download needed.
         # Copy (not hardlink/ln): docling may write sidecar files next to the
         # source, and tmpfs unlinking on recycle must never touch the cache.
-        t0 = time.monotonic()
         shutil.copyfile(cache_path, pdf_path)
         logging.getLogger(__name__).info(
             "pdf cache HIT %s (%.1f MB saved download)",

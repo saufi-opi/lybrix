@@ -9,13 +9,11 @@ Covers:
 
 from __future__ import annotations
 
-import sys
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from workers.parser import handle_parse
 
 
