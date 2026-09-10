@@ -83,8 +83,11 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
         parsed_uri=f"s3://{s.s3_bucket_parsed}/{parsed_key}",
     )
 
-    # last shard settled → enqueue embed (§6.3 step 7)
+    # last shard settled → enqueue embed (§6.3 step 7).
+    # mark_shard_done() increments shards_done via SQL expression; refresh
+    # the ORM row before checking, otherwise the final shard appears missing.
     session.flush()
+    session.expire(doc)
     doc = repo.get_document(session, doc_id)
     if repo.book_settled(doc):
         streams.xadd_job(redis, streams.STREAM_EMBED, contracts.EmbedJob(doc_id=doc_id))
