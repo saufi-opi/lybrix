@@ -76,6 +76,33 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             )
             reenqueued += 1
 
+    # 3b. Settled-but-never-enqueued sweep: a parser that dies between the
+    #     PG commit of the last shard and the Redis XADD loses the embed job
+    #     forever (real incident 2026-09-10: 7 books). Settled = every shard
+    #     done/failed (the same condition the parser checks). Re-adding the
+    #     embed job is idempotent (chunk ON CONFLICT DO NOTHING + chunk_hash
+    #     point ids), so duplicates are harmless.
+    from core.queue import contracts
+
+    embed_swept = 0
+    for doc in docs:
+        if doc.state != DocState.PARSING:
+            continue
+        if not repo.book_settled(doc):
+            continue
+        streams.xadd_job(
+            redis, streams.STREAM_EMBED, contracts.EmbedJob(doc_id=doc.id)
+        )
+        write_evt(
+            session,
+            level="warn",
+            stage="janitor",
+            code="EMBED_RESCUE",
+            message="settled book found without embed job — re-enqueued",
+            doc_id=doc.id,
+        )
+        embed_swept += 1
+
     # 4. Stuck detector: same non-terminal state > STUCK_MINUTES → warn (§6.6)
     # 4. Reclaim: PEL entries stranded by dead consumers (worker recreated /
     #    crashed between XREADGROUP and XACK). XAUTOCLAIM them, re-add as
@@ -118,7 +145,7 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             )
             warned += 1
 
-    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "reclaimed": reclaimed, "stuck_warned": warned}
+    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "embed_swept": embed_swept, "reclaimed": reclaimed, "stuck_warned": warned}
 
 
 def write_evt(session, **kwargs) -> None:
