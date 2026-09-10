@@ -201,7 +201,9 @@ services:
     profiles: [ingest]
     command: ["python", "-m", "workers.splitter"]
     environment: {<<: *ingest-env}
-    mem_limit: 1g
+    # Large Calibre PDFs can make the splitter exceed 1g while inspecting
+    # page counts; 2g remains bounded alongside three 6g parsers and TEI.
+    mem_limit: 2g
     tmpfs: ["/tmp:size=2g"]
     networks: [ingestnet]
 
