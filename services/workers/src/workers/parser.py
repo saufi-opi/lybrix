@@ -90,6 +90,15 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
 
     started = time.monotonic()
     verdict = needs_ocr(str(pdf_path), page_start, page_end, s)
+    logging.getLogger(__name__).info(
+        "ocr gate %s shard=%d pages=%d-%d mean_chars/page=%.0f needs_ocr=%s",
+        doc_id,
+        idx,
+        page_start,
+        page_end,
+        verdict.mean_chars_per_page,
+        verdict.needs_ocr,
+    )
     converter = build_converter(need_ocr=verdict.needs_ocr, settings=s)
 
     result = converter.convert(
@@ -114,6 +123,7 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
         duration_ms=duration_ms,
         peak_rss_mb=check_rss_budget(s),
         parsed_uri=f"s3://{s.s3_bucket_parsed}/{parsed_key}",
+        needs_ocr=verdict.needs_ocr,
     )
 
     # last shard settled → enqueue embed (§6.3 step 7).

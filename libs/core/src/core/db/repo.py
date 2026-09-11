@@ -98,12 +98,18 @@ def mark_shard_done(
     duration_ms: int,
     peak_rss_mb: int,
     parsed_uri: str,
+    needs_ocr: bool = False,
 ) -> None:
-    """Mark done and atomically bump shards_done (PRD §6.3 step 6)."""
+    """Mark done and atomically bump shards_done (PRD §6.3 step 6).
+
+    needs_ocr persists the OCR-gate verdict so per-shard OCR decisions
+    stay queryable after the fact (shards.needs_ocr column).
+    """
     shard = session.get(Shard, (doc_id, idx))
     if shard is None:
         raise LookupError(f"shard {doc_id}/{idx} not found")
     shard.state = ShardState.DONE
+    shard.needs_ocr = needs_ocr
     shard.duration_ms = duration_ms
     shard.peak_rss_mb = peak_rss_mb
     shard.parsed_uri = parsed_uri
