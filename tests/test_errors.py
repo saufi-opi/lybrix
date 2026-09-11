@@ -5,9 +5,9 @@ from __future__ import annotations
 from core.errors import ERROR_SPECS, ErrorCode, PlatformError, Stage
 
 
-def test_all_nine_codes_present():
-    assert len(ERROR_SPECS) == 9
+def test_all_error_codes_have_specs():
     assert set(ERROR_SPECS) == set(ErrorCode)
+    assert len(ERROR_SPECS) == 10  # +DOC_EMBED_FAILED (2026-09-11 retry cap)
 
 
 def test_non_retryable_codes():
@@ -15,6 +15,7 @@ def test_non_retryable_codes():
     assert ERROR_SPECS[ErrorCode.PDF_CORRUPT].retryable is False
     assert ERROR_SPECS[ErrorCode.EMBED_DIM_MISMATCH].retryable is False
     assert ERROR_SPECS[ErrorCode.DEDUPE_CONFLICT].retryable is False
+    assert ERROR_SPECS[ErrorCode.DOC_EMBED_FAILED].retryable is False
 
 
 def test_oom_is_retryable_and_parse_stage():
