@@ -109,12 +109,33 @@ def claim_stale(
 
 
 def queue_depth(r: Redis, stream: str) -> int:
-    """Pending + undelivered entries — the number backpressure cares about."""
+    """Undelivered + pending entries — the number backpressure cares about.
+
+    XLEN counts EVERY entry ever written to the stream (nothing trims it),
+    so on a long-lived stream it only grows and eventually trips the
+    backpressure cap even when the queue is actually empty. The real
+    backlog is consumer-group ``lag`` (entries not yet delivered to the
+    group, Redis ≥7.0) plus ``pending`` (delivered but unacked / PEL).
+    """
     try:
-        pending = r.xpending(stream, CONSUMER_GROUP)["pending"]
+        pending = int(r.xpending(stream, CONSUMER_GROUP)["pending"] or 0)
     except Exception:
         pending = 0
-    return int(r.xlen(stream)) + int(pending or 0)
+    lag = 0
+    known = False
+    try:
+        for grp in r.xinfo_groups(stream):
+            if grp.get("name") == CONSUMER_GROUP:
+                lag = int(grp.get("lag") or 0)
+                known = True
+                break
+    except Exception:
+        pass
+    if not known:
+        # No group (or pre-7.0 Redis without lag): lag is unknowable cheaply —
+        # count only the PEL and say so. Never resurrect XLEN here.
+        logger.warning("queue_depth: no group lag for %s; counting pending only", stream)
+    return lag + pending
 
 
 def new_consumer_name(prefix: str) -> str:

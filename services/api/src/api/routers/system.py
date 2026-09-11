@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 from core.config import get_settings
 from core.observability.metrics import metrics
@@ -34,7 +36,9 @@ def _check_redis() -> str:
 
 def _check_url(url: str) -> str:
     try:
-        return "ok" if httpx.get(f"{url.rstrip('/')}/health", timeout=2).status_code == 200 else "down"
+        return (
+            "ok" if httpx.get(f"{url.rstrip('/')}/health", timeout=2).status_code == 200 else "down"
+        )
     except Exception:
         return "down"
 
@@ -64,7 +68,9 @@ def health(session: Session = Depends(get_session)):
         "status": "ok" if _check_postgres(session) == "ok" else "degraded",
         "postgres": _check_postgres(session),
         "redis": _check_redis(),
-        "qdrant": _check_url(s.qdrant_url),
+        "qdrant": _check_qdrant(
+            s.qdrant_url
+        ),  # /collections probe WITH api key (/health 404s + needs auth)
         "tei_query": _check_url(s.tei_query_url),
     }
 
@@ -77,12 +83,26 @@ def queues():
     for name in streams.ALL_STREAMS:
         try:
             pending = r.xpending(name, streams.CONSUMER_GROUP)
+            # "length" is XLEN (every entry ever written — streams are never
+            # trimmed), NOT the live backlog. "undelivered" is what callers
+            # actually want: entries the group has never seen (group lag,
+            # Redis ≥7.0). Dashboard's ready-count bug came from conflating
+            # these; kept both so old fields don't break.
+            try:
+                grp = next(
+                    (g for g in r.xinfo_groups(name) if g.get("name") == streams.CONSUMER_GROUP),
+                    None,
+                )
+                lag = int(grp.get("lag") or 0) if grp else None
+            except Exception:
+                lag = None
             out[name] = {
                 "length": r.xlen(name),
                 "pending": pending["pending"] if pending else 0,
+                "undelivered": lag,
             }
         except Exception:
-            out[name] = {"length": None, "pending": None}
+            out[name] = {"length": None, "pending": None, "undelivered": None}
     return out
 
 
@@ -118,8 +138,16 @@ def pipeline(session: Session = Depends(get_session)):
     for name in streams.ALL_STREAMS:
         lane = {"waiting": None, "in_flight": None, "stale": 0, "consumers": 0}
         try:
-            lane["waiting"] = r.xlen(name)
+            # waiting = undelivered entries (group lag) + PEL, NOT XLEN —
+            # streams are never trimmed so XLEN only ever grows (it showed
+            # 20,703 "waiting" on a queue with 0 undelivered + 23 pending).
+            grp = next(
+                (g for g in r.xinfo_groups(name) if g.get("name") == streams.CONSUMER_GROUP),
+                None,
+            )
+            lag = int(grp.get("lag") or 0) if grp else 0
             pend = r.xpending_range(name, streams.CONSUMER_GROUP, min="-", max="+", count=100)
+            lane["waiting"] = lag + len(pend)
             lane["in_flight"] = len(pend)
             now_ms = r.time()[0]
             for entry in pend:
@@ -132,37 +160,55 @@ def pipeline(session: Session = Depends(get_session)):
         lanes[name] = lane
 
     # -- document/shard counters --------------------------------------------
-    counts: dict[str, int] = {}
+    counts: dict[str, Any] = {}
     try:
-        row = session.execute(
-            text(
-                "SELECT"
-                "  count(*) FILTER (WHERE state='ready') AS ready,"
-                "  count(*) FILTER (WHERE state='parsing') AS parsing,"
-                "  count(*) FILTER (WHERE state='failed') AS failed,"
-                "  count(*) AS total FROM documents"
+        row = (
+            session.execute(
+                text(
+                    "SELECT"
+                    "  count(*) FILTER (WHERE state='ready') AS ready,"
+                    "  count(*) FILTER (WHERE state='parsing') AS parsing,"
+                    "  count(*) FILTER (WHERE state='failed') AS failed,"
+                    "  count(*) AS total FROM documents"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         counts["docs_ready"] = row["ready"]
         counts["docs_parsing"] = row["parsing"]
         counts["docs_failed"] = row["failed"]
         counts["docs_total"] = row["total"]
 
-        srow = session.execute(
-            text(
-                "SELECT"
-                "  count(*) FILTER (WHERE state='done') AS done,"
-                "  count(*) FILTER (WHERE state='pending') AS pending,"
-                "  count(*) FILTER (WHERE state='failed') AS failed,"
-                "  count(*) FILTER (WHERE state='running') AS running,"
-                "  count(*) AS total FROM shards"
+        srow = (
+            session.execute(
+                text(
+                    "SELECT"
+                    "  count(*) FILTER (WHERE state='done') AS done,"
+                    "  count(*) FILTER (WHERE state='pending') AS pending,"
+                    "  count(*) FILTER (WHERE state='failed') AS failed,"
+                    "  count(*) FILTER (WHERE state='running') AS running,"
+                    "  count(*) AS total FROM shards"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         counts["shards_done"] = srow["done"]
         counts["shards_pending"] = srow["pending"]
         counts["shards_failed"] = srow["failed"]
         counts["shards_running"] = srow["running"]
         counts["shards_total"] = srow["total"]
+
+        # Full state breakdown — dashboards must NOT derive per-state counts
+        # from ?limit=N document lists (the /dashboard "ready" card read the
+        # first 200 rows and undercounted vs the pipeline aggregate forever).
+        strow = (
+            session.execute(text("SELECT state, count(*) AS n FROM documents GROUP BY state"))
+            .mappings()
+            .all()
+        )
+        counts["docs_states"] = {r["state"]: r["n"] for r in strow}
     except Exception:
         pass
 

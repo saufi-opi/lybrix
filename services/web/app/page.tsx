@@ -1,29 +1,43 @@
-/** Dashboard (PRD §8.1 screen 1): four counters, queue depth, worker strip. */
+/** Dashboard (PRD §8.1 screen 1): counters, queue depth, worker strip.
+ *
+ * Counts come from /v1/system/pipeline (full-table aggregate + full doc-state
+ * breakdown), NOT from the ?limit=200 documents list — the old version counted
+ * states over the first 200 rows only, so "ready" disagreed with the pipeline
+ * page (74 vs 93) and silently stopped growing once >200 docs existed.
+ */
 
 import { apiClient } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [docs, queues, health] = await Promise.all([
-    apiClient.documents("?limit=200"),
+  const [pipeline, queues, health] = await Promise.all([
+    apiClient.pipeline(),
     apiClient.queues(),
     apiClient.health(),
   ]);
 
-  const ready = docs.filter((d) => d.state === "ready").length;
-  const inflight = docs.filter((d) =>
-    ["splitting", "parsing", "embedding", "indexing", "uploaded"].includes(d.state)
-  ).length;
-  const failed = docs.filter((d) => d.state === "failed").length;
-  const partial = docs.filter((d) => d.state === "partial").length;
+  const c = (pipeline.counts ?? {}) as Record<string, unknown>;
+  // Authoritative per-state counts from GROUP BY state (server-side aggregate).
+  const states = (c.docs_states ?? {}) as Record<string, number>;
+  const ready = states.ready ?? 0;
+  const failed = (c.docs_failed as number) ?? 0;
+  const partial = states["partial"] ?? 0;
+  // Active states = everything non-terminal (mirrors DocState lifecycle).
+  const inflight =
+    (states["uploaded"] ?? 0) +
+    (states["splitting"] ?? 0) +
+    (states["parsing"] ?? 0) +
+    (states["embedding"] ?? 0) +
+    (states["indexing"] ?? 0);
+  const total = (c.docs_total as number) ?? 0;
 
   return (
     <>
       <div className="grid4">
         <div className="panel counter">
           <div className="num">{ready}</div>
-          <div className="muted">ready</div>
+          <div className="muted">ready{total ? ` / ${total}` : ""}</div>
         </div>
         <div className="panel counter">
           <div className="num">{inflight}</div>
@@ -45,7 +59,7 @@ export default async function DashboardPage() {
           <thead>
             <tr>
               <th>stream</th>
-              <th>length</th>
+              <th>undelivered</th>
               <th>pending</th>
             </tr>
           </thead>
@@ -53,7 +67,7 @@ export default async function DashboardPage() {
             {Object.entries(queues).map(([name, q]) => (
               <tr key={name}>
                 <td>{name}</td>
-                <td>{q.length ?? "—"}</td>
+                <td>{q.undelivered ?? "—"}</td>
                 <td>{q.pending ?? "—"}</td>
               </tr>
             ))}

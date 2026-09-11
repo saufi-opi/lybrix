@@ -50,7 +50,7 @@ export const apiClient = {
   document: (id: string) => api<DocumentRow>(`/v1/documents/${id}`),
   shards: (id: string) => api<ShardRow[]>(`/v1/documents/${id}/shards`),
   health: () => api<Record<string, string>>("/v1/system/health"),
-  queues: () => api<Record<string, { length: number | null; pending: number | null }>>("/v1/system/queues"),
+  queues: () => api<Record<string, { length: number | null; pending: number | null; undelivered: number | null }>>("/v1/system/queues"),
   pipeline: () => api<Record<string, unknown>>("/v1/system/pipeline"),
   events: (params = "") => api<Record<string, unknown>[]>(`/v1/events${params}`),
   collections: () => api<Record<string, unknown>[]>("/v1/collections"),
