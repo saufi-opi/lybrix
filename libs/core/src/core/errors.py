@@ -36,6 +36,7 @@ class ErrorCode(StrEnum):
     EMBED_DIM_MISMATCH = "EMBED_DIM_MISMATCH"
     VECTOR_UPSERT_FAILED = "VECTOR_UPSERT_FAILED"
     DEDUPE_CONFLICT = "DEDUPE_CONFLICT"
+    DOC_EMBED_FAILED = "DOC_EMBED_FAILED"
 
 
 ERROR_SPECS: dict[ErrorCode, ErrorSpec] = {
@@ -94,6 +95,12 @@ ERROR_SPECS: dict[ErrorCode, ErrorSpec] = {
             stage=Stage.SPLIT,
             retryable=False,
             ui_treatment="Link to the existing document",
+        ),
+        ErrorSpec(
+            code=ErrorCode.DOC_EMBED_FAILED,
+            stage=Stage.EMBED,
+            retryable=False,
+            ui_treatment="Terminal — embed failed after max attempts, offer re-ingest",
         ),
     )
 }
