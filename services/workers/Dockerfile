@@ -26,6 +26,11 @@ RUN apt-get update \
         libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root user FIRST — later layers are owned correctly from birth, so no
+# `chown -R /app` is ever needed (it used to duplicate the whole venv into a
+# new layer, ~1.9GB of pure image bloat).
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
@@ -37,16 +42,16 @@ COPY libs/retrieval/pyproject.toml    libs/retrieval/pyproject.toml
 COPY services/api/pyproject.toml      services/api/pyproject.toml
 COPY services/workers/pyproject.toml  services/workers/pyproject.toml
 COPY services/mcp/pyproject.toml      services/mcp/pyproject.toml
-# Heavy sync in its own cacheable layer: torch-cpu + docling ~1.5GB.
-RUN uv sync --frozen --no-dev --package rag-workers --no-install-project
+# Cache mount: uv's wheel cache stays in the builder, never bakes into a
+# layer (the venv itself is the only thing the image keeps).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-workers --no-install-project
 
-COPY libs/ ./libs/
-COPY services/workers/ ./services/workers/
-RUN uv sync --frozen --no-dev --package rag-workers
+COPY --chown=appuser:appuser libs/ ./libs/
+COPY --chown=appuser:appuser services/workers/ ./services/workers/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-workers
 
-# Non-root; workers run as nobody.
-RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
 USER appuser
 
 # No EXPOSE/HEALTHCHECK: workers are queue consumers, not servers.

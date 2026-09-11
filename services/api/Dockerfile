@@ -12,6 +12,10 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
+# Non-root user FIRST (see workers/Dockerfile: chown -R after heavy layers
+# duplicates them into a new layer).
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser
+
 WORKDIR /app
 
 # Workspace resolution needs the root project + every member's pyproject;
@@ -25,18 +29,17 @@ COPY libs/retrieval/pyproject.toml    libs/retrieval/pyproject.toml
 COPY services/api/pyproject.toml      services/api/pyproject.toml
 COPY services/workers/pyproject.toml  services/workers/pyproject.toml
 COPY services/mcp/pyproject.toml      services/mcp/pyproject.toml
-RUN uv sync --frozen --no-dev --package rag-api --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-api --no-install-project
 
-COPY libs/ ./libs/
-COPY services/api/ ./services/api/
+COPY --chown=appuser:appuser libs/ ./libs/
+COPY --chown=appuser:appuser services/api/ ./services/api/
 # Alembic migrations + ini (script_location=%(here)s → resolves here) for the
 # one-shot `migrate` compose service; rag-core is already installed.
-COPY migrations/ ./migrations/
-RUN uv sync --frozen --no-dev --package rag-api
+COPY --chown=appuser:appuser migrations/ ./migrations/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-api
 
-# Non-root.
-RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

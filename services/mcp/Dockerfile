@@ -10,6 +10,10 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
+# Non-root user FIRST (see workers/Dockerfile: chown -R after heavy layers
+# duplicates the venv into a new layer).
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
@@ -21,14 +25,14 @@ COPY libs/retrieval/pyproject.toml    libs/retrieval/pyproject.toml
 COPY services/api/pyproject.toml      services/api/pyproject.toml
 COPY services/workers/pyproject.toml  services/workers/pyproject.toml
 COPY services/mcp/pyproject.toml      services/mcp/pyproject.toml
-RUN uv sync --frozen --no-dev --package rag-mcp --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-mcp --no-install-project
 
-COPY libs/ ./libs/
-COPY services/mcp/ ./services/mcp/
-RUN uv sync --frozen --no-dev --package rag-mcp
+COPY --chown=appuser:appuser libs/ ./libs/
+COPY --chown=appuser:appuser services/mcp/ ./services/mcp/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rag-mcp
 
-RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8430
