@@ -172,7 +172,19 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
     #    (SHARD_LEASE_SECONDS=900) so live parses are never double-claimed.
     #    MUST run before the settled-book sweep: re-added entries become
     #    undelivered, so the sweep's dedup scan sees them.
+    #
+    #    Delivery cap (R-8): the runner leaves failed entries unacked in
+    #    the PEL, so this reclaim revisits them forever — and re-adding
+    #    resets the entry, so a job whose handler always raises (vanished
+    #    doc → KeyError in the parser) loops deliver→raise→reclaim
+    #    unbounded. Entries at/over DELIVERY_CAP are quarantined (DLQ
+    #    events row + XACK/XDEL) instead of re-added. The cap read is
+    #    fail-open: if the XPENDING lookup fails or returns nothing, the
+    #    entry re-adds as before — quarantine only ever fires on a real
+    #    delivery count.
     reclaimed = 0
+    quarantined = 0
+    delivery_cap = max(5, settings.max_shard_attempts + 1)
     for stream in streams.ALL_STREAMS:
         try:
             res = redis.xautoclaim(
@@ -187,6 +199,25 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             if not job:
                 redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
                 redis.xdel(stream, entry_id)  # trim the husk too
+                continue
+            # delivery count for THIS entry (fail-open: query trouble or an
+            # empty answer → None → re-add, never quarantine on a guess)
+            times_delivered = None
+            try:
+                pending = redis.xpending_range(
+                    stream, streams.CONSUMER_GROUP, min=entry_id, max=entry_id, count=1
+                )
+                if pending:
+                    times_delivered = int(pending[0].get("times_delivered") or 0)
+            except Exception:
+                logger.warning(
+                    "reclaim: XPENDING failed on %s/%s — capping disabled for this entry",
+                    stream,
+                    entry_id,
+                )
+            if times_delivered is not None and times_delivered >= delivery_cap:
+                streams.quarantine(session, redis, stream, entry_id, job, times_delivered)
+                quarantined += 1
                 continue
             redis.xadd(stream, {"job": job})
             redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
@@ -245,7 +276,7 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             )
             warned += 1
 
-    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "embed_swept": embed_swept, "reclaimed": reclaimed, "stuck_warned": warned}
+    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "embed_swept": embed_swept, "reclaimed": reclaimed, "quarantined": quarantined, "stuck_warned": warned}
 
 
 def write_evt(session, **kwargs) -> None:

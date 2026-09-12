@@ -61,6 +61,7 @@ def _run(docs, stream_entries=None, xrange_raises=None):
         redis.xrange.return_value = stream_entries or []
     settings = MagicMock()
     settings.stuck_minutes = 60
+    settings.max_shard_attempts = 4  # DLQ cap derivation (R-8) reads this
     with (
         patch("workers.janitor.repo.requeue_expired_leases", return_value=0),
         patch("workers.janitor.repo.book_settled", side_effect=lambda d: (d.shards_done + d.shards_failed) >= d.total_shards),

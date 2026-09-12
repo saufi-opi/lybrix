@@ -1,9 +1,20 @@
-"""Generic consumer loop: read → claim (Postgres lease) → handle → ack →
-DLQ after max attempts (PRD §6.3, §6.6).
+"""Generic consumer loop: read → claim (Postgres lease) → handle → ack
+(PRD §6.3, §6.6).
 
 Every worker shares this runner so lease/ack/retry semantics live in
 exactly one place. Handlers raise PlatformError; retryability comes
 from the error taxonomy, not string matching.
+
+There is NO DLQ in this loop. A failing job is logged, its on_error
+hook runs, and the entry stays unacked in the Redis PEL so XAUTOCLAIM
+can revisit it. The terminal path is enforced at the janitor reclaim
+(janitor.py step 4): an entry the reclaim sees at/over the delivery
+cap (DELIVERY_CAP = max(5, max_shard_attempts + 1) deliveries) is
+quarantined — one DLQ events row via streams.quarantine, then XACK +
+XDEL — instead of being re-added. This loop deliberately holds no
+attempt counter: the PEL's times_delivered is the single source of
+truth, so a Redis wipe also resets the cap (job state of record lives
+in Postgres, not Redis).
 """
 
 from __future__ import annotations
@@ -35,6 +46,11 @@ def run_consumer(
 ) -> None:
     """Consume forever. ``handler(session, job_dict)`` runs inside one DB
     transaction; ack happens only after the transaction commits.
+
+    A failing job is NOT retried here and never ACKed here: it stays in
+    the PEL for the janitor reclaim, which is where the DLQ/delivery-cap
+    enforcement lives (module docstring). This loop has no attempt
+    counter of its own.
 
     ``recycle_after`` (PARSER_RECYCLE_AFTER): exit cleanly once N jobs
     have been handled successfully (failures don't advance the count).

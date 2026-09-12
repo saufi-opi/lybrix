@@ -178,5 +178,67 @@ def queue_depth(r: Redis, stream: str) -> int:
     return undelivered_count(r, stream) + pending
 
 
+def quarantine(
+    session,
+    r: Redis,
+    stream: str,
+    entry_id: str,
+    raw_job: str,
+    times_delivered: int,
+    last_error: str | None = None,
+) -> None:
+    """Quarantine a poison job: one DLQ events row, then drop the entry.
+
+    The terminal half of the janitor reclaim path (R-8). A job whose
+    handler always raises (e.g. a doc deleted mid-parse → KeyError in the
+    parser) is otherwise redelivered forever: deliver → raise → unacked
+    in the PEL → XAUTOCLAIM → re-add → deliver … The reclaim re-add also
+    resets the entry, so nothing bounds the loop. Once the caller decides
+    an entry is over the delivery cap, this writes one events row
+    (level=error, stage=dlq, code=DLQ) carrying the raw job JSON, then
+    ACKs and deletes the entry — both Redis calls best-effort, never
+    raising: dropping the stream entry is the point, the events row is
+    the durable record. ``session`` is the caller's PG session (the
+    janitor pass transaction) — no new session is opened here.
+    doc_id/shard_idx are parsed from the raw job when possible;
+    unparseable jobs are still quarantined.
+    """
+    from core.events import write_event
+
+    doc_id = None
+    shard_idx = None
+    try:
+        payload = json.loads(raw_job)
+        if isinstance(payload, dict):
+            if payload.get("doc_id"):
+                doc_id = uuid.UUID(str(payload["doc_id"]))
+            if payload.get("idx") is not None:
+                shard_idx = int(payload["idx"])
+    except (ValueError, TypeError):
+        pass  # malformed JSON / bad uuid / bad idx: quarantine without links
+
+    detail: dict[str, Any] = {"detail": raw_job}
+    if last_error:
+        detail["last_error"] = last_error
+    write_event(
+        session,
+        "error",
+        "dlq",
+        f"job quarantined from {stream} after {times_delivered} deliveries",
+        doc_id=doc_id,
+        shard_idx=shard_idx,
+        code="DLQ",
+        context=detail,
+    )
+    try:
+        r.xack(stream, CONSUMER_GROUP, entry_id)
+    except Exception:
+        logger.warning("quarantine: XACK failed for %s/%s", stream, entry_id)
+    try:
+        r.xdel(stream, entry_id)
+    except Exception:
+        logger.warning("quarantine: XDEL failed for %s/%s", stream, entry_id)
+
+
 def new_consumer_name(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
