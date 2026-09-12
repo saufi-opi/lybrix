@@ -58,3 +58,40 @@ def build_converter(
             )
         }
     )
+
+
+_CONVERTER_CACHE: dict[tuple, DocumentConverter] = {}
+
+
+def converter_cache_key(need_ocr: bool, s: Settings) -> tuple:
+    return (
+        need_ocr,
+        s.parsing_ocr_engine.lower(),
+        s.parsing_ocr_lang,
+        s.parsing_ocr_text_score,
+        s.parsing_torch_threads,
+        s.parsing_do_table_structure,
+        s.parsing_accelerator_device,
+    )
+
+
+def get_converter(
+    need_ocr: bool,
+    settings: Settings | None = None,
+    builder=None,
+) -> DocumentConverter:
+    """Module-level cache: DocumentConverter init is per-process expensive
+    (pipeline init + HF artifact resolution happen on first convert()). Parsers
+    are long-lived (PARSER_RECYCLE_AFTER is configured, not implemented), so the
+    cache pays off across the process lifetime. Max 2 entries (OCR on/off).
+
+    ``builder`` defaults to this module's build_converter; callers that keep
+    their own import (workers.parser) pass it through so patch targets and
+    any future local wrapping keep working."""
+    s = settings or get_settings()
+    key = converter_cache_key(need_ocr, s)
+    conv = _CONVERTER_CACHE.get(key)
+    if conv is None:
+        conv = (builder or build_converter)(need_ocr=need_ocr, settings=s)
+        _CONVERTER_CACHE[key] = conv
+    return conv

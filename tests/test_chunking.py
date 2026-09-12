@@ -59,3 +59,27 @@ def test_dedupe_drops_consecutive_duplicates_only():
 def test_headings_normalize_and_render():
     assert normalize(["A", "", " A ", "B"]) == ("A", "B")
     assert render(["Part II", "Ch. 7", "7.3 Caching"]) == "Part II > Ch. 7 > 7.3 Caching"
+
+
+# --- page metadata (stitch line->page map; citation PRD G4) ----------------
+
+
+def test_chunks_carry_page_range_when_pages_given():
+    md = "# Ch 1\nintro line\n\nbody line\n\n# Ch 2\nsecond part\n"
+    lines = md.splitlines()
+    pages = list(range(1, len(lines) + 1))  # line i -> page i+1
+    chunks = chunk_markdown(md, pages=pages)
+    assert len(chunks) == 2
+    # page_start is the first BODY line (the heading line is separate)
+    assert chunks[0].page_start == 2
+    # section 1 ends at the last line before the "# Ch 2" heading
+    end_of_section_1 = lines.index("# Ch 2") - 1
+    assert chunks[0].page_end == pages[end_of_section_1]
+    assert chunks[1].page_start > chunks[0].page_start
+    assert chunks[1].page_end == pages[-1]
+
+
+def test_chunks_pages_none_when_pages_absent():
+    md = "# Ch 1\nintro line\n\nbody line\n"
+    chunks = chunk_markdown(md)
+    assert all(c.page_start is None and c.page_end is None for c in chunks)

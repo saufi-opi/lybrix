@@ -30,7 +30,12 @@ from core.db import repo
 from core.errors import ErrorCode, PlatformError
 from core.queue import contracts, streams
 from core.storage import s3
-from parsing.converter import build_converter
+from parsing.converter import (  # noqa: F401  (build_converter kept importable: tests patch it here)
+    _CONVERTER_CACHE,
+    build_converter,
+    converter_cache_key,
+    get_converter,
+)
 from parsing.memory import check_rss_budget
 from parsing.ocr_gate import needs_ocr
 
@@ -99,7 +104,15 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
         verdict.mean_chars_per_page,
         verdict.needs_ocr,
     )
-    converter = build_converter(need_ocr=verdict.needs_ocr, settings=s)
+    cache_key = converter_cache_key(verdict.needs_ocr, s)
+    cache_hit = cache_key in _CONVERTER_CACHE
+    converter = get_converter(need_ocr=verdict.needs_ocr, settings=s, builder=build_converter)
+    logging.getLogger(__name__).info(
+        "converter cache %s need_ocr=%s key=%r",
+        "HIT" if cache_hit else "MISS",
+        verdict.needs_ocr,
+        cache_key,
+    )
 
     result = converter.convert(
         str(pdf_path),

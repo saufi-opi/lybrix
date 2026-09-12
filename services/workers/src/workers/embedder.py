@@ -85,10 +85,17 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
 
     from parsing.stitch import load_shard_docs, stitch
 
+    # 1-based inclusive shard page ranges, aligned with the idx-sorted shard
+    # rows (the same order load_shard_docs emits). Failed shards have no
+    # JSON so they are absent from both sides — ranges stay aligned.
+    shard_page_ranges = [(sh.page_start, sh.page_end) for sh in shard_rows]
+
     try:
-        stitched = stitch(load_shard_docs(fetch))
+        stitched = stitch(load_shard_docs(fetch), shard_page_ranges)
         chunks = drop_duplicate_neighbours(
-            chunk_markdown(stitched.get("markdown", ""), max_tokens=512)
+            chunk_markdown(
+                stitched.get("markdown", ""), max_tokens=512, pages=stitched.get("pages")
+            )
         )
     except Exception as exc:
         # Stitch/chunk failures are deterministic-ish — count them too so a

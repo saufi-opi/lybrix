@@ -34,19 +34,38 @@ def load_shard_docs(
     return docs
 
 
-def stitch(docs: list[dict[str, Any]]) -> dict[str, Any]:
+def stitch(
+    docs: list[dict[str, Any]],
+    shard_page_ranges: list[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
     """Concatenate shard documents in order into a single doc-like dict.
 
     Works on Docling's serialised export shape ({"texts": [...], ...}),
     tolerating shards that produced no text blocks. Heading reconciliation
     is line-based: a shard's first markdown heading that equals the
     previous shard's last is dropped (overlap dedupe at the boundary).
+
+    ``shard_page_ranges`` (optional) is a list of ``(page_start, page_end)``
+    1-based inclusive pairs aligned with ``docs`` (doc order = sorted shard
+    idx). When given, the result carries ``"pages"``: a list mapping the
+    0-based line index of the stitched markdown to a 1-based page number,
+    interpolated proportionally within each shard. Ranges align to the
+    docs that actually contributed lines — a shard with empty markdown is
+    skipped together with its range so the map stays monotone.
     """
     if not docs:
         return {"texts": [], "markdown": ""}
 
     lines: list[str] = []
-    for _i, doc in enumerate(docs):
+    page_of_line: list[int] = []
+    # Pair each doc with its range in lockstep: a shard with empty markdown
+    # contributes neither lines nor a consumed range, so the map stays
+    # monotone even when some shards produced no text.
+    paired = (
+        zip(docs, shard_page_ranges, strict=True) if shard_page_ranges is not None else
+        ((doc, None) for doc in docs)
+    )
+    for doc, page_range in paired:
         md = _markdown_of(doc)
         if not md:
             continue
@@ -61,8 +80,17 @@ def stitch(docs: list[dict[str, Any]]) -> dict[str, Any]:
                 while doc_lines and not doc_lines[0].strip():
                     doc_lines = doc_lines[1:]
         lines.extend(doc_lines)
+        if page_range is not None:
+            page_start, page_end = page_range
+            n = len(doc_lines)
+            span = page_end - page_start + 1
+            for local in range(n):
+                page_of_line.append(page_start + (local * span) // n)
 
-    return {"texts": [], "markdown": "\n".join(lines).strip() + "\n"}
+    out: dict[str, Any] = {"texts": [], "markdown": "\n".join(lines).strip() + "\n"}
+    if shard_page_ranges is not None:
+        out["pages"] = page_of_line
+    return out
 
 
 def _markdown_of(doc: dict[str, Any]) -> str:
