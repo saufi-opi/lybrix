@@ -108,34 +108,56 @@ def claim_stale(
     return out
 
 
+def undelivered_count(r: Redis, stream: str) -> int:
+    """Entries the group has never seen (Redis ``lag``) with a NULL fallback.
+
+    ``XINFO GROUPS.lag`` becomes ``None`` once the group's bookkeeping is
+    untrustworthy — most commonly after XDEL/XTRIM removed entries that
+    the counters already accounted (2026-09-12: cleaning duplicate embed
+    jobs left doc.embed lag=NULL and the dashboard showed waiting=1 for a
+    73-job backlog). Fast path returns the int directly; on None we count
+    the undelivered tail with an exclusive XRANGE scan after the group's
+    last-delivered-id (pages of 500, same cursor semantics as the janitor
+    dedup scan). No group at all → 0. Redis errors propagate — callers
+    decide policy; silently returning 0 hides anomalies.
+    """
+    try:
+        for grp in r.xinfo_groups(stream):
+            if grp.get("name") != CONSUMER_GROUP:
+                continue
+            lag = grp.get("lag")
+            if lag is not None:
+                return int(lag)
+            cursor = grp.get("last-delivered-id") or "0-0"
+            start = f"({cursor}"  # exclusive: entries AT the cursor are delivered
+            total = 0
+            while True:
+                page = r.xrange(stream, min=start, max="+", count=500)
+                total += len(page)
+                if len(page) < 500:
+                    return total
+                start = f"({page[-1][0]}"
+        return 0  # no group → nothing is undelivered for this group
+    except Exception:
+        logger.exception("undelivered_count failed on %s", stream)
+        raise
+
+
 def queue_depth(r: Redis, stream: str) -> int:
     """Undelivered + pending entries — the number backpressure cares about.
 
     XLEN counts EVERY entry ever written to the stream (nothing trims it),
     so on a long-lived stream it only grows and eventually trips the
     backpressure cap even when the queue is actually empty. The real
-    backlog is consumer-group ``lag`` (entries not yet delivered to the
-    group, Redis ≥7.0) plus ``pending`` (delivered but unacked / PEL).
+    backlog is undelivered entries (group lag, with a live-count fallback
+    when Redis reports None — see undelivered_count) plus ``pending``
+    (delivered but unacked / PEL).
     """
     try:
         pending = int(r.xpending(stream, CONSUMER_GROUP)["pending"] or 0)
     except Exception:
         pending = 0
-    lag = 0
-    known = False
-    try:
-        for grp in r.xinfo_groups(stream):
-            if grp.get("name") == CONSUMER_GROUP:
-                lag = int(grp.get("lag") or 0)
-                known = True
-                break
-    except Exception:
-        pass
-    if not known:
-        # No group (or pre-7.0 Redis without lag): lag is unknowable cheaply —
-        # count only the PEL and say so. Never resurrect XLEN here.
-        logger.warning("queue_depth: no group lag for %s; counting pending only", stream)
-    return lag + pending
+    return undelivered_count(r, stream) + pending
 
 
 def new_consumer_name(prefix: str) -> str:

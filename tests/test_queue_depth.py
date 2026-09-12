@@ -4,10 +4,16 @@ Regression context (2026-09-11): queue_depth used XLEN + PEL. Streams are
 never trimmed, so XLEN counts every entry ever written and only grows; with
 8k+ historical entries the depth sat far above MAX_PARSE_BACKLOG and would
 have 429'd all new uploads even though the live queue (lag+PEL) was empty.
+
+2026-09-12: lag can be None (untrusted bookkeeping after XDEL) — the depth
+must fall back to a live count instead of silently 0, and Redis errors
+propagate instead of hiding as an empty queue.
 """
 
+import json
 from unittest.mock import MagicMock
 
+import pytest
 from core.queue import streams
 
 
@@ -36,13 +42,24 @@ def test_missing_group_counts_pending_only():
     assert streams.queue_depth(r, "doc.embed") == 7
 
 
-def test_redis_error_counts_nothing():
+def test_redis_error_propagates_from_undelivered():
+    """Error policy moved (2026-09-12): swallowing into 0 hid the doc.embed
+    lag=NULL incident — undelivered_count now raises and callers decide."""
     r = _redis()
     r.xpending.side_effect = RuntimeError("conn down")
     r.xinfo_groups.side_effect = RuntimeError("conn down")
-    assert streams.queue_depth(r, "doc.embed") == 0
+    with pytest.raises(RuntimeError):
+        streams.queue_depth(r, "doc.embed")
 
 
-def test_none_lag_treated_as_zero():
+def test_none_lag_falls_back_to_live_scan():
+    """lag=None (untrusted bookkeeping, e.g. after XDEL) must fall back to
+    a live XRANGE count, not silently 0 (2026-09-12 doc.embed showed
+    waiting=1 for a 73-job backlog)."""
     r = _redis(xlen=10, pending=2, groups=[{"name": streams.CONSUMER_GROUP, "lag": None}])
-    assert streams.queue_depth(r, "doc.embed") == 2
+    r.xrange.return_value = [
+        ("101-0", {"job": json.dumps({"doc_id": "a"})}),
+        ("102-0", {"job": json.dumps({"doc_id": "b"})}),
+    ]
+    assert streams.queue_depth(r, "doc.embed") == 4  # 2 undelivered + 2 PEL
+    r.xrange.assert_called_once()
