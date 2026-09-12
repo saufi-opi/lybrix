@@ -82,8 +82,8 @@ def get_converter(
 ) -> DocumentConverter:
     """Module-level cache: DocumentConverter init is per-process expensive
     (pipeline init + HF artifact resolution happen on first convert()). Parsers
-    are long-lived (PARSER_RECYCLE_AFTER is configured, not implemented), so the
-    cache pays off across the process lifetime. Max 2 entries (OCR on/off).
+    are recycled only after PARSER_RECYCLE_AFTER jobs, so the cache pays off
+    across the process lifetime. Max 2 entries (OCR on/off).
 
     ``builder`` defaults to this module's build_converter; callers that keep
     their own import (workers.parser) pass it through so patch targets and

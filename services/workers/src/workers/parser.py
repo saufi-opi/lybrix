@@ -2,7 +2,7 @@
 
 Memory discipline, all five controls required:
   one job per process (prefetch=1, concurrency=1)   — compose env
-  process recycling (PARSER_RECYCLE_AFTER)          — compose + this module
+  process recycling (PARSER_RECYCLE_AFTER)          — compose + runner (clean exit per N jobs)
   soft RSS budget (SoftOOM)                         — parsing.memory
   hard container limit (mem_limit: 8g)              — compose backstop
   tmpfs cap (2g)                                    — compose
@@ -175,6 +175,7 @@ def main() -> None:  # pragma: no cover - process entry
         redis=redis,
         prefetch=1,  # §6.3: one job per process, non-negotiable
         on_error=lambda s, j, e: record_job_error(s, j, e, stage="parse"),
+        recycle_after=settings.parser_recycle_after,
     )
 
 

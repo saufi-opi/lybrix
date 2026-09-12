@@ -31,12 +31,27 @@ def run_consumer(
     prefetch: int = 1,
     poll_idle_ms: int = 5_000,
     on_error: Callable[[Session, Any, Exception], None] | None = None,
+    recycle_after: int = 0,
 ) -> None:
     """Consume forever. ``handler(session, job_dict)`` runs inside one DB
-    transaction; ack happens only after the transaction commits."""
+    transaction; ack happens only after the transaction commits.
+
+    ``recycle_after`` (PARSER_RECYCLE_AFTER): exit cleanly once N jobs
+    have been handled successfully (failures don't advance the count).
+    The caller's process ends on a job boundary — after the ACK — so
+    docker's restart policy revives it with fresh memory; nothing is
+    lost. 0 disables recycling (consume forever)."""
     streams.ensure_streams(redis, (stream,))
     logger.info("consumer start stream=%s consumer=%s", stream, consumer)
+    handled = 0
     while True:
+        if recycle_after and handled >= recycle_after:
+            logger.info(
+                "recycle: %d jobs handled (limit %d) — clean exit for process recycle",
+                handled,
+                recycle_after,
+            )
+            return
         try:
             jobs = streams.read_jobs(
                 redis, stream, consumer, count=prefetch, block_ms=poll_idle_ms
@@ -46,6 +61,7 @@ def run_consumer(
                     with session_scope(session_factory) as session:
                         handler(session, job)
                     streams.ack(redis, stream, entry_id)
+                    handled += 1
                 except Exception as exc:
                     # handler decided failure; record + keep the message
                     # unacked so XAUTOCLAIM/lease reaper can revisit it.
