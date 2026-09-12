@@ -167,9 +167,11 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             job = (fields or {}).get("job")
             if not job:
                 redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
+                redis.xdel(stream, entry_id)  # trim the husk too
                 continue
             redis.xadd(stream, {"job": job})
             redis.xack(stream, streams.CONSUMER_GROUP, entry_id)
+            redis.xdel(stream, entry_id)  # old entry trimmed; fresh copy re-added
             reclaimed += 1
 
     # 5. Settled-but-never-enqueued sweep: a parser that dies between the

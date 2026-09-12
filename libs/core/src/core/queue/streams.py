@@ -79,12 +79,30 @@ def read_jobs(
                 out.append((entry_id, json.loads(raw)))
             except json.JSONDecodeError:
                 logger.error("unparseable job on %s: %s", stream, entry_id)
+                # dead entry: ACK + XDEL so it never resurfaces via reclaim
                 r.xack(stream, CONSUMER_GROUP, entry_id)
+                try:
+                    r.xdel(stream, entry_id)
+                except Exception:
+                    logger.warning("read_jobs: XDEL failed for %s/%s", stream, entry_id)
     return out
 
 
 def ack(r: Redis, stream: str, entry_id: str) -> None:
+    """ACK a processed job and XDEL it from the stream (trim-on-ACK).
+
+    Streams are never trimmed automatically, so every processed job would
+    otherwise live in the stream forever — 2026-09-12: doc.parse reached
+    25,073 entries for 15,994 real shards (36% stale duplicates) because
+    the janitor reclaim re-adds ACKed PEL entries, growing the stream in a
+    loop. XDEL is best-effort: a failed delete must never fail a job that
+    just completed.
+    """
     r.xack(stream, CONSUMER_GROUP, entry_id)
+    try:
+        r.xdel(stream, entry_id)
+    except Exception:
+        logger.warning("ack: XDEL failed for %s/%s (best-effort)", stream, entry_id)
 
 
 def claim_stale(
