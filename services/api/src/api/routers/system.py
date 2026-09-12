@@ -138,16 +138,24 @@ def pipeline(session: Session = Depends(get_session)):
     for name in streams.ALL_STREAMS:
         lane = {"waiting": None, "in_flight": None, "stale": 0, "consumers": 0}
         try:
-            # waiting = undelivered entries (group lag) + PEL, NOT XLEN —
-            # streams are never trimmed so XLEN only ever grows (it showed
-            # 20,703 "waiting" on a queue with 0 undelivered + 23 pending).
+            # waiting = undelivered + PEL, NOT XLEN — streams are never
+            # trimmed so XLEN only ever grows (it showed 20,703 "waiting"
+            # on a queue with 0 undelivered + 23 pending).
+            # undelivered_count() handles Redis lag=None (untrusted
+            # bookkeeping, e.g. after XDEL) with a live count fallback —
+            # int(grp.get("lag") or 0) collapsed that to 0 and hid a
+            # 73-job backlog on 2026-09-12.
             grp = next(
                 (g for g in r.xinfo_groups(name) if g.get("name") == streams.CONSUMER_GROUP),
                 None,
             )
-            lag = int(grp.get("lag") or 0) if grp else 0
+            undelivered = (
+                streams.undelivered_count(r, name)
+                if grp is not None
+                else 0
+            )
             pend = r.xpending_range(name, streams.CONSUMER_GROUP, min="-", max="+", count=100)
-            lane["waiting"] = lag + len(pend)
+            lane["waiting"] = undelivered + len(pend)
             lane["in_flight"] = len(pend)
             now_ms = r.time()[0]
             for entry in pend:
@@ -179,6 +187,26 @@ def pipeline(session: Session = Depends(get_session)):
         counts["docs_parsing"] = row["parsing"]
         counts["docs_failed"] = row["failed"]
         counts["docs_total"] = row["total"]
+
+        # parsing breakdown (derived, 2026-09-12): state='parsing' hides two
+        # phases — shards still converting vs whole-book settled waiting for
+        # the embedder (whole-book barrier). Break them out so the dashboard
+        # can show parser vs embedder lag separately. No new enum value —
+        # derived from shards counters (PG is the source of truth).
+        brow = (
+            session.execute(
+                text(
+                    "SELECT"
+                    "  count(*) FILTER (WHERE total_shards IS NOT NULL AND shards_done >= total_shards) AS awaiting_embed,"
+                    "  count(*) FILTER (WHERE total_shards IS NULL OR shards_done < total_shards) AS parsing_active"
+                    " FROM documents WHERE state='parsing'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        counts["docs_awaiting_embed"] = brow["awaiting_embed"]
+        counts["docs_parsing_active"] = brow["parsing_active"]
 
         srow = (
             session.execute(

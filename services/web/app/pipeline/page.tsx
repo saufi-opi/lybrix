@@ -203,14 +203,18 @@ export default function PipelinePage() {
           <Lane name="doc.split" lane={data.lanes["doc.split"]} />
           <div className="stage">
             <h4><span className="stepno">2</span> Parse ×{data.lanes["doc.parse"]?.consumers ?? "—"}</h4>
-            <div className="big">{inFlightParse} active</div>
+            <div className="big">{c.docs_parsing_active ?? "—"} active</div>
             <div className="sm">nssp×3 + nsschat×3<br/>avg 124s/shard</div>
           </div>
           <Lane name="doc.parse" lane={data.lanes["doc.parse"]} />
           <div className="stage">
             <h4><span className="stepno">3</span> Embed</h4>
-            <div className="big">{data.components.embed_backend === "ok" ? "jetson gpu" : "embed down"}</div>
-            <div className="sm">ollama bge-m3</div>
+            <div className="big">
+              {data.components.embed_backend === "ok"
+                ? `${c.docs_awaiting_embed ?? 0} queued`
+                : "embed down"}
+            </div>
+            <div className="sm">ollama bge-m3<br/>whole-book barrier</div>
           </div>
           <Lane name="doc.embed" lane={data.lanes["doc.embed"]} />
           <div className="stage">
