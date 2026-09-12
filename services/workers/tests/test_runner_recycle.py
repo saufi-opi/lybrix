@@ -30,9 +30,19 @@ def _run(jobs, recycle_after, *, handler_side_effect=None):
     """
     handled = []
     pool = list(jobs)
+    empty_polls = [0]
 
     def fake_read(r, stream, consumer, count=1, block_ms=5000):
-        return [(f"{len(pool)}-0", pool.pop(0))] if pool else []
+        if pool:
+            return [(f"{len(pool)}-0", pool.pop(0))]
+        # Empty-poll path: run_consumer neither sleeps nor raises here — it
+        # just spins. Sentinel from the reader (bounded) is the only
+        # deterministic way to prove the loop was still polling; the loop's
+        # except handler then re-raises via the patched time.sleep below.
+        empty_polls[0] += 1
+        if empty_polls[0] > 50:
+            raise AssertionError("recycle did not fire: consumer kept polling")
+        return []
 
     def handler(session, job):
         if handler_side_effect is not None:
@@ -94,16 +104,25 @@ def test_recycle_count_ignores_failed_jobs():
     path, i.e. not be ACKed)."""
     failures = []
 
-    def flaky(job):
+    def flaky(session, job):
         if job["n"] < 2:
             failures.append(job["n"])
             raise RuntimeError("boom")
 
     redis = MagicMock()
     pool = [{"n": 0}, {"n": 1}, {"n": 2}]
+    empty_polls = [0]
 
     def fake_read(r, stream, consumer, count=1, block_ms=5000):
-        return [(f"{len(pool)}-0", pool.pop(0))] if pool else []
+        if pool:
+            return [(f"{len(pool)}-0", pool.pop(0))]
+        # Bounded sentinel — same rationale as in _run: run_consumer spins
+        # (no sleep, no raise) on empty polls, so an unbounded [] return
+        # hangs the suite if recycle never fires.
+        empty_polls[0] += 1
+        if empty_polls[0] > 50:
+            raise AssertionError("recycle did not fire: consumer kept polling")
+        return []
 
     session_factory = MagicMock()
     session_factory.return_value.__enter__ = MagicMock(return_value=MagicMock())

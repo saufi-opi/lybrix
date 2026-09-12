@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from chunking import chunk_markdown, drop_duplicate_neighbours
 from core.config import get_settings
@@ -34,6 +35,36 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 EMBED_MAX_ATTEMPTS = 5
+
+# Parallel S3 prefetch fan-out for shard JSONs (R-9). A book with N shards
+# used to pay N sequential get_object round-trips before stitch/chunk/embed
+# could start; the pool overlaps them. Module-level (not a Settings field)
+# so no config plumbing this round.
+PREFETCH_WORKERS = 8
+
+
+def _prefetch_shards(s3c, doc_id: str, shard_rows, settings) -> dict[int, str]:
+    """Fetch every shard's parsed JSON, mapping shard.idx -> utf-8 text.
+
+    Semantics match the old serial loop exactly, just overlapped:
+
+    - any per-shard failure propagates (no swallow, no in-pool retry) so
+      the runner's on_error → embed retry/cap path behaves as before;
+    - the boto3 client is shared across workers (thread-safe for
+      get_object);
+    - small books (<=1 shard) skip the executor entirely — a pool would
+      cost more than the single round-trip it saves.
+    """
+    def _one(shard) -> tuple[int, str]:
+        key = s3.parsed_key(doc_id, shard.idx)
+        obj = s3c.get_object(Bucket=settings.s3_bucket_parsed, Key=key)
+        return shard.idx, obj["Body"].read().decode("utf-8")
+
+    if len(shard_rows) <= 1:
+        return dict(_one(shard) for shard in shard_rows)
+
+    with ThreadPoolExecutor(max_workers=PREFETCH_WORKERS) as pool:
+        return dict(pool.map(_one, shard_rows))
 
 
 def _embed_fail(redis, doc_id: str) -> int:
@@ -76,12 +107,8 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
     if not shard_rows:
         raise PlatformError(ErrorCode.PDF_CORRUPT, "no parsed shards to embed")
 
-    fetch: dict[int, str] = {}
     s3c = s3.make_s3(s)
-    for shard in shard_rows:
-        key = s3.parsed_key(str(doc_id), shard.idx)
-        obj = s3c.get_object(Bucket=s.s3_bucket_parsed, Key=key)
-        fetch[shard.idx] = obj["Body"].read().decode("utf-8")
+    fetch = _prefetch_shards(s3c, str(doc_id), shard_rows, s)
 
     from parsing.stitch import load_shard_docs, stitch
 
