@@ -26,27 +26,21 @@ _TERMINAL_STATES = {DocState.READY, DocState.FAILED, DocState.ARCHIVED, DocState
 SCAN_PAGE = 500
 
 
-def pending_embed_docs(r, stream: str = streams.STREAM_EMBED) -> set[str] | None:
-    """doc_ids holding an UNDELIVERED embed job on ``stream``.
+def pending_job_doc_ids(r, stream: str) -> set[str] | None:
+    """doc_ids holding an UNDELIVERED job on ``stream`` (any stream).
 
     Precise semantics (stream is never trimmed, so a full XRANGE would
     see every job ever ACKed and wrongly suppress future re-enqueues):
       1. everything after the group's last-delivered-id (undelivered), plus
-      2. the PEL (delivered-but-unacked) — claimed by a live embedder or
-         waiting for the reclaim step, which runs BEFORE this sweep in
-         every pass.
-    An entry delivered to a live embedder <20 min ago is invisible to the
-    reclaim and IS covered here via the PEL — re-adding it would
-    duplicate in-flight work, which is worse than a skipped sweep pass.
-
+      2. the PEL (delivered-but-unacked) — claimed by a live worker or
+         waiting for the reclaim step, which runs BEFORE the requeue
+         sweeps in every pass.
     Returns ``None`` if the scan itself fails — the caller MUST skip the
     sweep rather than blind-add (blind re-adding is exactly how the
     2026-09-11 doc.embed flood happened: ~3.2k duplicate jobs).
     """
     try:
-        groups = [
-            g for g in r.xinfo_groups(stream) if g.get("name") == streams.CONSUMER_GROUP
-        ]
+        groups = [g for g in r.xinfo_groups(stream) if g.get("name") == streams.CONSUMER_GROUP]
         if not groups:
             return set()
         last_delivered = groups[0].get("last-delivered-id") or "0-0"
@@ -88,9 +82,21 @@ def pending_embed_docs(r, stream: str = streams.STREAM_EMBED) -> set[str] | None
                 if doc_id:
                     ids.add(doc_id)
     except Exception:
-        logger.exception("pending_embed_docs scan failed on %s", stream)
+        logger.exception("pending_job_doc_ids scan failed on %s", stream)
         return None
     return ids
+
+
+def pending_embed_docs(r, stream: str = streams.STREAM_EMBED) -> set[str] | None:
+    """doc_ids holding an UNDELIVERED embed job on ``stream``.
+
+    Thin wrapper over pending_job_doc_ids kept for the embed sweep's
+    call sites and tests. An entry delivered to a live embedder <20 min
+    ago is invisible to the reclaim and IS covered here via the PEL —
+    re-adding it would duplicate in-flight work, which is worse than a
+    skipped sweep pass.
+    """
+    return pending_job_doc_ids(r, stream)
 
 
 def janitor_pass(session, redis, settings: Settings) -> dict:
@@ -130,17 +136,30 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
         if doc is not None:
             doc.shards_failed = (doc.shards_failed or 0) + 1
 
-    # 3. Requeue: non-terminal docs with no queue entry (Redis loss, §6.6)
+    # 3. Requeue: non-terminal docs with no queue entry (Redis loss, §6.6).
+    #    Dedup against undelivered split jobs first (R-6, same class as the
+    #    2026-09-11 embed flood): an UPLOADED doc whose split job sits
+    #    unacked must not be re-XADDed every pass. Scan failure → skip the
+    #    requeue entirely, never blind-add.
     reenqueued = 0
     docs = (
         session.execute(select(Document).where(~Document.state.in_(_TERMINAL_STATES)))
         .scalars()
         .all()
     )
-    for doc in docs:
-        if doc.state == DocState.UPLOADED:
-            from core.queue import contracts
+    from core.queue import contracts
 
+    queued_split_ids = pending_job_doc_ids(redis, streams.STREAM_SPLIT)
+    if queued_split_ids is None:
+        logger.warning("doc.split requeue skipped: stream scan failed (no blind re-add)")
+        queued_split_ids = set()
+        split_scan_failed = True
+    else:
+        split_scan_failed = False
+    for doc in docs:
+        if doc.state == DocState.UPLOADED and not split_scan_failed:
+            if str(doc.id) in queued_split_ids:
+                continue  # a split job is already waiting — never double-add
             streams.xadd_job(
                 redis, streams.STREAM_SPLIT, contracts.SplitJob(doc_id=doc.id, source_uri=doc.source_uri)
             )

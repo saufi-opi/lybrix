@@ -165,15 +165,8 @@ def test_reclaim_never_grows_stream():
 
 
 def test_requeue_uploaded_doc_xadds_once_per_pass():
-    """Current behavior: one doc.split XADD per UPLOADED doc per pass.
-
-    KNOWN GAP (BACKLOG R-6, not fixed here): there is no
-    undelivered-dedup on this requeue — a UPLOADED doc whose split job
-    sits unacked is re-XADDed EVERY pass, the same bug class as the
-    2026-09-11 doc.embed flood. The fix must add a pending_embed_docs-
-    style dedup scan for doc.split; this test locks the per-pass
-    invariant the fix has to preserve.
-    """
+    """One doc.split XADD per UPLOADED doc per pass — and (R-6) never for
+    a doc that already holds an undelivered split job on the stream."""
     doc = _doc("uploaded")
     redis = _base_redis()
     stats, _ = _run_pass(_base_session(docs=[doc]), redis, _base_settings())
@@ -184,3 +177,66 @@ def test_requeue_uploaded_doc_xadds_once_per_pass():
     assert stream == "doc.split"
     job_payload = json.loads(redis.xadd.call_args[0][1]["job"])
     assert job_payload["doc_id"] == str(doc.id)
+
+
+# --- R-6: doc.split requeue dedup (same class as the 2026-09-11 embed flood) ---
+
+
+def test_requeue_uploaded_doc_with_undelivered_split_job_not_reenqueued():
+    """R-6: a UPLOADED doc whose split job is already waiting on doc.split
+    (undelivered or in the PEL) must NOT be re-XADDed every pass."""
+    doc = _doc("uploaded")
+    redis = _base_redis()
+    redis.xrange.return_value = [
+        ("7-1", {"job": json.dumps({"schema_version": 1, "doc_id": str(doc.id)})})
+    ]
+    stats, _ = _run_pass(_base_session(docs=[doc]), redis, _base_settings())
+
+    assert not redis.xadd.called
+    assert stats["reenqueued"] == 0
+
+
+def test_requeue_uploaded_doc_with_other_docs_job_still_enqueued():
+    doc = _doc("uploaded")
+    other = uuid.uuid4()
+    redis = _base_redis()
+    redis.xrange.return_value = [
+        ("7-1", {"job": json.dumps({"schema_version": 1, "doc_id": str(other)})})
+    ]
+    stats, _ = _run_pass(_base_session(docs=[doc]), redis, _base_settings())
+
+    assert redis.xadd.call_count == 1
+    assert stats["reenqueued"] == 1
+
+
+def test_requeue_scan_failure_skips_requeue_no_blind_add():
+    """R-6: if the doc.split scan fails, skip the requeue entirely —
+    never blind-add (that is how the 2026-09-11 embed flood happened)."""
+    doc = _doc("uploaded")
+    redis = _base_redis()
+    redis.xinfo_groups.side_effect = RuntimeError("redis down")  # scan failure
+    stats, _ = _run_pass(_base_session(docs=[doc]), redis, _base_settings())
+
+    assert not redis.xadd.called
+    assert stats["reenqueued"] == 0
+
+
+def test_requeue_dedup_includes_pel_entries():
+    """A split job delivered-but-unacked (live splitter or awaiting
+    reclaim) must also suppress the requeue."""
+    doc = _doc("uploaded")
+    redis = _base_redis()
+    redis.xrange.return_value = []
+    redis.xpending_range.return_value = [{"message_id": "9-1"}]
+    redis.xrange.side_effect = None
+
+    def xrange(stream, min="-", max="+", count=500):
+        if min == "9-1" and max == "9-1":
+            return [("9-1", {"job": json.dumps({"doc_id": str(doc.id)})})]
+        return []
+
+    redis.xrange.side_effect = xrange
+    stats, _ = _run_pass(_base_session(docs=[doc]), redis, _base_settings())
+
+    assert not redis.xadd.called
+    assert stats["reenqueued"] == 0
