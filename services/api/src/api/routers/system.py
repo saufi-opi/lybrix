@@ -77,32 +77,27 @@ def health(session: Session = Depends(get_session)):
 
 @router.get("/queues")
 def queues():
-    """Depth + consumer lag per stream (PRD §10.1)."""
+    """Depth + consumer lag per stream (PRD §10.1).
+
+    undelivered comes from streams.undelivered_count() — NULL-safe lag with
+    a live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup
+    collapsed to 0 here, and the main dashboard disagreed with the pipeline
+    page). Errors propagate: a dead Redis must not read as an empty queue.
+    """
     r: Redis = streams.make_redis()
     out = {}
     for name in streams.ALL_STREAMS:
         try:
             pending = r.xpending(name, streams.CONSUMER_GROUP)
-            # "length" is XLEN (every entry ever written — streams are never
-            # trimmed), NOT the live backlog. "undelivered" is what callers
-            # actually want: entries the group has never seen (group lag,
-            # Redis ≥7.0). Dashboard's ready-count bug came from conflating
-            # these; kept both so old fields don't break.
-            try:
-                grp = next(
-                    (g for g in r.xinfo_groups(name) if g.get("name") == streams.CONSUMER_GROUP),
-                    None,
-                )
-                lag = int(grp.get("lag") or 0) if grp else None
-            except Exception:
-                lag = None
             out[name] = {
+                # "length" is XLEN (every entry ever written — streams are
+                # never trimmed), NOT the live backlog. Kept for history.
                 "length": r.xlen(name),
                 "pending": pending["pending"] if pending else 0,
-                "undelivered": lag,
+                "undelivered": streams.undelivered_count(r, name),
             }
         except Exception:
-            out[name] = {"length": None, "pending": None, "undelivered": None}
+            raise
     return out
 
 
