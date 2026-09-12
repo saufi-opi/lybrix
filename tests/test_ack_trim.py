@@ -91,6 +91,7 @@ def test_janitor_reclaim_trims_old_entry():
     )
     settings = MagicMock()
     settings.stuck_minutes = 60
+    settings.max_shard_attempts = 4  # DLQ cap derivation (R-8) reads this
     with (
         __import__("unittest.mock", fromlist=["patch"]).patch(
             "workers.janitor.repo.requeue_expired_leases", return_value=0
