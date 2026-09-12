@@ -23,8 +23,13 @@ export default async function DashboardPage() {
   const ready = states.ready ?? 0;
   const failed = (c.docs_failed as number) ?? 0;
   const partial = states["partial"] ?? 0;
-  // Active states = everything non-terminal (mirrors DocState lifecycle).
-  const inflight =
+  // Phase breakdown of the old ambiguous "in-flight" card (2026-09-12):
+  // parsing_active = shards still converting; awaiting_embed = whole-book
+  // settled, waiting on the embedder. Both are non-terminal doc counts —
+  // job-level in-flight (Redis PEL) lives on the pipeline page.
+  const parsingActive = (c.docs_parsing_active as number) ?? null;
+  const awaitingEmbed = (c.docs_awaiting_embed as number) ?? null;
+  const activeDocs =
     (states["uploaded"] ?? 0) +
     (states["splitting"] ?? 0) +
     (states["parsing"] ?? 0) +
@@ -40,8 +45,20 @@ export default async function DashboardPage() {
           <div className="muted">ready{total ? ` / ${total}` : ""}</div>
         </div>
         <div className="panel counter">
-          <div className="num">{inflight}</div>
-          <div className="muted">in-flight</div>
+          <div className="num">
+            {parsingActive !== null ? (
+              <>
+                {parsingActive}
+                <span className="muted" style={{ fontSize: "0.55em" }}>
+                  {" "}
+                  + {awaitingEmbed ?? 0} queued
+                </span>
+              </>
+            ) : (
+              activeDocs
+            )}
+          </div>
+          <div className="muted">parsing active (+ awaiting embed)</div>
         </div>
         <div className="panel counter">
           <div className="num">{failed}</div>
@@ -60,7 +77,8 @@ export default async function DashboardPage() {
             <tr>
               <th>stream</th>
               <th>undelivered</th>
-              <th>pending</th>
+              <th>pending (PEL)</th>
+              <th>history (XLEN)</th>
             </tr>
           </thead>
           <tbody>
@@ -69,6 +87,7 @@ export default async function DashboardPage() {
                 <td>{name}</td>
                 <td>{q.undelivered ?? "—"}</td>
                 <td>{q.pending ?? "—"}</td>
+                <td className="muted">{q.length ?? "—"}</td>
               </tr>
             ))}
           </tbody>
