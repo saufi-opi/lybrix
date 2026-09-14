@@ -36,10 +36,12 @@ class TeiClient:
         breaker_threshold: int = 5,
         backend: str = "tei",
         model: str = "BAAI/bge-m3",
+        truncate_chars: int = 0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._backend = backend.lower()
         self._model = model
+        self._truncate_chars = truncate_chars
         if self._backend not in {"tei", "ollama"}:
             raise ValueError(f"unsupported EMBED_BACKEND: {backend}")
         self._client = httpx.Client(timeout=timeout_s)
@@ -67,6 +69,15 @@ class TeiClient:
             raise CircuitOpen(self._consecutive_failures)
         if not texts:
             return []
+        if self._truncate_chars and any(len(t) > self._truncate_chars for t in texts):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "truncating %d oversize text(s) to %d chars before embed",
+                sum(1 for t in texts if len(t) > self._truncate_chars),
+                self._truncate_chars,
+            )
+            texts = [t[: self._truncate_chars] for t in texts]
 
         delay = 0.5
         last_exc: Exception | None = None

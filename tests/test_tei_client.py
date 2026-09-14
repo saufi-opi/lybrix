@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from embedding.client import CircuitOpen, TeiClient, TeiUnavailable
@@ -129,4 +131,48 @@ def test_health_falls_back_to_root_for_ollama():
     c._client = httpx.Client(transport=t)
     assert c.health() is True
     assert t.calls == ["/health", "/"]  # TEI first, ollama fallback
+    c.close()
+class CapturingTransport(httpx.BaseTransport):
+    """Stub transport that records each request's JSON body."""
+
+    def __init__(self, responses: list[httpx.Response]):
+        self.responses = list(responses)
+        self.bodies: list[dict] = []
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.bodies.append(json.loads(request.content))
+        return self.responses.pop(0)
+
+
+def _capturing_client(responses, truncate_chars=0) -> TeiClient:
+    c = TeiClient("http://tei.test", backend="tei", truncate_chars=truncate_chars)
+    transport = CapturingTransport(responses)
+    c._client = httpx.Client(transport=transport)
+    c._transport = transport
+    return c
+
+
+def test_embed_truncates_oversize_text_when_enabled():
+    """Oversize chunk text is cut client-side so one pathological chunk
+    (e.g. a whitespace-free blob) cannot 400 the whole batch and poison
+    the embed job — the failure that stalled the TEI-400 ledger batch."""
+    c = _capturing_client([httpx.Response(200, json=[[0.5]])], truncate_chars=16000)
+    big = "x" * 20000
+    assert c.embed([big]) == [[0.5]]
+    assert len(c._transport.bodies[0]["inputs"][0]) == 16000
+    c.close()
+
+
+def test_embed_truncate_disabled_passes_full_text():
+    c = _capturing_client([httpx.Response(200, json=[[0.5]])])
+    big = "x" * 30000
+    assert c.embed([big]) == [[0.5]]
+    assert len(c._transport.bodies[0]["inputs"][0]) == 30000
+    c.close()
+
+
+def test_embed_truncate_leaves_normal_text_untouched():
+    c = _capturing_client([httpx.Response(200, json=[[0.5]])], truncate_chars=16000)
+    assert c.embed(["short text"]) == [[0.5]]
+    assert c._transport.bodies[0]["inputs"] == ["short text"]
     c.close()

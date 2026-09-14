@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     embed_dim: int = Field(default=1024)
     embed_batch_size: int = Field(default=48)
     embed_concurrency: int = Field(default=6)
+    # Chunk text is truncated client-side before POST /embed. bge-m3's context
+    # is 8192 tokens; a pathological chunk (e.g. one giant whitespace-free
+    # blob) would otherwise 400 the whole batch and poison the embed job.
+    # 0 disables truncation. chars-per-token ~3 -> 16k chars << 8192 tokens.
+    embed_truncate_chars: int = Field(default=16000)
 
     # -- splitting (PRD §6.2)
     shard_pages: int = Field(default=20, ge=4, le=200)
@@ -124,6 +129,8 @@ class Settings(BaseSettings):
             )
         if self.embed_batch_size < 1:
             raise SettingsError("EMBED_BATCH_SIZE must be >= 1")
+        if self.embed_truncate_chars < 0:
+            raise SettingsError("EMBED_TRUNCATE_CHARS must be >= 0")
         if self.search_default_top_k > self.search_max_top_k:
             raise SettingsError(
                 f"SEARCH_DEFAULT_TOP_K ({self.search_default_top_k}) must be "

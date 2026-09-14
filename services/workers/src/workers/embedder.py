@@ -163,6 +163,7 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
         s.tei_ingest_url,
         backend=s.embed_backend,
         model=s.embed_model,
+        truncate_chars=s.embed_truncate_chars,
     ) as tei:
         batches = [chunks[i : i + s.embed_batch_size] for i in range(0, len(chunks), s.embed_batch_size)]
         for group in batches:
