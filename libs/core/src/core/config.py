@@ -49,8 +49,10 @@ class Settings(BaseSettings):
     # Chunk text is truncated client-side before POST /embed. bge-m3's context
     # is 8192 tokens; a pathological chunk (e.g. one giant whitespace-free
     # blob) would otherwise 400 the whole batch and poison the embed job.
-    # 0 disables truncation. chars-per-token ~3 -> 16k chars << 8192 tokens.
-    embed_truncate_chars: int = Field(default=16000)
+    # 0 disables truncation. Worst-case tokenization (base64/symbol blobs) is
+    # ~1 token/char, so the cap must stay well under bge-m3 8192 ctx; normal
+    # chunks are <=512 whitespace-words (~3k chars) and never touched.
+    embed_truncate_chars: int = Field(default=6000)
 
     # -- splitting (PRD §6.2)
     shard_pages: int = Field(default=20, ge=4, le=200)
