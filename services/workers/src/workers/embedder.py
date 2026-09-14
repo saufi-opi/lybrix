@@ -174,12 +174,15 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
         from transformers import AutoTokenizer
 
         tok = AutoTokenizer.from_pretrained("BAAI/bge-m3")
-        # Calibrated empirically against ollama 0.33.2 (14 Sep): the real
-        # rejection ceiling is ~6961 XLM-R tokens for a SINGLE input (the
-        # 8192 bert context loses ~1200 to prompt overhead), and BATCHES
-        # 400 earlier still (~6000 measured) — per-request overhead scales
-        # with input count. 6000 covers both with margin.
-        ctx_budget = 6000
+        # PINNED EMPIRICALLY (14 Sep, ollama 0.33.2): the real embed ceiling
+        # is 2048 ollama-tokens — 2048 passes, 2049 400s, and the truncate
+        # flag does NOT rescue real content (only single-char runs get
+        # pre-truncated). XLM-R and ollama counts diverge up to ~3x on
+        # punctuation-heavy text, so we budget by the CONSERVATIVE ratio:
+        # measured ollama-count ≈ 1.0-1.02 x xlmr-count on prose but ≥3x on
+        # pipe/dash table garbage. 1900-token xlmr budget keeps worst-case
+        # batches under 2048 after the per-request overhead margin.
+        ctx_budget = 1900
         batches: list[list] = []
         cur: list = []
         cur_tokens = 0
