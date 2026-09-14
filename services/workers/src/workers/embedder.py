@@ -165,7 +165,35 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
         model=s.embed_model,
         truncate_chars=s.embed_truncate_chars,
     ) as tei:
-        batches = [chunks[i : i + s.embed_batch_size] for i in range(0, len(chunks), s.embed_batch_size)]
+        # Batch by TRUE TOKEN count, not char count or fixed count: dense
+        # table-border garbage tokenizes at ~2 tokens/char, so a single
+        # 4k-char chunk alone busts bge-m3's 8192 ctx and ollama ignores
+        # the truncate flag for oversized inputs (empirically pinned).
+        # The XLM-R fast tokenizer ships in the image with the model —
+        # its count matches ollama's rejection boundary within a few %.
+        from transformers import AutoTokenizer
+
+        tok = AutoTokenizer.from_pretrained("BAAI/bge-m3")
+        ctx_budget = 7000  # 8192 ctx, ~15% safety margin
+        batches: list[list] = []
+        cur: list = []
+        cur_tokens = 0
+        for c in chunks:
+            t = len(tok(c.text, add_special_tokens=False)["input_ids"])
+            if t > ctx_budget:
+                # pathological single chunk: hard-cut to the token budget
+                import dataclasses
+
+                ids = tok(c.text, truncation=True, max_length=ctx_budget,
+                          add_special_tokens=False)["input_ids"]
+                c = dataclasses.replace(c, text=tok.decode(ids))
+            if cur and cur_tokens + t > ctx_budget or len(cur) >= s.embed_batch_size:
+                batches.append(cur)
+                cur, cur_tokens = [], 0
+            cur.append(c)
+            cur_tokens += t
+        if cur:
+            batches.append(cur)
         for group in batches:
             vectors = tei.embed([c.text for c in group])
             for c, vec in zip(group, vectors, strict=True):
