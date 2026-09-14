@@ -174,7 +174,12 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
         from transformers import AutoTokenizer
 
         tok = AutoTokenizer.from_pretrained("BAAI/bge-m3")
-        ctx_budget = 7000  # 8192 ctx, ~15% safety margin
+        # Calibrated empirically against ollama 0.33.2 (14 Sep): the real
+        # rejection ceiling is ~6961 XLM-R tokens for a SINGLE input (the
+        # 8192 bert context loses ~1200 to prompt overhead), and BATCHES
+        # 400 earlier still (~6000 measured) — per-request overhead scales
+        # with input count. 6000 covers both with margin.
+        ctx_budget = 6000
         batches: list[list] = []
         cur: list = []
         cur_tokens = 0
