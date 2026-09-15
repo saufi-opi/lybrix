@@ -29,8 +29,8 @@ def raw_key(doc_id: str) -> str:
 
 
 def parsed_key(doc_id: str, shard_idx: int) -> str:
-    """Object key for a parsed shard JSON: s3://parsed/{doc}/{idx}.json."""
-    return f"{doc_id}/{shard_idx}.json"
+    """Object key for a parsed shard markdown: s3://parsed/{doc}/{idx}.md."""
+    return f"{doc_id}/{shard_idx}.md"
 
 
 def presign_put(s3, bucket: str, key: str, expires_s: int = 3600) -> str:
@@ -45,5 +45,9 @@ def download_to(s3, bucket: str, key: str, dest_path: str) -> None:
     s3.download_file(bucket, key, dest_path)
 
 
-def upload_json(s3, bucket: str, key: str, text: str) -> None:
-    s3.put_object(Bucket=bucket, Key=key, Body=text.encode("utf-8"), ContentType="application/json")
+def upload_text(s3, bucket: str, key: str, text: str, content_type: str = "text/markdown") -> None:
+    s3.put_object(Bucket=bucket, Key=key, Body=text.encode("utf-8"), ContentType=content_type)
+
+
+# Historical name kept as an alias — old callers may still reference it.
+upload_json = upload_text

@@ -94,7 +94,7 @@ def test_failure_on_one_shard_propagates():
     real = s3c.get_object.side_effect
 
     def get_object(Bucket, Key):
-        if Key.endswith("/1.json"):
+        if Key.endswith("/1.md"):
             raise RuntimeError("s3 explode")
         return real(Bucket=Bucket, Key=Key)
 

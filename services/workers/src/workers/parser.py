@@ -126,7 +126,7 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
     markdown = result.document.export_to_markdown()
 
     parsed_key = s3.parsed_key(str(doc_id), idx)
-    s3.upload_json(s3.make_s3(s), s.s3_bucket_parsed, parsed_key, markdown)
+    s3.upload_text(s3.make_s3(s), s.s3_bucket_parsed, parsed_key, markdown)
 
     duration_ms = int((time.monotonic() - started) * 1000)
     repo.mark_shard_done(
