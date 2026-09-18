@@ -8,7 +8,7 @@
 # (RAG_TAILSCALE_IP), so ingest workers on nsspq reach them over tailscale
 # and nothing is exposed to the LAN/internet. Images are pulled from GHCR
 # (CI-built :edge) — never build on VM2.
-name: rag-platform
+name: lybrix
 
 x-core-store-env: &core-store-env
   DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag
@@ -115,7 +115,7 @@ services:
 
   api:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/api:edge
+    image: ghcr.io/saufi-opi/lybrix/api:edge
     profiles: [core]
     environment:
       <<: *core-store-env
@@ -141,7 +141,7 @@ services:
 
   worker-janitor:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [core]
     command: ["python", "-m", "workers.janitor"]
     environment:
@@ -155,7 +155,7 @@ services:
 
   mcp:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/mcp:edge
+    image: ghcr.io/saufi-opi/lybrix/mcp:edge
     profiles: [core]
     environment:
       <<: *core-store-env
@@ -169,7 +169,7 @@ services:
 
   web:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/web:edge
+    image: ghcr.io/saufi-opi/lybrix/web:edge
     profiles: [core]
     environment:
       API_URL: http://api:8000
@@ -190,7 +190,7 @@ services:
       - "traefik.http.services.ragweb.loadbalancer.server.port=3000"
 
   migrate:
-    image: ghcr.io/saufi-opi/rag-platform/api:edge
+    image: ghcr.io/saufi-opi/lybrix/api:edge
     profiles: [core]
     command: ["alembic", "-c", "/app/migrations/alembic.ini", "upgrade", "head"]
     environment: {<<: *core-store-env}
@@ -203,7 +203,7 @@ services:
 
   worker-splitter:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.splitter"]
     environment: {<<: *ingest-env}
@@ -214,7 +214,7 @@ services:
 
   worker-parser:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.parser"]
     environment:
@@ -240,7 +240,7 @@ services:
 
   worker-parser-2:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.parser"]
     environment:
@@ -262,7 +262,7 @@ services:
 
   worker-parser-3:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.parser"]
     environment:
@@ -284,7 +284,7 @@ services:
 
   worker-parser-4:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.parser"]
     environment:
@@ -305,7 +305,7 @@ services:
 
   worker-embedder:
     <<: *restart
-    image: ghcr.io/saufi-opi/rag-platform/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/workers:edge
     profiles: [ingest]
     command: ["python", "-m", "workers.embedder"]
     environment:

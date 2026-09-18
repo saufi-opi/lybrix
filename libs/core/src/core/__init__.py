@@ -1,4 +1,4 @@
-"""core — shared domain library for rag-platform.
+"""core — shared domain library for lybrix.
 
 Everything here is importable by every service; nothing here imports a
 service backwards (PRD §12). No service-specific logic lives in this

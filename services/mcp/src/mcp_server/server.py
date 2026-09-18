@@ -216,7 +216,7 @@ def build_server(settings: Settings | None = None):
 
     from mcp_server.middleware import UsageMiddleware
 
-    mcp = FastMCP("rag-platform", middleware=[UsageMiddleware(session_factory=factory)])
+    mcp = FastMCP("lybrix", middleware=[UsageMiddleware(session_factory=factory)])
 
     @mcp.tool
     def search(query: str, collection: str | None = None, top_k: int = 8) -> list[dict[str, Any]]:

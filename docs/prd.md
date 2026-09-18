@@ -637,7 +637,7 @@ The trigger is either "I need to correlate across services" or "I need more than
 Python monorepo with a shared library, plus the Next.js app. Every deployable has its own Dockerfile; workers share one image with different entrypoints (one image build, four commands — much faster CI than four images).
 
 ```
-rag-platform/
+lybrix/
 ├── README.md
 ├── Makefile                       # up, down, logs, migrate, seed, test, scale
 ├── .env.example
@@ -776,7 +776,7 @@ yaml
 
 ```
 # deploy/docker-compose.yml
-name: rag-platform
+name: lybrix
 
 x-app-env: &app-env
   DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag

@@ -1,4 +1,4 @@
-"""Single source of truth for all rag-platform configuration (PRD §12).
+"""Single source of truth for all lybrix configuration (PRD §12).
 
 Pydantic-settings BaseModel: every configurable value is read from the
 environment through this module — nothing else in the codebase reads

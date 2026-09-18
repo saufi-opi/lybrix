@@ -1,4 +1,4 @@
-# rag-platform
+# lybrix
 
 Document Ingestion & Retrieval Platform — self-hosted ingestion of large
 PDFs (300–800 pages) into a searchable corpus exposed via **MCP**, with an
@@ -36,7 +36,7 @@ query p99 (PRD §4.3).
 ## Repo layout
 
 ```
-rag-platform/
+lybrix/
 ├── libs/            # core (config/db/queue/storage/obs), parsing, chunking,
 │                    # embedding, retrieval — shared, service-agnostic
 ├── services/        # api, workers (one image, four commands), mcp, web
@@ -65,7 +65,7 @@ First boot runs `migrate` automatically. Then upload through the UI at
 ```json
 {
   "mcpServers": {
-    "rag-platform": {
+    "lybrix": {
       "url": "https://your-host/mcp",
       "headers": { "Authorization": "Bearer <api-key>" }
     }

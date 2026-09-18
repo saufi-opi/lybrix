@@ -25,13 +25,13 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "lybrix",
     "rag-api",
     "rag-chunking",
     "rag-core",
     "rag-embedding",
     "rag-mcp",
     "rag-parsing",
-    "rag-platform",
     "rag-retrieval",
     "rag-workers",
 ]
@@ -1669,6 +1669,25 @@ wheels = [
 ]
 
 [[package]]
+name = "lybrix"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0" },
+    { name = "ruff", specifier = ">=0.14" },
+]
+
+[[package]]
 name = "mail-parser"
 version = "4.6.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3117,25 +3136,6 @@ requires-dist = [
     { name = "torch", marker = "sys_platform == 'linux'", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "sys_platform != 'linux'", specifier = "==0.22.1" },
     { name = "torchvision", marker = "sys_platform == 'linux'", specifier = "==0.22.1", index = "https://download.pytorch.org/whl/cpu" },
-]
-
-[[package]]
-name = "rag-platform"
-version = "0.1.0"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0" },
-    { name = "ruff", specifier = ">=0.14" },
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [project]
-name = "rag-platform"
+name = "lybrix"
 version = "0.1.0"
 description = "Document Ingestion & Retrieval Platform — sharded Docling parsing, TEI embeddings, Qdrant hybrid retrieval, MCP server. Spec: docs/prd.md."
 readme = "README.md"

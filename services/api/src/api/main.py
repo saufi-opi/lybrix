@@ -13,7 +13,7 @@ from api.routers import collections, documents, events, keys, search, system, us
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="rag-platform control plane",
+        title="lybrix control plane",
         version="0.1.0",
         description="Document Ingestion & Retrieval Platform — PRD docs/prd.md",
     )
