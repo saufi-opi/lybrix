@@ -165,7 +165,13 @@ services:
     depends_on: [postgres, qdrant]
     ports:
       - "${BIND_IP}:8430:8430"
-    networks: [internal]
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lybrixmcp.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/mcp`)"
+      - "traefik.http.routers.lybrixmcp.entrypoints=web"
+      - "traefik.http.routers.lybrixmcp.priority=200"
+      - "traefik.http.services.lybrixmcp.loadbalancer.server.port=8430"
 
   web:
     <<: *restart
