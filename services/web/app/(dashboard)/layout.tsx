@@ -22,8 +22,11 @@ export default function DashboardLayout({
     <div className="shell">
       <nav className="sidebar">
         <span className="brand">
-          rag-platform
-          <small>ingestion &amp; retrieval</small>
+          <img src="/lybrix-mark.png" alt="" width={30} height={30} className="brand-mark" />
+          <span className="brand-text">
+            lybrix
+            <small>ingestion &amp; retrieval</small>
+          </span>
         </span>
         <ActiveNav items={NAV} />
         <div className="sidebar-footer">

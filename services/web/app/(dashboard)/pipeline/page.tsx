@@ -134,7 +134,7 @@ export default function PipelinePage() {
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.75rem" }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Pipeline <span style={{ color: "var(--accent)" }}>Live View</span></h2>
+        <h2 style={{ margin: 0 }}>Pipeline live view</h2>
         <span className="live-badge">
           {err ? <><span className="pdot perr" /> retrying…</> : <><span className="pdot pok" /> live · 5s</>}
         </span>

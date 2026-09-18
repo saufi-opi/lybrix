@@ -53,7 +53,8 @@ function LoginForm() {
     <div className="login-wrap">
       <div className={`login-card ${shakeClass}`} key={shake}>
         <div className="login-brand">
-          <span className="brand-mark">rag-platform</span>
+          <img src="/lybrix-mark.png" alt="" width={36} height={36} className="login-mark" />
+          <span className="brand-mark">lybrix</span>
           <small>ingestion &amp; retrieval</small>
         </div>
         <p className="login-sub">Sign in to the admin console</p>
@@ -86,9 +87,6 @@ function LoginForm() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <p className="login-foot muted">
-          Credentials are configured on the server (ADMIN_USER / ADMIN_PASSWORD_HASH).
-        </p>
       </div>
     </div>
   );

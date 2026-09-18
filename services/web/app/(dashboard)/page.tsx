@@ -96,10 +96,13 @@ export default async function DashboardPage() {
 
       <div className="panel">
         <h3>Dependencies</h3>
-        <p className="muted">
-          {Object.entries(health)
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(" · ")}
+        <p className="dep-line">
+          {Object.entries(health).map(([k, v]) => (
+            <span key={k} className="dep">
+              <span className={v === "ok" ? "ok-dot" : "err-dot"} />
+              <b>{k}</b> {v}
+            </span>
+          ))}
         </p>
       </div>
     </>
