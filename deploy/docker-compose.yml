@@ -134,10 +134,10 @@ services:
     networks: [internal, traefik-public]
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.ragapi.rule=Host(`rag.loxikum.xyz`) && PathPrefix(`/v1`)"
-      - "traefik.http.routers.ragapi.entrypoints=web"
-      - "traefik.http.routers.ragapi.priority=200"
-      - "traefik.http.services.ragapi.loadbalancer.server.port=8000"
+      - "traefik.http.routers.lybrixapi.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/v1`)"
+      - "traefik.http.routers.lybrixapi.entrypoints=web"
+      - "traefik.http.routers.lybrixapi.priority=200"
+      - "traefik.http.services.lybrixapi.loadbalancer.server.port=8000"
 
   worker-janitor:
     <<: *restart
@@ -184,10 +184,10 @@ services:
     networks: [internal, traefik-public]
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.ragweb.rule=Host(`rag.loxikum.xyz`)"
-      - "traefik.http.routers.ragweb.entrypoints=web"
-      - "traefik.http.routers.ragweb.priority=100"
-      - "traefik.http.services.ragweb.loadbalancer.server.port=3000"
+      - "traefik.http.routers.lybrixweb.rule=Host(`lybrix.loxikum.xyz`)"
+      - "traefik.http.routers.lybrixweb.entrypoints=web"
+      - "traefik.http.routers.lybrixweb.priority=100"
+      - "traefik.http.services.lybrixweb.loadbalancer.server.port=3000"
 
   migrate:
     image: ghcr.io/saufi-opi/lybrix/api:edge
