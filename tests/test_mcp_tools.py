@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
+from mcp_server.auth import AuthError, assert_collection_allowed
 from mcp_server.server import _clamp_top_k, read_pages_impl, search_impl
 
 from tests.conftest import make_settings
@@ -55,8 +58,6 @@ def _chunk(i, doc_id, seq=0, page=5):
 
 
 def test_read_pages_caps_at_max():
-    import uuid
-
     from core.db.models import Document
 
     doc_id = str(uuid.uuid4())
@@ -71,3 +72,27 @@ def test_read_pages_caps_at_max():
     out = read_pages_impl(session, doc_id, 1, 400, _settings())
     assert out["page_end"] == 1 + _settings().read_pages_max - 1
     assert out["truncated_to"] == _settings().read_pages_max
+
+
+def _key(collections):
+    from core.db.models import ApiKey
+
+    return ApiKey(
+        id=uuid.uuid4(),
+        name="k",
+        key_hash="0" * 64,
+        scopes=["search"],
+        collections=collections,
+    )
+
+
+def test_search_rejects_out_of_scope_collection():
+    key = _key(["col-a"])
+    with pytest.raises(AuthError, match="not scoped"):
+        assert_collection_allowed(key, "col-b")
+    assert_collection_allowed(key, "col-a")  # in scope: passes
+    # empty collections list = unrestricted
+    unrestricted = _key(None)
+    assert_collection_allowed(unrestricted, "col-b")
+    # None collection is never restricted
+    assert_collection_allowed(key, None)

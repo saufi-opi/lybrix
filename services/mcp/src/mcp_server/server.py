@@ -25,6 +25,8 @@ from core.db.models import Chunk, DocState, Document
 from core.db.session import make_engine, make_session_factory
 from sqlalchemy import func, select
 
+from mcp_server.auth import assert_collection_allowed
+
 logger = logging.getLogger(__name__)
 
 
@@ -212,7 +214,9 @@ def build_server(settings: Settings | None = None):
 
     tei_query = TeiClient(s.tei_query_url)
 
-    mcp = FastMCP("rag-platform")
+    from mcp_server.middleware import UsageMiddleware
+
+    mcp = FastMCP("rag-platform", middleware=[UsageMiddleware(session_factory=factory)])
 
     @mcp.tool
     def search(query: str, collection: str | None = None, top_k: int = 8) -> list[dict[str, Any]]:
@@ -220,6 +224,12 @@ def build_server(settings: Settings | None = None):
         ingested corpus with page-number citations. Use for "what does the
         library say about X" questions; returns top_k chunks with doc
         title, page range, and heading path for verification."""
+        from mcp_server.middleware import current_api_key
+
+        key = current_api_key()
+        if key is None:
+            raise RuntimeError("search called without an authenticated key")
+        assert_collection_allowed(key, collection)
         with factory() as session:
             return search_impl(session, qdrant, lambda q: tei_query.embed([q])[0], s, query, collection, top_k)
 
@@ -275,7 +285,22 @@ def main() -> None:  # pragma: no cover - process entry
     s = get_settings()
     logging.basicConfig(level=s.log_level.upper())
     mcp = build_server(s)
-    mcp.run(transport="http", host=s.mcp_host, port=s.mcp_port)
+    from starlette.middleware import Middleware as ASGIMiddleware
+
+    from mcp_server.middleware import McpAuthMiddleware
+
+    app = mcp.http_app(
+        path="/mcp",
+        middleware=[
+            ASGIMiddleware(
+                McpAuthMiddleware,
+                session_factory=make_session_factory(make_engine(s)),
+            )
+        ],
+    )
+    import uvicorn
+
+    uvicorn.run(app, host=s.mcp_host, port=s.mcp_port)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,12 @@ with scope enforcement (PRD §11)."""
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 
-from core.db.models import ApiKey
+from core.db.models import ApiKey, KeyUsage
 from core.db.session import make_engine, make_session_factory
-from fastapi import Depends, Header, HTTPException, status
+from core.keys import hash_key
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 _engine = None
@@ -33,10 +35,29 @@ def get_session() -> Generator[Session, None, None]:
 VALID_SCOPES = {"search", "ingest", "admin"}
 
 
+def _reject_if_unusable(key: ApiKey) -> None:
+    """Shared validity rule for both surfaces: revoked or expired -> 401."""
+    if key.revoked_at is not None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid key")
+    if key.expires_at is not None and key.expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "key expired")
+
+
+def _record_usage(session: Session, key: ApiKey, action: str) -> None:
+    """Usage row + last_used_at bump; commits with the request transaction."""
+    try:
+        key.last_used_at = datetime.now(UTC)
+        session.add(key)
+        session.add(KeyUsage(api_key_id=key.id, surface="api", action=action))
+    except Exception:
+        pass  # usage bookkeeping must never fail an API request
+
+
 def require_scope(scope: str):
     """Dependency factory: 401 without a valid key, 403 without the scope."""
 
     def _dep(
+        request: Request,
         authorization: str | None = Header(default=None),
         session: Session = Depends(get_session),
     ) -> ApiKey:
@@ -44,12 +65,12 @@ def require_scope(scope: str):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer key")
         raw = authorization.split(" ", 1)[1].strip()
         # key_hash is stored as sha256(raw) — argon2 upgrade tracked in docs.
-        import hashlib
-
-        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        key_hash = hash_key(raw)
         key = session.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
-        if key is None or key.revoked_at is not None:
+        if key is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid key")
+        _reject_if_unusable(key)
+        _record_usage(session, key, action=f"{request.method} {request.url.path}")
         scopes = set(key.scopes or [])
         if scope not in scopes:
             raise HTTPException(

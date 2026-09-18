@@ -207,3 +207,21 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KeyUsage(Base):
+    """One row per authenticated request, per surface (PRD §11 usage audit)."""
+
+    __tablename__ = "key_usage"
+    __table_args__ = (Index("ix_key_usage_key_created", "api_key_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id"), nullable=False
+    )
+    surface: Mapped[str] = mapped_column(Text)  # 'mcp' | 'api'
+    action: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
