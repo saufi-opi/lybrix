@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ActiveNav } from "@/components/active-nav";
+import { LogoutButton } from "@/components/logout-button";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -21,6 +22,8 @@ const NAV = [
   { href: "/upload", label: "Upload" },
   { href: "/logs", label: "Logs" },
   { href: "/collections", label: "Collections" },
+  { href: "/keys", label: "API Keys" },
+  { href: "/usage", label: "Usage" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -37,6 +40,9 @@ export default function RootLayout({
               <small>ingestion &amp; retrieval</small>
             </span>
             <ActiveNav items={NAV} />
+            <div className="sidebar-footer">
+              <LogoutButton />
+            </div>
           </nav>
           <main className="container">{children}</main>
         </div>

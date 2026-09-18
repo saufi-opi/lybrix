@@ -174,6 +174,10 @@ services:
     environment:
       API_URL: http://api:8000
       HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}   # bcrypt hash — see .env.example
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      API_ADMIN_KEY: ${API_ADMIN_KEY}   # admin-scope ragk_ key the web proxy uses server-side
     depends_on: [api]
     ports:
       - "${BIND_IP}:3000:3000"

@@ -5,7 +5,6 @@
  * Never offer only "retry". */
 
 import { useState } from "react";
-import { apiClient } from "@/lib/api-client";
 
 export function RetryButtons({ docId }: { docId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -15,7 +14,12 @@ export function RetryButtons({ docId }: { docId: string }) {
     setBusy(scope);
     setMsg(null);
     try {
-      await apiClient.retry(docId, scope);
+      const res = await fetch(`/api/admin/v1/documents/${docId}/retry`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope }),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
       setMsg(`${label} queued`);
     } catch (e) {
       setMsg(`failed: ${e instanceof Error ? e.message : String(e)}`);

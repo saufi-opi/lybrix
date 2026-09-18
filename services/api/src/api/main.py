@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from api.routers import collections, documents, events, keys, search, system
+from api.routers import collections, documents, events, keys, search, system, usage
 
 
 def create_app() -> FastAPI:
@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
     app.include_router(collections.router)
     app.include_router(search.router)
     app.include_router(keys.router)
+    app.include_router(usage.router)
     app.include_router(events.router)
     app.include_router(system.router)
     return app

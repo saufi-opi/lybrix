@@ -4,8 +4,6 @@
 
 import { useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 async function sha256Hex(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", buf);
@@ -32,7 +30,7 @@ export default function UploadPage() {
         log.push(`${file.name}: hashing…`);
         setStatus([...log]);
         const content_sha256 = await sha256Hex(file);
-        const presign = await fetch(`${API_URL}/v1/documents/presign`, {
+        const presign = await fetch(`/api/admin/v1/documents/presign`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ collection_id: collection, byte_size: file.size }),
@@ -44,7 +42,7 @@ export default function UploadPage() {
           headers: { "content-type": "application/pdf" },
         });
 
-        const commit = await fetch(`${API_URL}/v1/documents/${presign.doc_id}/commit`, {
+        const commit = await fetch(`/api/admin/v1/documents/${presign.doc_id}/commit`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
