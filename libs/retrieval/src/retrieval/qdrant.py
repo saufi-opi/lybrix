@@ -17,69 +17,48 @@ from qdrant_client import models as qm
 
 COLLECTION_NAME = "chunks"
 
-# Native BM25 function (Qdrant >= 1.19): server-side sparse generation from
-# the "text" payload field, written to the existing "bm25" sparse space.
-# The old client-side design declared this sparse config but never wrote
-# to it (zero points carry bm25 vectors), so reusing the name is safe.
-BM25_FUNCTION_NAME = "bm25"
-TEXT_FIELD = "text"
 
-
-def _bm25_function() -> dict:
-    return {
-        "name": BM25_FUNCTION_NAME,
-        "function_type": "bm25",
-        "input": [{"type": "text", "text_field": TEXT_FIELD}],
-        "output": BM25_FUNCTION_NAME,
-    }
+def _collection(settings: Settings | None = None) -> str:
+    return COLLECTION_NAME
 
 
 def _raw_rest(client: QdrantClient, method: str, url: str, json: dict | None = None) -> dict:
     """Raw REST through the client's typed-openapi transport.
 
-    Verified against qdrant-client 1.19.0: the typed CreateCollection /
-    UpdateCollection models have no `functions` field and unknown kwargs are
-    asserted-rejected, so native-function create/patch MUST go through the
-    ApiClient.request passthrough (auth headers and base URL are carried).
+    Verified against qdrant-client 1.19.0: the typed CollectionInfo model
+    silently drops fields the generated models don't know, so config reads
+    that must see every key go through the ApiClient.request passthrough
+    (auth headers and base URL are carried).
     """
     return client.http.client.request(type_=dict, method=method, url=url, json=json)
 
 
-def _collection_functions(client: QdrantClient, name: str) -> list[dict] | None:
-    """Functions array from GET /collections/{name} via raw REST.
-
-    Verified against qdrant-client 1.19.0: the typed CollectionInfo model
-    silently DROPS the `functions` field, so the raw body is the only source.
-    """
+def _sparse_config(client: QdrantClient, name: str) -> dict:
+    """The collection's sparse_vectors config via raw REST GET."""
     body = _raw_rest(client, "GET", f"/collections/{name}")
-    return (body.get("result") or {}).get("functions")
+    params = ((body.get("result") or {}).get("config") or {}).get("params") or {}
+    return params.get("sparse_vectors") or {}
 
 
-def ensure_bm25_function(client: QdrantClient, settings: Settings | None = None) -> str:
-    """Idempotent: add the native BM25 function to an existing collection.
+def ensure_bm25_idf(client: QdrantClient, settings: Settings | None = None) -> str:
+    """Idempotent: ensure the `bm25` sparse space uses modifier=idf.
 
-    Read-only inspection first (GET /collections/{name} — raw REST, because
-    the typed CollectionInfo model drops the functions field); patch via
-    PATCH /collections/{name} with {"functions": [...]} only when the
-    function is absent or its input/output differ, so re-runs are no-ops and
-    never disturb vectors or other config.
+    With modifier=idf the SERVER multiplies in IDF at query time, so the
+    client only writes TF-based sparse vectors (retrieval.bm25.encode_bm25).
+    Read-only inspection first (raw REST GET — the typed CollectionInfo
+    model drops config fields); PATCH {"sparse_vectors": {"bm25":
+    {"modifier": "idf"}}} only when the modifier differs, so re-runs are
+    no-ops and never touch vectors or other config. Verified live: this
+    PATCH works on qdrant 1.19.1 (GET then shows modifier=idf).
     """
     name = _collection(settings)
-    functions = _collection_functions(client, name) or []
-    desired = _bm25_function()
-    for function in functions:
-        if function.get("name") == BM25_FUNCTION_NAME:
-            if function.get("output") == desired["output"] and function.get(
-                "input"
-            ) == desired["input"]:
-                return name  # already present and matching: no request sent
-            break
-    _raw_rest(client, "PATCH", f"/collections/{name}", json={"functions": [desired]})
+    current = (_sparse_config(client, name).get("bm25") or {}).get("modifier")
+    if current == "idf":
+        return name  # already applied: no request sent
+    _raw_rest(
+        client, "PATCH", f"/collections/{name}", json={"sparse_vectors": {"bm25": {"modifier": "idf"}}}
+    )
     return name
-
-
-def _collection(settings: Settings | None = None) -> str:
-    return COLLECTION_NAME
 
 
 def ensure_collection(client: QdrantClient, settings: Settings | None = None) -> str:
@@ -89,29 +68,25 @@ def ensure_collection(client: QdrantClient, settings: Settings | None = None) ->
     s = settings or get_settings()
     name = _collection(settings)
     if client.collection_exists(name):
-        # Existing-collection path (the one that matters in prod): make sure
-        # the native BM25 function is present, idempotent-by-inspection.
-        return ensure_bm25_function(client, s)
+        return name
 
-    # qdrant-client 1.19.0: the typed CreateCollection model has no
-    # `functions` field and unknown kwargs are asserted-rejected, so the
-    # function definition rides on the create body via raw REST.
-    _raw_rest(
-        client,
-        "PUT",
-        f"/collections/{name}",
-        json={
-            "vectors": {"dense": {"size": s.embed_dim, "distance": "Cosine"}},
-            "sparse_vectors": {
-                "bm25": {"on_disk": False, "full_scan_threshold": 1000}
-            },
-            "hnsw_config": {"m": 16, "ef_construct": 128},
-            "quantization_config": {
-                "scalar": {"type": "int8", "always_ram": True}
-            },
-            "functions": [_bm25_function()],
+    client.create_collection(
+        collection_name=name,
+        # qdrant-client >= 1.10: VectorsConfig is a typing.Union — pass the
+        # named-vectors dict directly (instantiating the Union raises
+        # "Cannot instantiate typing.Union").
+        vectors_config={"dense": qm.VectorParams(size=s.embed_dim, distance=qm.Distance.COSINE)},
+        sparse_vectors_config={
+            "bm25": qm.SparseVectorParams(
+                index=qm.SparseIndexParams(on_disk=False, full_scan_threshold=1000)
+            )
         },
+        hnsw_config=qm.HnswConfigDiff(m=16, ef_construct=128),
+        quantization_config=qm.ScalarQuantization(
+            scalar=qm.ScalarQuantizationConfig(type=qm.ScalarType.INT8, always_ram=True)
+        ),
     )
+    ensure_bm25_idf(client, s)
     client.update_collection(
         collection_name=name,
         payload_schema=None,  # payload indexes created below

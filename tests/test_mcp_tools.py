@@ -40,12 +40,7 @@ def test_search_requires_embedder():
         search_impl(FakeSession(), FakeQdrant(), boom, _settings(), "query")
 
 
-# --- BM25 flag threading (Phase 1) ------------------------------------------
-
-
-class _EmptyScalars:
-    def scalars(self):
-        return []
+# --- BM25 flag threading (Phase 1, revised: client-side sparse query) -------
 
 
 class _EmptyResult:
@@ -66,10 +61,10 @@ def capture_hybrid(monkeypatch):
     captured = {}
 
     def fake_hybrid_search(qdrant, collection, session, dense_query, sparse_query,
-                           top_k, collection_id=None, doc_id=None, bm25_text=None):
+                           top_k, collection_id=None, doc_id=None):
         captured.update(
             collection=collection, dense_query=dense_query, sparse_query=sparse_query,
-            top_k=top_k, collection_id=collection_id, bm25_text=bm25_text,
+            top_k=top_k, collection_id=collection_id, doc_id=doc_id,
         )
         return []  # no hits: search_impl returns []
 
@@ -77,8 +72,8 @@ def capture_hybrid(monkeypatch):
     return captured
 
 
-def test_search_impl_flag_off_passes_bm25_none(capture_hybrid):
-    """RETRIEVAL_BM25_ENABLED absent/false -> bm25_text=None reaches
+def test_search_impl_flag_off_passes_sparse_none(capture_hybrid):
+    """RETRIEVAL_BM25_ENABLED absent/false -> sparse_query=None reaches
     hybrid_search (byte-identical dense-only behavior)."""
     settings = make_settings(retrieval_bm25_enabled=False)
     def embed(_q):
@@ -86,17 +81,21 @@ def test_search_impl_flag_off_passes_bm25_none(capture_hybrid):
 
     out = search_impl(_CaptureSession(), FakeQdrant(), embed, settings, "some query")
     assert out == []
-    assert capture_hybrid["bm25_text"] is None
+    assert capture_hybrid["sparse_query"] is None
     assert capture_hybrid["collection"] == "chunks"
 
 
-def test_search_impl_flag_on_passes_query_text(capture_hybrid):
+def test_search_impl_flag_on_passes_encoded_sparse(capture_hybrid):
+    """Flag on -> the raw query text is client-side encoded into the BM25
+    sparse vector and passed as sparse_query."""
+    from retrieval.bm25 import encode_bm25
+
     settings = make_settings(retrieval_bm25_enabled=True)
     def embed(_q):
         return [0.1, 0.2]
 
     search_impl(_CaptureSession(), FakeQdrant(), embed, settings, "some query")
-    assert capture_hybrid["bm25_text"] == "some query"
+    assert capture_hybrid["sparse_query"] == encode_bm25("some query")
 
 
 def _chunk(i, doc_id, seq=0, page=5):

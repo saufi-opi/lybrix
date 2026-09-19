@@ -120,8 +120,9 @@ class Settings(BaseSettings):
     read_pages_max: int = Field(default=30, ge=1)
     retrieval_bm25_enabled: bool = Field(
         default=False,
-        description="Native BM25 prefetch in search (requires Qdrant >= 1.19 "
-        "collection function + text payloads backfilled). Default off: dense-only.",
+        description="Client-side BM25 sparse prefetch in search (requires the "
+        "collection's bm25 sparse space backfilled via "
+        "scripts/ops_backfill_sparse.py + idf modifier). Default off: dense-only.",
     )
 
     # -- misc
