@@ -124,17 +124,32 @@ def run_backfill(
                 if not dry_run:
                     # ONLY the 'bm25' named sparse vector — never dense,
                     # never upsert (upsert would rewrite the dense vector).
-                    client.update_vectors(
-                        collection_name=COLLECTION_NAME,
-                        points=[
-                            qm.PointVectors(
-                                id=point_id_for(chunk_hash),
-                                vector={"bm25": qm.SparseVector(**encode_bm25(text))},
+                    # Skip chunks whose text encodes to an empty sparse vector
+                    # (OCR garbage / image-only pages): an empty SparseVector
+                    # is rejected by Qdrant with 422 "must specify vectors to
+                    # update for point" and would fail the whole batch. Verified
+                    # live 2026-09-19: chunk 0415ae5ec985afe4 is such a case.
+                    skipped_empty = 0
+                    points = []
+                    for chunk_hash, text in batch_rows[start_index:]:
+                        vec = qm.SparseVector(**encode_bm25(text))
+                        if vec.indices:
+                            points.append(
+                                qm.PointVectors(
+                                    id=point_id_for(chunk_hash),
+                                    vector={"bm25": vec},
+                                )
                             )
-                            for chunk_hash, text in batch_rows[start_index:]
-                        ],
-                        wait=False,
-                    )
+                        else:
+                            skipped_empty += 1
+                    if points:
+                        client.update_vectors(
+                            collection_name=COLLECTION_NAME,
+                            points=points,
+                            wait=False,
+                        )
+                    if skipped_empty:
+                        print(f"batch {batch_no + 1}: skipped {skipped_empty} empty-vector chunks", flush=True)
                 done += len(batch_rows) - start_index
                 last_hash = batch_rows[-1][0]
                 batch_no += 1

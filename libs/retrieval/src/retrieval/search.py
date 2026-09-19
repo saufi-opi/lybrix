@@ -91,10 +91,21 @@ def search_vectors(
                 filter=qfilter,
             )
         )
+    # Weighted RRF when both lanes are present (Qdrant >=1.17; verified live on
+    # 1.19.1: Rrf(k=60, weights=[...]) serializes and is accepted). Dense gets
+    # full weight, BM25 0.15 — measured 2026-09-19: equal-weight RRF let generic
+    # keyword matches out-compete the correct semantic hits on this corpus
+    # (eval phase1-bm25: hit@1 53%→33%, 6 regressions); with 0.15 BM25 only
+    # boosts candidates that BOTH lanes agree on. Sparse-only/dense-only
+    # paths are unaffected (weights apply to a single-lane list trivially).
+    if len(prefetch) == 2:
+        fusion = qm.RrfQuery(rrf=qm.Rrf(k=60, weights=[1.0, 0.15]))
+    else:
+        fusion = qm.FusionQuery(fusion=qm.Fusion.RRF)
     res = client.query_points(
         collection_name=collection,
         prefetch=prefetch,
-        query=qm.FusionQuery(fusion=qm.Fusion.RRF),
+        query=fusion,
         limit=limit,
         with_payload=True,
     )
