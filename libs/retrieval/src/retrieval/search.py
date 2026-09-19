@@ -64,8 +64,16 @@ def search_vectors(
     sparse_query: dict | None,
     limit: int,
     qfilter: qm.Filter | None = None,
+    bm25_text: str | None = None,
 ) -> tuple[list, list]:
-    """Two prefetches (dense + bm25) fused by Qdrant's native RRF."""
+    """Two prefetches (dense + bm25) fused by Qdrant's native RRF.
+
+    bm25_text activates the native-function prefetch (server-side BM25 over
+    the "text" payload field — verified against qdrant-client 1.19.0:
+    qm.Prefetch accepts a plain str query and serializes as
+    {"query": "<text>", "using": "bm25"}); sparse_query is the legacy
+    client-side path. Exactly one (or neither) is honored — never both.
+    """
     prefetch = [
         qm.Prefetch(
             query=dense_query,
@@ -74,7 +82,17 @@ def search_vectors(
             filter=qfilter,
         )
     ]
-    if sparse_query:
+    if bm25_text is not None:
+        prefetch.append(
+            qm.Prefetch(
+                query=bm25_text,  # text query — Qdrant runs the BM25
+                using="bm25",  # function server-side against payload "text"
+                limit=limit,
+                filter=qfilter,
+                # optional bump: limit=limit * 2 for lexical recall; keep =limit initially
+            )
+        )
+    elif sparse_query:
         prefetch.append(
             qm.Prefetch(
                 query=qm.SparseVector(
@@ -147,10 +165,11 @@ def hybrid_search(
     top_k: int,
     collection_id: str | None = None,
     doc_id: str | None = None,
+    bm25_text: str | None = None,
 ) -> list[SearchHit]:
     """Full §7.1 path minus the (phase 2) rerank: filter → hybrid → hydrate."""
     qfilter = build_filter(collection_id=collection_id, doc_id=doc_id)
     points, _ = search_vectors(
-        qdrant, collection, dense_query, sparse_query, top_k, qfilter
+        qdrant, collection, dense_query, sparse_query, top_k, qfilter, bm25_text
     )
     return hydrate(session, points)

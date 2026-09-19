@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     search_default_top_k: int = Field(default=8, ge=1)
     search_max_top_k: int = Field(default=25, ge=1)
     read_pages_max: int = Field(default=30, ge=1)
+    retrieval_bm25_enabled: bool = Field(
+        default=False,
+        description="Native BM25 prefetch in search (requires Qdrant >= 1.19 "
+        "collection function + text payloads backfilled). Default off: dense-only.",
+    )
 
     # -- misc
     log_level: str = Field(default="INFO")

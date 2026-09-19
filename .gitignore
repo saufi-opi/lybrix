@@ -31,3 +31,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Ops checkpoints
+scripts/bm25_backfill_checkpoint.json

@@ -162,6 +162,7 @@ services:
       TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on nsspq over tailscale
       MCP_API_KEY: ${MCP_API_KEY}
       QDRANT_API_KEY: ${QDRANT_API_KEY}   # qdrant service API key (else qdrant-client 401)
+      RETRIEVAL_BM25_ENABLED: ${RETRIEVAL_BM25_ENABLED:-false}
     depends_on: [postgres, qdrant]
     ports:
       - "${BIND_IP}:8430:8430"

@@ -52,6 +52,7 @@ def search_impl(
 
     limit = _clamp_top_k(settings, top_k)
     dense = query_embedder(f"search_query: {query}")
+    use_bm25 = settings.retrieval_bm25_enabled
     hits = hybrid_search(
         qdrant,
         COLLECTION_NAME,
@@ -60,6 +61,7 @@ def search_impl(
         sparse_query=None,  # BM25 sparse wiring lands with M3
         top_k=limit,
         collection_id=collection,
+        bm25_text=query if use_bm25 else None,  # native BM25 prefetch per flag
     )
     out = []
     for h in hits:

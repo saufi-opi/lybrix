@@ -40,6 +40,65 @@ def test_search_requires_embedder():
         search_impl(FakeSession(), FakeQdrant(), boom, _settings(), "query")
 
 
+# --- BM25 flag threading (Phase 1) ------------------------------------------
+
+
+class _EmptyScalars:
+    def scalars(self):
+        return []
+
+
+class _EmptyResult:
+    def scalars(self):
+        return []
+
+
+class _CaptureSession(FakeSession):
+    """Enough session surface for search_impl → hybrid_search; hybrid_search
+    itself is faked out so the test captures exactly what reaches it."""
+
+    def execute(self, stmt):
+        return _EmptyResult()
+
+
+@pytest.fixture
+def capture_hybrid(monkeypatch):
+    captured = {}
+
+    def fake_hybrid_search(qdrant, collection, session, dense_query, sparse_query,
+                           top_k, collection_id=None, doc_id=None, bm25_text=None):
+        captured.update(
+            collection=collection, dense_query=dense_query, sparse_query=sparse_query,
+            top_k=top_k, collection_id=collection_id, bm25_text=bm25_text,
+        )
+        return []  # no hits: search_impl returns []
+
+    monkeypatch.setattr("retrieval.search.hybrid_search", fake_hybrid_search)
+    return captured
+
+
+def test_search_impl_flag_off_passes_bm25_none(capture_hybrid):
+    """RETRIEVAL_BM25_ENABLED absent/false -> bm25_text=None reaches
+    hybrid_search (byte-identical dense-only behavior)."""
+    settings = make_settings(retrieval_bm25_enabled=False)
+    def embed(_q):
+        return [0.1, 0.2]
+
+    out = search_impl(_CaptureSession(), FakeQdrant(), embed, settings, "some query")
+    assert out == []
+    assert capture_hybrid["bm25_text"] is None
+    assert capture_hybrid["collection"] == "chunks"
+
+
+def test_search_impl_flag_on_passes_query_text(capture_hybrid):
+    settings = make_settings(retrieval_bm25_enabled=True)
+    def embed(_q):
+        return [0.1, 0.2]
+
+    search_impl(_CaptureSession(), FakeQdrant(), embed, settings, "some query")
+    assert capture_hybrid["bm25_text"] == "some query"
+
+
 def _chunk(i, doc_id, seq=0, page=5):
     import uuid
 
