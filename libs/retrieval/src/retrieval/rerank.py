@@ -7,6 +7,13 @@ from __future__ import annotations
 import httpx
 from embedding.client import TeiUnavailable
 
+# CPU latency budget: ~30 candidates × 2000 chars keeps the request under
+# the <500ms/query p50 target on 4 cores (the model's 8194-token context
+# would allow far more but costs 4-core time; if conceptual-category
+# regressions show up in the phase2-rerank eval, revisit this cap FIRST as
+# the cheapest quality lever).
+RERANK_MAX_CHARS = 2000
+
 
 def rerank(
     tei_rerank_url: str,
@@ -25,7 +32,13 @@ def rerank(
     try:
         resp = httpx.post(
             f"{tei_rerank_url.rstrip('/')}/rerank",
-            json={"query": query, "texts": texts, "raw_scores": False},
+            # truncation happens before the HTTP boundary so the returned
+            # indices still map 1:1 to the caller's original list
+            json={
+                "query": query,
+                "texts": [t[:RERANK_MAX_CHARS] for t in texts],
+                "raw_scores": False,
+            },
             timeout=timeout_s,
         )
         resp.raise_for_status()

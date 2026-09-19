@@ -124,6 +124,27 @@ class Settings(BaseSettings):
         "collection's bm25 sparse space backfilled via "
         "scripts/ops_backfill_sparse.py + idf modifier). Default off: dense-only.",
     )
+    rerank_enabled: bool = Field(
+        default=False,
+        description="Cross-encoder rerank in search (TEI /rerank, "
+        "bge-reranker-v2-m3). Requires TEI_RERANK_URL reachable; on "
+        "TeiUnavailable search falls back to un-reranked order. Default off.",
+    )
+    tei_rerank_url: str = Field(
+        default="http://localhost:8083",
+        description="TEI rerank service base URL (nsspq :8083 over Tailscale).",
+    )
+    rerank_candidates: int = Field(
+        default=30,
+        ge=1,
+        description="Candidate pool fetched from Qdrant for reranking "
+        "(tool top_k is unaffected; results are truncated back to top_k).",
+    )
+    rerank_timeout_s: float = Field(
+        default=5.0,
+        ge=0.1,
+        description="Per-request timeout for the rerank HTTP call.",
+    )
 
     # -- misc
     log_level: str = Field(default="INFO")
@@ -144,6 +165,8 @@ class Settings(BaseSettings):
                 f"SEARCH_DEFAULT_TOP_K ({self.search_default_top_k}) must be "
                 f"<= SEARCH_MAX_TOP_K ({self.search_max_top_k})"
             )
+        if self.rerank_enabled and not self.tei_rerank_url:
+            raise SettingsError("RERANK_ENABLED=true requires TEI_RERANK_URL")
         return self
 
 

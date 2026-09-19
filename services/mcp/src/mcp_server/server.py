@@ -55,6 +55,9 @@ def search_impl(
     use_bm25 = settings.retrieval_bm25_enabled
     from retrieval.bm25 import encode_bm25
 
+    # Rerank needs a candidate pool wider than the tool's top_k; without the
+    # flag the fetch size is exactly what it always was.
+    fetch_k = max(limit, settings.rerank_candidates) if settings.rerank_enabled else limit
     hits = hybrid_search(
         qdrant,
         COLLECTION_NAME,
@@ -63,11 +66,43 @@ def search_impl(
         # flag on: client-side BM25 sparse query (server idf modifier applies
         # at query time); flag off: None → byte-identical dense-only path
         sparse_query=encode_bm25(query) if use_bm25 else None,
-        top_k=limit,
+        top_k=fetch_k,
         collection_id=collection,
     )
+
+    # Phase 2 rerank: cross-encoder reorders the fetched pool, then truncate
+    # to the tool's top_k. TeiUnavailable (service down/timeout) → log and
+    # return the un-reranked order — retrieval quality degrades to phase-1,
+    # availability never does.
+    if settings.rerank_enabled and len(hits) > 1:
+        from dataclasses import replace
+
+        from embedding.client import TeiUnavailable
+        from retrieval.rerank import rerank
+
+        try:
+            ranked = rerank(
+                settings.tei_rerank_url,
+                query,
+                [h.text for h in hits],
+                top_k=len(hits),
+                timeout_s=settings.rerank_timeout_s,
+            )
+            # Score semantics: replace RRF scores with rerank scores so
+            # position and score agree. SearchHit is frozen — rebuild the
+            # reordered list with substituted scores. The comprehension
+            # evaluates against the pre-reassignment hits list, and ranked
+            # covers all indices (top_k=len(hits)).
+            by_idx = {i: s for i, s in ranked}
+            hits = [replace(h, score=by_idx[i]) for i, h in ((i, hits[i]) for i, _ in ranked)]
+        except TeiUnavailable:
+            logger.warning(
+                "rerank unavailable; returning un-reranked order (query=%r)",
+                query[:80],
+            )
+
     out = []
-    for h in hits:
+    for h in hits[:limit]:
         item = {
             "doc_title": h.doc_title,
             "page_start": h.page_start,

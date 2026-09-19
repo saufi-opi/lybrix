@@ -163,6 +163,10 @@ services:
       MCP_API_KEY: ${MCP_API_KEY}
       QDRANT_API_KEY: ${QDRANT_API_KEY}   # qdrant service API key (else qdrant-client 401)
       RETRIEVAL_BM25_ENABLED: ${RETRIEVAL_BM25_ENABLED:-false}
+      TEI_RERANK_URL: ${TEI_RERANK_PUBLIC_URL:-}   # tei-rerank on nsspq over tailscale
+      RERANK_ENABLED: ${RERANK_ENABLED:-false}
+      RERANK_CANDIDATES: ${RERANK_CANDIDATES:-30}
+      RERANK_TIMEOUT_S: ${RERANK_TIMEOUT_S:-5}
     depends_on: [postgres, qdrant]
     ports:
       - "${BIND_IP}:8430:8430"
@@ -370,6 +374,32 @@ services:
       interval: 20s
       retries: 20
       start_period: 10m
+    networks: [ingestnet]
+
+  tei-rerank:
+    <<: *restart
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    profiles: [ingest]
+    command: >
+      --model-id ${TEI_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      --max-concurrent-requests 16
+      --dtype float32
+    volumes: [hfcache:/data]
+    # Phase 2 reranker: cross-encoder over the 30-candidate pool. CPU budget:
+    # 4 cores keeps a 30-candidate request under ~500ms p50; the Xeon also
+    # runs parsers (3×2.6 + 1.5 cores), embedder, and tei-query. fp32 weights
+    # ≈ 2.2GB weights; 8g limit (tei-query lesson: 5g OOM-looped at 6.2G peak —
+    # same margin style for a long-context model whose KV/activation memory
+    # grows with batch length).
+    mem_limit: 8g
+    cpus: 4
+    ports:
+      - "${BIND_IP}:8083:80"   # mcp on VM2 reaches rerank here (Tailscale only)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:80/health || exit 1"]
+      interval: 20s
+      retries: 20
+      start_period: 10m    # first boot downloads ~2.2GB model into hfcache
     networks: [ingestnet]
 
 volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}}
