@@ -383,6 +383,7 @@ services:
     command: >
       --model-id ${TEI_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       --max-concurrent-requests 16
+      --max-client-batch-size 32
       --dtype float32
     volumes: [hfcache:/data]
     # Phase 2 reranker: cross-encoder over the 30-candidate pool. CPU budget:
@@ -392,7 +393,11 @@ services:
     # same margin style for a long-context model whose KV/activation memory
     # grows with batch length).
     mem_limit: 8g
-    cpus: 4
+    cpus: 8   # was 4: measured 2026-09-19 — at 4 cores a 30-text rerank request
+              # exceeds the backend batch forcing (max_batch_requests=8) and 429s
+              # with "Model is overloaded"; 8 cores + --max-client-batch-size 32
+              # lets TEI accept and internally split the pool. Host has 8 cores
+              # and idle ingest workers; parser CPU contention acceptable.
     ports:
       - "${BIND_IP}:8083:80"   # mcp on VM2 reaches rerank here (Tailscale only)
     healthcheck:
