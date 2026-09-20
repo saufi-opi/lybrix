@@ -1,5 +1,5 @@
 /** GET /api/auth/status — {authenticated, hasPassword} for the login page. */
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";

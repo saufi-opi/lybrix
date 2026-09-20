@@ -57,77 +57,72 @@ export default function UsagePage() {
   const activeKeys = current?.by_key.filter((k) => k.calls > 0).length ?? 0;
 
   return (
-    <>
-      <div className="panel">
-        <div className="panel-head">
-          <h2>Usage</h2>
-          <div className="seg">
-            {PERIODS.map((p) => (
-              <button
-                key={p}
-                className={p === period ? "seg-active" : undefined}
-                onClick={() => setPeriod(p)}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
+    <div className="panel">
+      <div className="panel-head">
+        <h2>Usage</h2>
+        <div className="seg">
+          {PERIODS.map((p) => (
+            <button
+              type="button"
+              key={p}
+              className={p === period ? "seg-active" : undefined}
+              onClick={() => setPeriod(p)}
+            >
+              {p}
+            </button>
+          ))}
         </div>
-        {error && <p className="login-error">{error}</p>}
-        {loading && !current ? (
-          <p className="muted">Loading usage…</p>
-        ) : (
-          <>
-            <div className="grid4">
-              <div className="counter stat-card">
-                <div className="num">{current?.total ?? "—"}</div>
-                <p className="muted">calls · {period}</p>
-              </div>
-              <div className="counter stat-card">
-                <div className="num">{week?.total ?? "—"}</div>
-                <p className="muted">calls · 7d</p>
-              </div>
-              <div className="counter stat-card">
-                <div className="num">{activeKeys}</div>
-                <p className="muted">keys used · {period}</p>
-              </div>
-              <div className="counter stat-card">
-                <div className="num top-key">
-                  {top ? (top.name ?? top.key_id.slice(0, 8)) : "—"}
-                </div>
-                <p className="muted">top key {top ? `· ${top.calls} calls` : ""}</p>
-              </div>
-            </div>
-            {current && current.by_key.length > 0 && (
-              <table className="usage-table">
-                <thead>
-                  <tr>
-                    <th>key</th>
-                    <th>calls</th>
-                    <th>last used</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {current.by_key.map((k) => (
-                    <tr key={k.key_id}>
-                      <td>{k.name ?? <code>{k.key_id.slice(0, 8)}</code>}</td>
-                      <td>{k.calls}</td>
-                      <td className="muted">
-                        {k.last_used_at
-                          ? new Date(k.last_used_at).toLocaleString()
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {current && current.by_key.length === 0 && (
-              <p className="muted">No authenticated calls in the last {period}.</p>
-            )}
-          </>
-        )}
       </div>
-    </>
+      {error && <p className="login-error">{error}</p>}
+      {loading && !current ? (
+        <p className="muted">Loading usage…</p>
+      ) : (
+        <>
+          <div className="grid4">
+            <div className="counter stat-card">
+              <div className="num">{current?.total ?? "—"}</div>
+              <p className="muted">calls · {period}</p>
+            </div>
+            <div className="counter stat-card">
+              <div className="num">{week?.total ?? "—"}</div>
+              <p className="muted">calls · 7d</p>
+            </div>
+            <div className="counter stat-card">
+              <div className="num">{activeKeys}</div>
+              <p className="muted">keys used · {period}</p>
+            </div>
+            <div className="counter stat-card">
+              <div className="num top-key">{top ? (top.name ?? top.key_id.slice(0, 8)) : "—"}</div>
+              <p className="muted">top key {top ? `· ${top.calls} calls` : ""}</p>
+            </div>
+          </div>
+          {current && current.by_key.length > 0 && (
+            <table className="usage-table">
+              <thead>
+                <tr>
+                  <th>key</th>
+                  <th>calls</th>
+                  <th>last used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {current.by_key.map((k) => (
+                  <tr key={k.key_id}>
+                    <td>{k.name ?? <code>{k.key_id.slice(0, 8)}</code>}</td>
+                    <td>{k.calls}</td>
+                    <td className="muted">
+                      {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {current && current.by_key.length === 0 && (
+            <p className="muted">No authenticated calls in the last {period}.</p>
+          )}
+        </>
+      )}
+    </div>
   );
 }

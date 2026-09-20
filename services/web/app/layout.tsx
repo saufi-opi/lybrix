@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif } from "next/font/google";
+import { Geist, IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif } from "next/font/google";
 import "./globals.css";
+import { Providers } from "@/app/providers";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -37,15 +41,21 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
-      className={`${plexSans.variable} ${plexMono.variable} ${plexSerif.variable}`}
+      className={cn(
+        plexSans.variable,
+        plexMono.variable,
+        plexSerif.variable,
+        "font-sans",
+        geist.variable,
+      )}
     >
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

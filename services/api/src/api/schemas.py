@@ -48,6 +48,18 @@ class RetryRequest(BaseModel):
     scope: str = Field(pattern="^(shards|embed|full)$")
 
 
+class ShardOut(BaseModel):
+    idx: int
+    page_start: int
+    page_end: int
+    state: str
+    attempts: int
+    needs_ocr: bool
+    duration_ms: int | None
+    peak_rss_mb: int | None
+    error_code: str | None
+
+
 class CollectionCreate(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str

@@ -1,5 +1,5 @@
 /** Cookie gate: every page except /login requires a valid admin session. */
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 export async function middleware(req: NextRequest) {

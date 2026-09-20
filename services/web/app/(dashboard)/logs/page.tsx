@@ -37,13 +37,7 @@ export default async function LogsPage({
               <td>{String(e.stage ?? "—")}</td>
               <td>{String(e.code ?? "—")}</td>
               <td>{String(e.message)}</td>
-              <td>
-                {e.doc_id ? (
-                  <a href={`/documents/${String(e.doc_id)}`}>open</a>
-                ) : (
-                  "—"
-                )}
-              </td>
+              <td>{e.doc_id ? <a href={`/documents/${String(e.doc_id)}`}>open</a> : "—"}</td>
             </tr>
           ))}
         </tbody>

@@ -1,7 +1,7 @@
 /** Documents list (PRD §8.1 screen 2): filters, progress, state badges. */
 
-import { apiClient } from "@/lib/api-client";
 import { ProgressBar } from "@/components/progress-bar";
+import { apiClient } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +22,20 @@ export default async function DocumentsPage({
         <input name="q" placeholder="Search title…" defaultValue={params.q} />
         <select name="state" defaultValue={params.state ?? ""}>
           <option value="">any state</option>
-          {["uploaded", "splitting", "parsing", "embedding", "ready", "partial", "failed", "archived"].map(
-            (s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            )
-          )}
+          {[
+            "uploaded",
+            "splitting",
+            "parsing",
+            "embedding",
+            "ready",
+            "partial",
+            "failed",
+            "archived",
+          ].map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
         </select>
         <button type="submit">Filter</button>
       </form>
@@ -61,7 +68,10 @@ export default async function DocumentsPage({
                     <span className={`badge ${d.state}`}>{d.state}</span>
                   </td>
                   <td style={{ minWidth: 120 }}>
-                    <ProgressBar pct={pct} label={`${d.shards_done}/${d.total_shards ?? "?"} shards`} />
+                    <ProgressBar
+                      pct={pct}
+                      label={`${d.shards_done}/${d.total_shards ?? "?"} shards`}
+                    />
                   </td>
                   <td>{d.completeness != null ? `${Math.round(d.completeness * 100)}%` : "—"}</td>
                   <td className="muted">{new Date(d.updated_at).toLocaleString()}</td>

@@ -20,7 +20,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_session, require_scope
-from api.schemas import CommitRequest, DocumentOut, PresignRequest, PresignResponse, RetryRequest
+from api.schemas import (
+    CommitRequest,
+    DocumentOut,
+    PresignRequest,
+    PresignResponse,
+    RetryRequest,
+    ShardOut,
+)
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -110,7 +117,7 @@ def get_document(
     return doc
 
 
-@router.get("/{doc_id}/shards")
+@router.get("/{doc_id}/shards", response_model=list[ShardOut])
 def get_shards(
     doc_id: uuid.UUID, session: Session = Depends(get_session)
 ):

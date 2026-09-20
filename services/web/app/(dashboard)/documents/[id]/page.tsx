@@ -1,21 +1,14 @@
 /** Document detail (PRD §8.1 screen 3): shard grid, retry buttons. */
 
-import { apiClient } from "@/lib/api-client";
-import { ShardGrid } from "@/components/shard-grid";
 import { RetryButtons } from "@/components/retry-buttons";
+import { ShardGrid } from "@/components/shard-grid";
+import { apiClient } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function DocumentDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function DocumentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [doc, shards] = await Promise.all([
-    apiClient.document(id),
-    apiClient.shards(id),
-  ]);
+  const [doc, shards] = await Promise.all([apiClient.document(id), apiClient.shards(id)]);
 
   return (
     <>

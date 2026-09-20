@@ -17,7 +17,7 @@ export function LogoutButton() {
   }
 
   return (
-    <button className="logout-btn" onClick={logout} disabled={busy}>
+    <button type="button" className="logout-btn" onClick={logout} disabled={busy}>
       {busy ? "Signing out…" : "Sign out"}
     </button>
   );

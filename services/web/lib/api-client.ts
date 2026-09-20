@@ -1,62 +1,75 @@
-/** Typed client for the control-plane API (PRD §9). */
+/** Typed client for the control-plane API (PRD §9).
+ *
+ * Now a thin facade over the generated OpenAPI client (lib/client/, from
+ * @hey-api/openapi-ts). Base-URL wiring lives in lib/oid-client.ts (imported
+ * for its side effect). Existing pages keep this interface; new code should
+ * call the generated SDK / lib/queries.ts directly and drop the wrappers.
+ */
 
-const API_URL = process.env.API_URL ?? "http://localhost:8000";
-/** Browser-side calls go through same-origin (Next rewrites / reverse proxy);
- *  server components use API_URL directly. `isBrowser` picks the right one. */
-const isBrowser = typeof window !== "undefined";
-const BASE = isBrowser ? "" : API_URL;
+// Side effect: configures the generated client's baseUrl (server = API_URL,
+// browser = same-origin rewrite). Must run before any SDK call.
+import "@/lib/oid-client";
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`API ${res.status}: ${detail.slice(0, 200)}`);
-  }
-  return res.json() as Promise<T>;
-}
+import {
+  getDocumentV1DocumentsDocIdGet,
+  getShardsV1DocumentsDocIdShardsGet,
+  healthV1SystemHealthGet,
+  listCollectionsV1CollectionsGet,
+  listDocumentsV1DocumentsGet,
+  listEventsV1EventsGet,
+  pipelineV1SystemPipelineGet,
+  queuesV1SystemQueuesGet,
+  retryV1DocumentsDocIdRetryPost,
+} from "@/lib/client/sdk.gen";
+import type { DocumentOut, ShardOut } from "@/lib/client/types.gen";
 
-export interface DocumentRow {
-  id: string;
-  title: string | null;
-  collection_id: string | null;
-  page_count: number | null;
-  state: string;
-  total_shards: number | null;
-  shards_done: number;
-  shards_failed: number;
-  completeness: number | null;
-  error_code: string | null;
-  updated_at: string;
-}
+/** Re-exported so existing imports of the hand-written types keep working. */
+export type DocumentRow = DocumentOut;
+export type ShardRow = ShardOut;
 
-export interface ShardRow {
-  idx: number;
-  page_start: number;
-  page_end: number;
-  state: string;
-  attempts: number;
-  needs_ocr: boolean;
-  duration_ms: number | null;
-  peak_rss_mb: number | null;
-  error_code: string | null;
-}
+/** throwOnError makes the SDK reject non-2xx instead of returning the error
+ * envelope — matches the old api<T>() contract of throwing on !res.ok. */
+const THROW = { throwOnError: true } as const;
 
 export const apiClient = {
-  documents: (params = "") => api<DocumentRow[]>(`/v1/documents${params}`),
-  document: (id: string) => api<DocumentRow>(`/v1/documents/${id}`),
-  shards: (id: string) => api<ShardRow[]>(`/v1/documents/${id}/shards`),
-  health: () => api<Record<string, string>>("/v1/system/health"),
-  queues: () => api<Record<string, { length: number | null; pending: number | null; undelivered: number | null }>>("/v1/system/queues"),
-  pipeline: () => api<Record<string, unknown>>("/v1/system/pipeline"),
-  events: (params = "") => api<Record<string, unknown>[]>(`/v1/events${params}`),
-  collections: () => api<Record<string, unknown>[]>("/v1/collections"),
+  documents: (params = "") => {
+    const qs = new URLSearchParams(params.replace(/^\?/, ""));
+    return listDocumentsV1DocumentsGet({
+      query: Object.fromEntries(qs),
+      ...THROW,
+    }).then((r) => r.data as DocumentRow[]);
+  },
+  document: (id: string) =>
+    getDocumentV1DocumentsDocIdGet({ path: { doc_id: id }, ...THROW }).then(
+      (r) => r.data as DocumentRow,
+    ),
+  shards: (id: string) =>
+    getShardsV1DocumentsDocIdShardsGet({ path: { doc_id: id }, ...THROW }).then(
+      (r) => r.data as ShardRow[],
+    ),
+  health: () => healthV1SystemHealthGet(THROW).then((r) => r.data as Record<string, string>),
+  queues: () =>
+    queuesV1SystemQueuesGet(THROW).then(
+      (r) =>
+        r.data as Record<
+          string,
+          { length: number | null; pending: number | null; undelivered: number | null }
+        >,
+    ),
+  pipeline: () => pipelineV1SystemPipelineGet(THROW).then((r) => r.data as Record<string, unknown>),
+  events: (params = "") => {
+    const qs = new URLSearchParams(params.replace(/^\?/, ""));
+    return listEventsV1EventsGet({
+      query: Object.fromEntries(qs),
+      ...THROW,
+    }).then((r) => r.data as Record<string, unknown>[]);
+  },
+  collections: () =>
+    listCollectionsV1CollectionsGet(THROW).then((r) => r.data as Record<string, unknown>[]),
   retry: (id: string, scope: string) =>
-    api<{ retried: string }>(`/v1/documents/${id}/retry`, {
-      method: "POST",
-      body: JSON.stringify({ scope }),
-    }),
+    retryV1DocumentsDocIdRetryPost({
+      path: { doc_id: id },
+      body: { scope },
+      ...THROW,
+    }).then((r) => r.data as { retried: string }),
 };

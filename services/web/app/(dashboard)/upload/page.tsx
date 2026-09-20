@@ -54,7 +54,7 @@ export default function UploadPage() {
         log.push(
           commit.ok
             ? `${file.name}: accepted (${presign.doc_id})`
-            : `${file.name}: rejected (${commit.status})`
+            : `${file.name}: rejected (${commit.status})`,
         );
       } catch (e) {
         log.push(`${file.name}: error ${e instanceof Error ? e.message : String(e)}`);
@@ -91,6 +91,7 @@ export default function UploadPage() {
       />
       <ul>
         {status.map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: status lines are append-only log entries
           <li key={i} className="muted">
             {line}
           </li>

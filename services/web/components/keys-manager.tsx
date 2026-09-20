@@ -138,18 +138,15 @@ export function KeysManager() {
     if (!name.trim() || scopes.size === 0) return;
     setBusy(true);
     try {
-      const created = await adminFetch<KeyRow & { raw_key: string }>(
-        "/api/admin/v1/keys",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: name.trim(),
-            scopes: [...scopes],
-            collections: picked.size ? [...picked] : null,
-            expires_in: expiry,
-          }),
-        },
-      );
+      const created = await adminFetch<KeyRow & { raw_key: string }>("/api/admin/v1/keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          scopes: [...scopes],
+          collections: picked.size ? [...picked] : null,
+          expires_in: expiry,
+        }),
+      });
       setCreating(false);
       setName("");
       setScopes(new Set(["search"]));
@@ -191,13 +188,13 @@ export function KeysManager() {
       <div className="panel">
         <div className="panel-head">
           <h2>API keys</h2>
-          <button className="primary" onClick={() => setCreating(true)}>
+          <button type="button" className="primary" onClick={() => setCreating(true)}>
             + Create key
           </button>
         </div>
         <p className="muted">
-          Bearer keys for the search/ingest API and MCP. Raw keys are stored hashed
-          (sha256) and shown exactly once at creation.
+          Bearer keys for the search/ingest API and MCP. Raw keys are stored hashed (sha256) and
+          shown exactly once at creation.
         </p>
         {error && <p className="login-error">{error}</p>}
         {keys.length === 0 ? (
@@ -216,6 +213,7 @@ export function KeysManager() {
                     <span className="key-name">{k.name ?? "(unnamed)"}</span>
                     <StatusBadge row={k} />
                     <button
+                      type="button"
                       className="btn-danger"
                       disabled={!!k.revoked_at || busy}
                       onClick={() => setRevoking(k)}
@@ -240,7 +238,10 @@ export function KeysManager() {
                     <span>last used {relTime(k.last_used_at)}</span>
                     {exp && <span> · {exp}</span>}
                     {k.expires_at && (
-                      <span className="key-exp-abs"> · until {new Date(k.expires_at).toLocaleDateString()}</span>
+                      <span className="key-exp-abs">
+                        {" "}
+                        · until {new Date(k.expires_at).toLocaleDateString()}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -251,13 +252,22 @@ export function KeysManager() {
       </div>
 
       {creating && (
-        <div className="modal-overlay" onClick={() => !busy && setCreating(false)}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={createKey}>
+        // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay click-to-close is intentional
+        <div
+          className="modal-overlay"
+          onClick={() => !busy && setCreating(false)}
+          role="presentation"
+        >
+          <form
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onSubmit={createKey}
+          >
             <h3>Create API key</h3>
             <label className="field">
               <span>Name</span>
               <input
-                autoFocus
                 placeholder="e.g. ci-pipeline"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -326,13 +336,13 @@ export function KeysManager() {
         <div className="modal-overlay">
           <div className="modal">
             <h3>Key created</h3>
-            <p className="warn-note">
-              This key will not be shown again — copy it now.
-            </p>
+            <p className="warn-note">This key will not be shown again — copy it now.</p>
             <pre className="copy-box">{rawKey}</pre>
             <div className="modal-actions">
-              <button onClick={copyRaw}>{copied ? "Copied ✓" : "Copy key"}</button>
-              <button className="primary" onClick={() => setRawKey(null)}>
+              <button type="button" onClick={copyRaw}>
+                {copied ? "Copied ✓" : "Copy key"}
+              </button>
+              <button type="button" className="primary" onClick={() => setRawKey(null)}>
                 Done
               </button>
             </div>
@@ -341,18 +351,26 @@ export function KeysManager() {
       )}
 
       {revoking && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: modal overlay click-to-close, keyboard handled by buttons
+        // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay + dialog stopPropagation is intentional
         <div className="modal-overlay" onClick={() => !busy && setRevoking(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
             <h3>Revoke key</h3>
             <p>
-              Revoke <strong>{revoking.name ?? "(unnamed)"}</strong>? Requests using
-              this key will start failing immediately with 401. This cannot be undone.
+              Revoke <strong>{revoking.name ?? "(unnamed)"}</strong>? Requests using this key will
+              start failing immediately with 401. This cannot be undone.
             </p>
             <div className="modal-actions">
-              <button onClick={() => setRevoking(null)} disabled={busy}>
+              <button type="button" onClick={() => setRevoking(null)} disabled={busy}>
                 Cancel
               </button>
-              <button className="btn-danger" onClick={revokeKey} disabled={busy}>
+              <button type="button" className="btn-danger" onClick={revokeKey} disabled={busy}>
                 {busy ? "Revoking…" : "Revoke key"}
               </button>
             </div>

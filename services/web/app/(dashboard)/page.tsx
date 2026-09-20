@@ -22,7 +22,7 @@ export default async function DashboardPage() {
   const states = (c.docs_states ?? {}) as Record<string, number>;
   const ready = states.ready ?? 0;
   const failed = (c.docs_failed as number) ?? 0;
-  const partial = states["partial"] ?? 0;
+  const partial = states.partial ?? 0;
   // Phase breakdown of the old ambiguous "in-flight" card (2026-09-12):
   // parsing_active = shards still converting; awaiting_embed = whole-book
   // settled, waiting on the embedder. Both are non-terminal doc counts —
@@ -30,11 +30,11 @@ export default async function DashboardPage() {
   const parsingActive = (c.docs_parsing_active as number) ?? null;
   const awaitingEmbed = (c.docs_awaiting_embed as number) ?? null;
   const activeDocs =
-    (states["uploaded"] ?? 0) +
-    (states["splitting"] ?? 0) +
-    (states["parsing"] ?? 0) +
-    (states["embedding"] ?? 0) +
-    (states["indexing"] ?? 0);
+    (states.uploaded ?? 0) +
+    (states.splitting ?? 0) +
+    (states.parsing ?? 0) +
+    (states.embedding ?? 0) +
+    (states.indexing ?? 0);
   const total = (c.docs_total as number) ?? 0;
 
   return (

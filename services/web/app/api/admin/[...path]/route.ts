@@ -2,7 +2,7 @@
  * handler attaches Authorization: Bearer $API_ADMIN_KEY and forwards to the
  * control-plane API. The key never reaches the client; /v1/* GETs that are
  * keyless upstream keep flowing through the next.config rewrite instead. */
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";

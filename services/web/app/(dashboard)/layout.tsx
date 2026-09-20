@@ -15,9 +15,7 @@ const NAV = [
   { href: "/settings", label: "Settings" },
 ];
 
-export default function DashboardLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="shell">
       <nav className="sidebar">

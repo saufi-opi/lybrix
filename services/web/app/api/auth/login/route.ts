@@ -1,8 +1,9 @@
 /** POST /api/auth/login — bcrypt against ADMIN_PASSWORD_HASH, sets the
  * session cookie. 5 failures per IP per 60s window -> 429 (in-memory;
  * single replica). */
-import { NextRequest, NextResponse } from "next/server";
+
 import bcrypt from "bcryptjs";
+import { type NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -27,9 +28,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = (await req.json().catch(() => null)) as
-    | { username?: string; password?: string }
-    | null;
+  const body = (await req.json().catch(() => null)) as {
+    username?: string;
+    password?: string;
+  } | null;
   const username = body?.username ?? "";
   const password = body?.password ?? "";
   const hash = process.env.ADMIN_PASSWORD_HASH;

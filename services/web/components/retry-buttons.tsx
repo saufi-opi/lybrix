@@ -30,9 +30,15 @@ export function RetryButtons({ docId }: { docId: string }) {
 
   return (
     <p>
-      <button onClick={() => run("shards", "Retry failed shards")}>Retry failed shards</button>{" "}
-      <button onClick={() => run("embed", "Re-embed")}>Re-embed</button>{" "}
-      <button onClick={() => run("full", "Reprocess")}>Reprocess from scratch</button>{" "}
+      <button type="button" onClick={() => run("shards", "Retry failed shards")}>
+        Retry failed shards
+      </button>{" "}
+      <button type="button" onClick={() => run("embed", "Re-embed")}>
+        Re-embed
+      </button>{" "}
+      <button type="button" onClick={() => run("full", "Reprocess")}>
+        Reprocess from scratch
+      </button>{" "}
       {busy && <span className="muted">working…</span>}
       {msg && <span className="muted">{msg}</span>}
     </p>

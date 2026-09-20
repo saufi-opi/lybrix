@@ -21,7 +21,7 @@ export default async function SettingsPage() {
   const mcpConfig = JSON.stringify(
     {
       mcpServers: {
-        "lybrix": {
+        lybrix: {
           url: mcp,
           headers: { Authorization: "Bearer <api-key>" },
         },
@@ -49,16 +49,16 @@ export default async function SettingsPage() {
       <div className="panel">
         <h2>Admin password</h2>
         <p className="muted">
-          The admin password is set via the <code>ADMIN_PASSWORD_HASH</code> environment
-          variable on the server — change it in the deployment environment, not here
-          (the web container is stateless, so runtime changes would not persist).
+          The admin password is set via the <code>ADMIN_PASSWORD_HASH</code> environment variable on
+          the server — change it in the deployment environment, not here (the web container is
+          stateless, so runtime changes would not persist).
         </p>
       </div>
       <div className="panel">
         <h2>MCP connection</h2>
         <p className="muted">
-          This deployment serves MCP at <code>{mcp}</code> — use it as the server URL in
-          your MCP client, with any of the API keys from the API Keys page.
+          This deployment serves MCP at <code>{mcp}</code> — use it as the server URL in your MCP
+          client, with any of the API keys from the API Keys page.
         </p>
         <pre className="mcp-box">{mcpConfig}</pre>
       </div>

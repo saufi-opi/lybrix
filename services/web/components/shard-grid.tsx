@@ -24,7 +24,8 @@ export function ShardGrid({
   return (
     <div className="shard-grid">
       {shards.map((s) => (
-        <div
+        <button
+          type="button"
           key={s.idx}
           className={`shard-cell ${s.state}`}
           title={`shard ${s.idx} · pages ${s.page_start}–${s.page_end} · ${s.state} · attempts ${s.attempts}${
