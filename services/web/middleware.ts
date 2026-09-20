@@ -19,6 +19,8 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Pages only; /api/* routes self-gate (the admin proxy returns JSON 401s).
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|robots.txt).*)"],
+  // Pages only; ignore static assets, icons, images, and API routes.
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
+  ],
 };
