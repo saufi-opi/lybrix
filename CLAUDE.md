@@ -37,7 +37,7 @@ Python is pinned to 3.12 (`.python-version` + `requires-python = ">=3.12"` in ev
 
 Config lives in `.env` (copy from `.env.example`). Tests are DB-free: fixtures use a `Settings` factory with `_env_file=None` so they never read a developer's `.env` or touch live services.
 
-Web UI (Next.js) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint` (Biome), and `npm run generate-client` — regenerate the typed API client (`lib/client/`) from `openapi.json` (checked-in snapshot of the api's OpenAPI schema) after changing `services/api` routes: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`.
+Web UI (Next.js 15 App Router + Tailwind v4 + shadcn/ui, Biome lint — theme is "paper & press", dark-only, tokens in `app/globals.css`) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint`, and `npm run generate-client` — regenerate the typed API client (`lib/client/`, generated code, never hand-edit) from `openapi.json` (checked-in snapshot of the api's OpenAPI schema) after changing `services/api` routes: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`. Server components call the api directly via `API_URL`; browser calls ride the same-origin rewrite (`next.config.mjs`, baked at build time). Mutating browser calls go through session-gated proxies that hold bearer keys server-side: `/api/admin/*` (admin key) and `/api/playground` (MCP playground → real MCP server via `lib/mcp-proxy.ts`). See `docs/adr/0003-web-stack.md` for why api and web stay separate services.
 
 CI (`.github/workflows/ci.yml`) runs test + ruff + pip-audit + per-service docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
 
@@ -60,16 +60,18 @@ libs/       shared, service-agnostic packages (uv workspace members):
             chunking, embedding, retrieval (qdrant/bm25/rerank/search)
 services/   api (FastAPI control plane), workers (ONE image, four entrypoints:
             splitter/parser/embedder/janitor via python -m workers.<name>),
-            mcp (six tools), web (Next.js admin UI)
+            mcp (six tools, FastMCP streamable HTTP at :8430/mcp),
+            web (Next.js admin UI + MCP Playground)
 migrations/ alembic
 deploy/     docker-compose base + dev/gpu overlays, Caddy, MinIO init
 scripts/    backfill, reembed, reindex, ops_backfill_sparse, eval harness
             (scripts/eval — golden-set retrieval eval against the live MCP
             endpoint; must run from repo root; see scripts/eval/README.md)
+docs/       prd.md (source of truth), BACKLOG.md (incident ledger), adr/
 ```
 
 Workers deploy as one image with four commands (`python -m workers.splitter|parser|embedder|janitor`); adding a fifth worker means adding a module, not an image.
 
 ### Status / milestone awareness
 
-Per PRD §15 and the README: M1 spine + durability work and the retrieval rerank stage are implemented; some M2/M3 items (retry-ladder sub-sharding, metrics rollup writer) may still be stubbed — check the README Status section and BACKLOG.md before assuming a feature is real. Parser memory is bounded by sharding **plus** `PARSER_RECYCLE_AFTER` (clean process exit on a job boundary so docker's restart policy revives it with fresh memory).
+Per PRD §15: M1 spine, the M2 durability work (reaper, leases, DLQ quarantine, PARSER_RECYCLE_AFTER), and the phase-2 rerank stage (`RERANK_ENABLED` gate, `services/mcp/src/mcp_server/server.py`) are implemented. Still stubbed: retry-ladder sub-sharding (parser.py marks attempts 2–4 `TODO M2`) and the janitor's metrics-rollup writer (table exists, no writer). The README Status section is stale (says rerank is stubbed) — check code + `docs/BACKLOG.md` before assuming a feature is real or missing. Parser memory is bounded by sharding **plus** `PARSER_RECYCLE_AFTER` (clean process exit on a job boundary so docker's restart policy revives it with fresh memory).
