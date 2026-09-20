@@ -1,9 +1,15 @@
 "use client";
 
-/** Admin login — 9router-style centered card on the dark warm ground. */
+/** Admin login — a job ticket on the press room floor. Keeps the shake
+ * animation on failure and the 429 rate-limit message. */
 
+import { cn } from "cn";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function LoginForm() {
   const router = useRouter();
@@ -47,47 +53,79 @@ function LoginForm() {
   }
 
   // re-trigger the shake animation by remounting the card on each failure
-  const shakeClass = shake > 0 ? "shake" : "";
+  const shakeClass = shake > 0 ? "animate-shake" : "";
 
   return (
-    <div className="login-wrap">
-      <div className={`login-card ${shakeClass}`} key={shake}>
-        <div className="login-brand">
-          <img src="/lybrix-mark.png" alt="" width={36} height={36} className="login-mark" />
-          <span className="brand-mark">lybrix</span>
-          <small>ingestion &amp; retrieval</small>
-        </div>
-        <p className="login-sub">Sign in to the admin console</p>
-        <form onSubmit={submit}>
-          <label className="field">
-            <span>Username</span>
-            <input
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
+    <div className="flex min-h-screen items-center justify-center bg-rail p-6">
+      <Card
+        key={shake}
+        className={cn("w-full max-w-[380px] shadow-[0_12px_40px_-10px_#0000008c]", shakeClass)}
+      >
+        <CardContent className="flex flex-col gap-4 px-7 py-8">
+          <div className="flex items-center gap-2.5">
+            {/* biome-ignore lint/performance/noImgElement: tiny static brand mark, next/image adds nothing */}
+            <img
+              src="/lybrix-mark.png"
+              alt=""
+              width={36}
+              height={36}
+              className="shrink-0 rounded-[7px]"
             />
-          </label>
-          <label className="field">
-            <span>Password</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
-          {error && (
-            <p className="login-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="primary login-btn" type="submit" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
-      </div>
+            <span className="block leading-[1.15]">
+              <span className="block font-serif text-[21px] font-semibold tracking-[-0.01em] text-ink">
+                lybrix
+              </span>
+              <small className="mt-0.5 block text-[11px] text-muted-foreground">
+                ingestion &amp; retrieval
+              </small>
+            </span>
+          </div>
+          <p className="mt-0 mb-0 text-[13px] text-muted-foreground">
+            Sign in to the admin console
+          </p>
+          <form onSubmit={submit} className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <Label
+                htmlFor="login-username"
+                className="text-xs font-semibold text-muted-foreground"
+              >
+                Username
+              </Label>
+              <Input
+                id="login-username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label
+                htmlFor="login-password"
+                className="text-xs font-semibold text-muted-foreground"
+              >
+                Password
+              </Label>
+              <Input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && (
+              <p className="mt-0 mb-0 text-[12.5px] text-redink" role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" className="mt-1 w-full" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

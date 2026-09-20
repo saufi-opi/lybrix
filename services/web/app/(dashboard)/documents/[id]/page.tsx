@@ -1,65 +1,134 @@
-/** Document detail (PRD §8.1 screen 3): shard grid, retry buttons. */
+"use client";
 
+/** Document detail (PRD §8.1 screen 3): header card, shard grid, retry buttons.
+ * Client component — useDocument()/useShards() refetch on focus, so a retry
+ * shows the grid flip without a page reload. */
+
+import { useParams } from "next/navigation";
 import { RetryButtons } from "@/components/retry-buttons";
 import { ShardGrid } from "@/components/shard-grid";
-import { apiClient } from "@/lib/api-client";
+import { StateBadge } from "@/components/state-badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useDocument, useShards } from "@/lib/queries";
 
-export const dynamic = "force-dynamic";
+function DocumentDetail({ id }: { id: string }) {
+  const doc = useDocument(id);
+  const shards = useShards(id);
 
-export default async function DocumentDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const [doc, shards] = await Promise.all([apiClient.document(id), apiClient.shards(id)]);
+  if (doc.isPending || shards.isPending) {
+    return <p className="text-muted-foreground">loading document…</p>;
+  }
+  if (doc.isError) {
+    return <p className="text-redink">document API unreachable: {doc.error.message}</p>;
+  }
+  if (shards.isError) {
+    return <p className="text-redink">shards API unreachable: {shards.error.message}</p>;
+  }
+
+  const d = doc.data;
+  const rows = shards.data;
 
   return (
     <>
-      <div className="panel">
-        <h2>{doc.title ?? id}</h2>
-        <p>
-          <span className={`badge ${doc.state}`}>{doc.state}</span>
-          {doc.completeness != null && (
-            <span className="muted"> · completeness {Math.round(doc.completeness * 100)}%</span>
-          )}
-          {doc.error_code && <span className="muted"> · last error {doc.error_code}</span>}
-        </p>
-        <RetryButtons docId={id} />
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-serif text-[19px] font-semibold">{d.title ?? id}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="m-0 flex flex-wrap items-center gap-2">
+            <StateBadge state={d.state} />
+            {d.completeness != null && (
+              <span className="text-muted-foreground">
+                · completeness {Math.round(d.completeness * 100)}%
+              </span>
+            )}
+            {d.error_code && (
+              <span className="text-muted-foreground">· last error {d.error_code}</span>
+            )}
+          </p>
+          <div className="mt-3">
+            <RetryButtons docId={id} />
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="panel">
-        <h3>Shard grid</h3>
-        <ShardGrid shards={shards} />
-      </div>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Shard grid</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ShardGrid shards={rows} />
+        </CardContent>
+      </Card>
 
-      <div className="panel">
-        <h3>Shards</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>idx</th>
-              <th>pages</th>
-              <th>state</th>
-              <th>attempts</th>
-              <th>duration</th>
-              <th>peak RSS</th>
-              <th>error</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shards.map((s) => (
-              <tr key={s.idx}>
-                <td>{s.idx}</td>
-                <td>
-                  {s.page_start}–{s.page_end}
-                </td>
-                <td>{s.state}</td>
-                <td>{s.attempts}</td>
-                <td>{s.duration_ms != null ? `${(s.duration_ms / 1000).toFixed(1)}s` : "—"}</td>
-                <td>{s.peak_rss_mb != null ? `${s.peak_rss_mb}MB` : "—"}</td>
-                <td>{s.error_code ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Shards</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  idx
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  pages
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  state
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  attempts
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  duration
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  peak RSS
+                </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  error
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((s) => (
+                <TableRow key={s.idx}>
+                  <TableCell className="tabular-nums">{s.idx}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {s.page_start}–{s.page_end}
+                  </TableCell>
+                  <TableCell>
+                    <StateBadge state={s.state} />
+                  </TableCell>
+                  <TableCell className="tabular-nums">{s.attempts}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {s.duration_ms != null ? `${(s.duration_ms / 1000).toFixed(1)}s` : "—"}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {s.peak_rss_mb != null ? `${s.peak_rss_mb}MB` : "—"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{s.error_code ?? "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </>
   );
+}
+
+export default function DocumentDetailPage() {
+  const params = useParams<{ id: string }>();
+  return <DocumentDetail id={params.id} />;
 }

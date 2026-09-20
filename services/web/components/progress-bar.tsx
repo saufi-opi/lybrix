@@ -6,10 +6,13 @@
 export function ProgressBar({ pct, label }: { pct: number; label?: string }) {
   return (
     <div>
-      <div className="progress">
-        <div style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+      <div className="h-2 overflow-hidden rounded-[2px] border border-sheet-edge bg-paper-deep">
+        <div
+          className="h-full bg-press transition-[width] duration-400 ease-out"
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
       </div>
-      {label ? <small className="muted">{label}</small> : null}
+      {label ? <small className="text-xs text-muted-foreground">{label}</small> : null}
     </div>
   );
 }

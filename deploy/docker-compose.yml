@@ -184,12 +184,14 @@ services:
     profiles: [core]
     environment:
       API_URL: http://api:8000
+      MCP_API_URL: http://mcp:8430/mcp   # MCP playground proxy target (internal network)
+      MCP_API_KEY: ${MCP_API_KEY}   # playground proxy holds the key server-side; browser never sees it
       HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}   # bcrypt hash — see .env.example
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
       API_ADMIN_KEY: ${API_ADMIN_KEY}   # admin-scope ragk_ key the web proxy uses server-side
-    depends_on: [api]
+    depends_on: [api, mcp]
     ports:
       - "${BIND_IP}:3000:3000"
     networks: [internal, traefik-public]

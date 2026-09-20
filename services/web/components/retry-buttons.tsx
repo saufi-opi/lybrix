@@ -2,17 +2,17 @@
 
 /** The three retry buttons (PRD §8.3): they cost very different amounts
  * — retry failed shards = seconds, re-embed = ~30s, reprocess = minutes.
- * Never offer only "retry". */
+ * Never offer only "retry". Feedback via sonner toasts. */
 
 import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 export function RetryButtons({ docId }: { docId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
 
   async function run(scope: string, label: string) {
     setBusy(scope);
-    setMsg(null);
     try {
       const res = await fetch(`/api/admin/v1/documents/${docId}/retry`, {
         method: "POST",
@@ -20,27 +20,46 @@ export function RetryButtons({ docId }: { docId: string }) {
         body: JSON.stringify({ scope }),
       });
       if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      setMsg(`${label} queued`);
+      toast.success(`${label} queued`);
     } catch (e) {
-      setMsg(`failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`${label} failed`, {
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <p>
-      <button type="button" onClick={() => run("shards", "Retry failed shards")}>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy !== null}
+        onClick={() => run("shards", "Retry failed shards")}
+      >
         Retry failed shards
-      </button>{" "}
-      <button type="button" onClick={() => run("embed", "Re-embed")}>
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy !== null}
+        onClick={() => run("embed", "Re-embed")}
+      >
         Re-embed
-      </button>{" "}
-      <button type="button" onClick={() => run("full", "Reprocess")}>
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy !== null}
+        onClick={() => run("full", "Reprocess")}
+      >
         Reprocess from scratch
-      </button>{" "}
-      {busy && <span className="muted">working…</span>}
-      {msg && <span className="muted">{msg}</span>}
-    </p>
+      </Button>
+      {busy && <span className="text-muted-foreground">working…</span>}
+    </div>
   );
 }

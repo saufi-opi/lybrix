@@ -1,6 +1,7 @@
 /** Settings (PRD §8.1 screen 7): pipeline config summary + MCP snippet. */
 
 import { headers } from "next/headers";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiClient } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
@@ -32,36 +33,60 @@ export default async function SettingsPage() {
   );
   return (
     <>
-      <div className="panel">
-        <h2>Pipeline config</h2>
-        <p className="muted">
-          Shard size, OCR threshold, retry ladder and backlog cap are env-configured
-          (core.config.Settings is the single source of truth). Queue state:
-        </p>
-        <ul>
-          {Object.entries(queues).map(([name, q]) => (
-            <li key={name}>
-              <code>{name}</code> — length {q.length ?? "—"}, pending {q.pending ?? "—"}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="panel">
-        <h2>Admin password</h2>
-        <p className="muted">
-          The admin password is set via the <code>ADMIN_PASSWORD_HASH</code> environment variable on
-          the server — change it in the deployment environment, not here (the web container is
-          stateless, so runtime changes would not persist).
-        </p>
-      </div>
-      <div className="panel">
-        <h2>MCP connection</h2>
-        <p className="muted">
-          This deployment serves MCP at <code>{mcp}</code> — use it as the server URL in your MCP
-          client, with any of the API keys from the API Keys page.
-        </p>
-        <pre className="mcp-box">{mcpConfig}</pre>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-serif text-[19px] font-semibold">Pipeline config</CardTitle>
+          <CardDescription>
+            Shard size, OCR threshold, retry ladder and backlog cap are env-configured
+            (core.config.Settings is the single source of truth). Queue state:
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ul className="m-0 list-none space-y-1">
+            {Object.entries(queues).map(([name, q]) => (
+              <li key={name} className="font-mono text-[12.5px]">
+                <code className="rounded-sm bg-paper-deep px-1.5 py-0.5 font-mono text-[0.92em]">
+                  {name}
+                </code>{" "}
+                — length {q.length ?? "—"}, pending {q.pending ?? "—"}
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="font-serif text-[19px] font-semibold">Admin password</CardTitle>
+          <CardDescription>
+            The admin password is set via the{" "}
+            <code className="rounded-sm bg-paper-deep px-1.5 py-0.5 font-mono text-[0.92em]">
+              ADMIN_PASSWORD_HASH
+            </code>{" "}
+            environment variable on the server — change it in the deployment environment, not here
+            (the web container is stateless, so runtime changes would not persist).
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="font-serif text-[19px] font-semibold">MCP connection</CardTitle>
+          <CardDescription>
+            This deployment serves MCP at{" "}
+            <code className="rounded-sm bg-paper-deep px-1.5 py-0.5 font-mono text-[0.92em]">
+              {mcp}
+            </code>{" "}
+            — use it as the server URL in your MCP client, with any of the API keys from the API
+            Keys page.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <pre className="m-0 overflow-x-auto rounded border border-rail-edge bg-rail px-3 py-2.5 font-mono text-[12.5px] whitespace-pre text-[#cde3d6]">
+            {mcpConfig}
+          </pre>
+        </CardContent>
+      </Card>
     </>
   );
 }

@@ -37,7 +37,7 @@ Python is pinned to 3.12 (`.python-version` + `requires-python = ">=3.12"` in ev
 
 Config lives in `.env` (copy from `.env.example`). Tests are DB-free: fixtures use a `Settings` factory with `_env_file=None` so they never read a developer's `.env` or touch live services.
 
-Web UI (Next.js) has its own toolchain in `services/web/`: `npm run dev|build|lint`.
+Web UI (Next.js) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint` (Biome), and `npm run generate-client` — regenerate the typed API client (`lib/client/`) from `openapi.json` (checked-in snapshot of the api's OpenAPI schema) after changing `services/api` routes: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`.
 
 CI (`.github/workflows/ci.yml`) runs test + ruff + pip-audit + per-service docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
 

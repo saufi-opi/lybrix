@@ -4,6 +4,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -17,8 +18,15 @@ export function LogoutButton() {
   }
 
   return (
-    <button type="button" className="logout-btn" onClick={logout} disabled={busy}>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="w-full border-white/10 bg-transparent text-[12.5px] text-rail-text hover:bg-white/10 hover:text-ink"
+      onClick={logout}
+      disabled={busy}
+    >
       {busy ? "Signing out…" : "Sign out"}
-    </button>
+    </Button>
   );
 }

@@ -1,9 +1,33 @@
 "use client";
 
 /** API key management UI (Phase 2). All fetches go through /api/admin/* so
- * the browser never holds a bearer key. Raw keys are shown exactly once. */
+ * the browser never holds a bearer key. Raw keys are shown exactly once.
+ * Create / raw-key / revoke modals are shadcn Dialogs; feedback via sonner. */
 
+import { cn } from "cn";
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { StateBadge } from "@/components/state-badge";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface KeyRow {
   id: string;
@@ -61,19 +85,18 @@ function expiresIn(iso: string | null): string | null {
   return `expires in ${days}d`;
 }
 
-function StatusBadge({ row }: { row: KeyRow }) {
-  if (row.revoked_at) return <span className="badge revoked">revoked</span>;
-  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now())
-    return <span className="badge expired">expired</span>;
+function keyStatus(row: KeyRow): string {
+  if (row.revoked_at) return "revoked";
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return "expired";
   if (row.expires_at && new Date(row.expires_at).getTime() - Date.now() < 7 * 86_400_000)
-    return <span className="badge expiring">expiring</span>;
-  return <span className="badge active">active</span>;
+    return "expiring";
+  return "active";
 }
 
 const SCOPE_CLASS: Record<string, string> = {
-  search: "chip search",
-  ingest: "chip ingest",
-  admin: "chip admin",
+  search: "border-press bg-press-wash text-press-deep",
+  ingest: "border-warning bg-ochre-wash text-warning",
+  admin: "border-ledger bg-ledger-wash text-ledger",
 };
 
 export function KeysManager() {
@@ -154,9 +177,14 @@ export function KeysManager() {
       setExpiry("never");
       setCopied(false);
       setRawKey(created.raw_key);
+      toast.success(`API key "${created.name ?? created.id.slice(0, 8)}" created`, {
+        description: "Copy the raw key now — it will not be shown again.",
+      });
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("create failed", { description: msg });
     } finally {
       setBusy(false);
     }
@@ -167,10 +195,13 @@ export function KeysManager() {
     setBusy(true);
     try {
       await adminFetch(`/api/admin/v1/keys/${revoking.id}/revoke`, { method: "POST" });
+      toast.success(`key "${revoking.name ?? revoking.id.slice(0, 8)}" revoked`);
       setRevoking(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error("revoke failed", { description: msg });
     } finally {
       setBusy(false);
     }
@@ -178,205 +209,257 @@ export function KeysManager() {
 
   function copyRaw() {
     if (!rawKey) return;
-    void navigator.clipboard.writeText(rawKey).then(() => setCopied(true));
+    void navigator.clipboard
+      .writeText(rawKey)
+      .then(() => {
+        setCopied(true);
+        toast.success("copied to clipboard");
+      })
+      .catch(() => toast.error("copy failed — select the key manually"));
   }
 
-  if (keys === null) return <p className="muted">Loading keys…</p>;
+  if (keys === null) return <p className="text-muted-foreground">Loading keys…</p>;
 
   return (
     <>
-      <div className="panel">
-        <div className="panel-head">
-          <h2>API keys</h2>
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
-            + Create key
-          </button>
-        </div>
-        <p className="muted">
-          Bearer keys for the search/ingest API and MCP. Raw keys are stored hashed (sha256) and
-          shown exactly once at creation.
-        </p>
-        {error && <p className="login-error">{error}</p>}
-        {keys.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">◇</div>
-            <p className="empty-title">No API keys yet</p>
-            <p className="muted">Create your first API key to start calling the API or MCP.</p>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="font-serif text-[19px] font-semibold">API keys</CardTitle>
+            <Button type="button" onClick={() => setCreating(true)}>
+              + Create key
+            </Button>
           </div>
-        ) : (
-          <div className="key-list">
-            {keys.map((k) => {
-              const exp = !k.revoked_at ? expiresIn(k.expires_at) : null;
-              return (
-                <div className="key-card" key={k.id}>
-                  <div className="key-card-top">
-                    <span className="key-name">{k.name ?? "(unnamed)"}</span>
-                    <StatusBadge row={k} />
-                    <button
-                      type="button"
-                      className="btn-danger"
-                      disabled={!!k.revoked_at || busy}
-                      onClick={() => setRevoking(k)}
-                    >
-                      Revoke
-                    </button>
+          <CardDescription>
+            Bearer keys for the search/ingest API and MCP. Raw keys are stored hashed (sha256) and
+            shown exactly once at creation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {error && (
+            <p className="mt-0 mb-3 font-mono text-[12.5px] text-redink" role="alert">
+              {error}
+            </p>
+          )}
+          {keys.length === 0 ? (
+            <div className="py-10 text-center">
+              <div className="mb-2 text-[28px] text-muted-foreground">◇</div>
+              <p className="m-0 mb-1 font-semibold">No API keys yet</p>
+              <p className="m-0 text-muted-foreground">
+                Create your first API key to start calling the API or MCP.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-col gap-2.5">
+              {keys.map((k) => {
+                const exp = !k.revoked_at ? expiresIn(k.expires_at) : null;
+                return (
+                  <div
+                    key={k.id}
+                    className="rounded-lg border border-sheet-edge bg-sheet px-4 py-3.5 transition-colors duration-150 hover:border-ink-faint"
+                  >
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="text-sm font-semibold">{k.name ?? "(unnamed)"}</span>
+                      <StateBadge state={keyStatus(k)} />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="xs"
+                        className="ml-auto"
+                        disabled={!!k.revoked_at || busy}
+                        onClick={() => setRevoking(k)}
+                      >
+                        Revoke
+                      </Button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {(k.scopes ?? []).map((s) => (
+                        <span
+                          key={s}
+                          className={cn(
+                            "inline-block rounded-[2px] border px-2 py-0.5 font-mono text-[0.72rem] font-semibold",
+                            SCOPE_CLASS[s] ??
+                              "border-sheet-edge bg-paper-deep text-muted-foreground",
+                          )}
+                        >
+                          {s}
+                        </span>
+                      ))}
+                      {(k.collections ?? []).map((c) => (
+                        <Badge
+                          key={c}
+                          className="rounded border-dashed bg-transparent font-mono text-[0.68rem] text-muted-foreground"
+                        >
+                          {c}
+                        </Badge>
+                      ))}
+                      {k.collections === null && (
+                        <Badge className="rounded border-dashed bg-transparent font-mono text-[0.68rem] text-muted-foreground">
+                          all collections
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      <span>last used {relTime(k.last_used_at)}</span>
+                      {exp && <span> · {exp}</span>}
+                      {k.expires_at && (
+                        <span className="text-muted-foreground/60">
+                          {" "}
+                          · until {new Date(k.expires_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="key-card-meta">
-                    {(k.scopes ?? []).map((s) => (
-                      <span key={s} className={SCOPE_CLASS[s] ?? "chip"}>
-                        {s}
-                      </span>
-                    ))}
-                    {(k.collections ?? []).map((c) => (
-                      <span key={c} className="badge coll">
-                        {c}
-                      </span>
-                    ))}
-                    {k.collections === null && <span className="badge coll">all collections</span>}
-                  </div>
-                  <div className="key-card-foot muted">
-                    <span>last used {relTime(k.last_used_at)}</span>
-                    {exp && <span> · {exp}</span>}
-                    {k.expires_at && (
-                      <span className="key-exp-abs">
-                        {" "}
-                        · until {new Date(k.expires_at).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {creating && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay click-to-close is intentional
-        <div
-          className="modal-overlay"
-          onClick={() => !busy && setCreating(false)}
-          role="presentation"
-        >
-          <form
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-            onSubmit={createKey}
-          >
-            <h3>Create API key</h3>
-            <label className="field">
-              <span>Name</span>
-              <input
+      {/* ===== create modal ===== */}
+      <Dialog open={creating} onOpenChange={(open) => !busy && setCreating(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-[17px] font-semibold">
+              Create API key
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={createKey} className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="key-name" className="text-xs font-semibold text-muted-foreground">
+                Name
+              </Label>
+              <Input
+                id="key-name"
                 placeholder="e.g. ci-pipeline"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
               />
-            </label>
-            <div className="field">
-              <span>Scopes</span>
-              <div className="check-row">
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground">Scopes</Label>
+              <div className="flex items-center gap-4">
                 {["search", "ingest", "admin"].map((s) => (
-                  <label key={s} className="check">
+                  <Label key={s} className="cursor-pointer gap-1.5 text-[13px]">
                     <input
                       type="checkbox"
                       checked={scopes.has(s)}
                       onChange={() => toggleScope(s)}
+                      className="size-[15px] cursor-pointer accent-[var(--press)]"
                     />
                     {s}
-                    {s === "admin" && <em className="check-warn">full control</em>}
-                  </label>
+                    {s === "admin" && (
+                      <em className="text-[11px] not-italic text-warning">full control</em>
+                    )}
+                  </Label>
                 ))}
               </div>
             </div>
-            <div className="field">
-              <span>Collections</span>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground">Collections</Label>
               {collections.length === 0 ? (
-                <p className="muted">No collections — key will be unrestricted (all).</p>
+                <p className="m-0 text-muted-foreground">
+                  No collections — key will be unrestricted (all).
+                </p>
               ) : (
-                <div className="check-row wrap">
+                <div className="flex flex-wrap items-center gap-3">
                   {collections.map((c) => (
-                    <label key={c.id} className="check">
+                    <Label key={c.id} className="cursor-pointer gap-1.5 font-mono text-[12.5px]">
                       <input
                         type="checkbox"
                         checked={picked.has(c.id)}
                         onChange={() => toggleCollection(c.id)}
+                        className="size-[15px] cursor-pointer accent-[var(--press)]"
                       />
                       {c.id}
-                    </label>
+                    </Label>
                   ))}
-                  <p className="muted">none selected = all collections</p>
+                  <p className="m-0 text-muted-foreground">none selected = all collections</p>
                 </div>
               )}
             </div>
-            <label className="field">
-              <span>Expires</span>
-              <select value={expiry} onChange={(e) => setExpiry(e.target.value as Period)}>
-                {EXPIRY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setCreating(false)} disabled={busy}>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="key-expiry" className="text-xs font-semibold text-muted-foreground">
+                Expires
+              </Label>
+              <Select value={expiry} onValueChange={(v) => setExpiry(v as Period)}>
+                <SelectTrigger id="key-expiry" className="w-full" aria-label="expiry">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXPIRY_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreating(false)}
+                disabled={busy}
+              >
                 Cancel
-              </button>
-              <button className="primary" type="submit" disabled={busy || scopes.size === 0}>
+              </Button>
+              <Button type="submit" disabled={busy || scopes.size === 0}>
                 {busy ? "Creating…" : "Create key"}
-              </button>
-            </div>
+              </Button>
+            </DialogFooter>
           </form>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
-      {rawKey && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3>Key created</h3>
-            <p className="warn-note">This key will not be shown again — copy it now.</p>
-            <pre className="copy-box">{rawKey}</pre>
-            <div className="modal-actions">
-              <button type="button" onClick={copyRaw}>
-                {copied ? "Copied ✓" : "Copy key"}
-              </button>
-              <button type="button" className="primary" onClick={() => setRawKey(null)}>
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ===== raw-key modal (shown exactly once) ===== */}
+      <Dialog open={rawKey !== null} onOpenChange={(open) => !open && setRawKey(null)}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-[17px] font-semibold">Key created</DialogTitle>
+            <DialogDescription>This key will not be shown again — copy it now.</DialogDescription>
+          </DialogHeader>
+          <pre className="m-0 rounded border border-rail-edge bg-rail px-3 py-2.5 font-mono text-[12.5px] break-all whitespace-pre-wrap text-[#cde3d6]">
+            {rawKey}
+          </pre>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={copyRaw}>
+              {copied ? "Copied ✓" : "Copy key"}
+            </Button>
+            <Button type="button" onClick={() => setRawKey(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {revoking && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: modal overlay click-to-close, keyboard handled by buttons
-        // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay + dialog stopPropagation is intentional
-        <div className="modal-overlay" onClick={() => !busy && setRevoking(null)}>
-          <div
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            <h3>Revoke key</h3>
-            <p>
-              Revoke <strong>{revoking.name ?? "(unnamed)"}</strong>? Requests using this key will
-              start failing immediately with 401. This cannot be undone.
-            </p>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setRevoking(null)} disabled={busy}>
-                Cancel
-              </button>
-              <button type="button" className="btn-danger" onClick={revokeKey} disabled={busy}>
-                {busy ? "Revoking…" : "Revoke key"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ===== revoke modal ===== */}
+      <Dialog open={revoking !== null} onOpenChange={(open) => !open && !busy && setRevoking(null)}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-[17px] font-semibold">Revoke key</DialogTitle>
+            <DialogDescription>
+              Revoke <strong className="text-ink">{revoking?.name ?? "(unnamed)"}</strong>? Requests
+              using this key will start failing immediately with 401. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRevoking(null)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={revokeKey} disabled={busy}>
+              {busy ? "Revoking…" : "Revoke key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
