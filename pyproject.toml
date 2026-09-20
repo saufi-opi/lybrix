@@ -3,7 +3,7 @@ name = "lybrix"
 version = "0.1.0"
 description = "Document Ingestion & Retrieval Platform — sharded Docling parsing, TEI embeddings, Qdrant hybrid retrieval, MCP server. Spec: docs/prd.md."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]

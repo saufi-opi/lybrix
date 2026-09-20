@@ -2,7 +2,7 @@
 name = "rag-core"
 version = "0.1.0"
 description = "Shared domain: settings, DB models, queue contracts, storage, observability, error taxonomy (PRD §5, §6.7, §10)."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.9",

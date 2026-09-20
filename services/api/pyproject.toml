@@ -2,7 +2,7 @@
 name = "rag-api"
 version = "0.1.0"
 description = "Control-plane REST API: uploads/presign, documents, collections, search, SSE, system (PRD §9)."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "rag-core",
     "rag-embedding",
