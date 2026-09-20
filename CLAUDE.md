@@ -24,9 +24,7 @@ uv run pytest tests/test_chunking.py -q    # single file
 uv run pytest tests/test_chunking.py -k name_of_test   # single test
 
 make lint        # uvx ruff check . (line-length 100, py312 target)
-```
 
-Python is pinned to 3.12 (`.python-version` + `requires-python = ">=3.12"` in every pyproject) — matching CI and the `python:3.12-slim-bookworm` Dockerfiles. If commands fail with "No such file or directory" after a repo copy/rename (stale `.venv` shebangs), re-run the sync command above.
 make up          # docker compose up (both profiles) — first boot runs migrate
 make up-core     # profile core only (postgres/redis/minio/qdrant/api/mcp/web)
 make up-ingest   # profile ingest only (workers + tei-*)
@@ -34,6 +32,8 @@ make scale N=8   # parser replicas — the throughput dial
 make drain       # stop consumers, let in-flight shards finish
 make logs-core / logs-ingest / ps-core / ps-ingest
 ```
+
+Python is pinned to 3.12 (`.python-version` + `requires-python = ">=3.12"` in every pyproject) — matching CI and the `python:3.12-slim-bookworm` Dockerfiles. If commands fail with "No such file or directory" after a repo copy/rename (stale `.venv` shebangs), re-run the sync command above.
 
 Config lives in `.env` (copy from `.env.example`). Tests are DB-free: fixtures use a `Settings` factory with `_env_file=None` so they never read a developer's `.env` or touch live services.
 
@@ -64,6 +64,8 @@ services/   api (FastAPI control plane), workers (ONE image, four entrypoints:
 migrations/ alembic
 deploy/     docker-compose base + dev/gpu overlays, Caddy, MinIO init
 scripts/    backfill, reembed, reindex, ops_backfill_sparse, eval harness
+            (scripts/eval — golden-set retrieval eval against the live MCP
+            endpoint; must run from repo root; see scripts/eval/README.md)
 ```
 
 Workers deploy as one image with four commands (`python -m workers.splitter|parser|embedder|janitor`); adding a fifth worker means adding a module, not an image.
