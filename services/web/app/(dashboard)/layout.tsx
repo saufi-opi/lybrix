@@ -23,7 +23,7 @@ const NAV = [
 
 export default function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="flex min-h-screen flex-col max-[900px]:flex-row max-[900px]:flex-wrap max-[900px]:items-center">
+    <div className="flex min-h-screen flex-row max-[900px]:flex-col">
       <nav className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r border-rail-edge bg-rail px-3.5 py-5 max-[900px]:h-auto max-[900px]:w-full max-[900px]:flex-row max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:px-2.5 max-[900px]:py-2">
         <span className="flex items-center gap-2 pb-4 pl-2 pr-2 max-[900px]:py-0 max-[900px]:px-1.5">
           {/* biome-ignore lint/performance/noImgElement: tiny static brand mark, next/image adds nothing */}
