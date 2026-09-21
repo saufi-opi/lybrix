@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     embed_model: str = Field(default="BAAI/bge-m3")
     embed_dim: int = Field(default=1024)
     embed_batch_size: int = Field(default=48)
+    embed_ctx_budget: int = Field(
+        default=1900,
+        description="Max tokenizer tokens per embed request. Pin per backend: "
+        "ollama rejects >2048 of its own tokens (empirically pinned 2026-09-14); "
+        "TEI's bge-m3 ctx is 8192, so TEI deployments can raise this ~4x.",
+    )
     embed_concurrency: int = Field(default=6)
     # Chunk text is truncated client-side before POST /embed. bge-m3's context
     # is 8192 tokens; a pathological chunk (e.g. one giant whitespace-free
@@ -53,6 +59,11 @@ class Settings(BaseSettings):
     # ~1 token/char, so the cap must stay well under bge-m3 8192 ctx; normal
     # chunks are <=512 whitespace-words (~3k chars) and never touched.
     embed_truncate_chars: int = Field(default=6000)
+    embed_query_prefix: str = Field(
+        default="search_query: ",
+        description="asymmetric-query prefix; empty disables (bge-m3 docs "
+        "specify none — A/B via scripts/eval)",
+    )
 
     # -- splitting (PRD §6.2)
     shard_pages: int = Field(default=20, ge=4, le=200)
@@ -103,6 +114,9 @@ class Settings(BaseSettings):
 
     # -- queues / backpressure (PRD §6.1)
     max_parse_backlog: int = Field(default=2000)
+    max_document_pages: int = Field(
+        default=800, description="PRD §11 page-count cap; reject over-cap PDFs at commit"
+    )
     worker_prefetch: int = Field(default=1)
     worker_concurrency: int = Field(default=1)
 

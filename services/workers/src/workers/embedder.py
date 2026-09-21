@@ -42,6 +42,49 @@ EMBED_MAX_ATTEMPTS = 5
 # so no config plumbing this round.
 PREFETCH_WORKERS = 8
 
+_TOKENIZER_CACHE: dict[str, object] = {}
+
+
+def _get_tokenizer(model: str):
+    """Load once per process (R-16): handle_embed used to re-read the
+    tokenizer from disk on every job."""
+    tok = _TOKENIZER_CACHE.get(model)
+    if tok is None:
+        from transformers import AutoTokenizer
+
+        tok = AutoTokenizer.from_pretrained(model)
+        _TOKENIZER_CACHE[model] = tok
+    return tok
+
+
+def plan_batches(chunks, tok, ctx_budget: int, batch_size: int) -> list[list]:
+    """Greedy token-budgeted batching, extracted from handle_embed so the
+    budget semantics are unit-testable without transformers or TEI."""
+    batches: list[list] = []
+    cur: list = []
+    cur_tokens = 0
+    for c in chunks:
+        t = len(tok(c.text, add_special_tokens=False)["input_ids"])
+        if t > ctx_budget:
+            # pathological single chunk: hard-cut to the token budget
+            import dataclasses
+
+            ids = tok(
+                c.text,
+                truncation=True,
+                max_length=ctx_budget,
+                add_special_tokens=False,
+            )["input_ids"]
+            c = dataclasses.replace(c, text=tok.decode(ids))
+        if cur and cur_tokens + t > ctx_budget or len(cur) >= batch_size:
+            batches.append(cur)
+            cur, cur_tokens = [], 0
+        cur.append(c)
+        cur_tokens += t
+    if cur:
+        batches.append(cur)
+    return batches
+
 
 def _prefetch_shards(s3c, doc_id: str, shard_rows, settings) -> dict[int, str]:
     """Fetch every shard's parsed JSON, mapping shard.idx -> utf-8 text.
@@ -169,39 +212,13 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
         # table-border garbage tokenizes at ~2 tokens/char, so a single
         # 4k-char chunk alone busts bge-m3's 8192 ctx and ollama ignores
         # the truncate flag for oversized inputs (empirically pinned).
-        # The XLM-R fast tokenizer ships in the image with the model —
-        # its count matches ollama's rejection boundary within a few %.
-        from transformers import AutoTokenizer
-
-        tok = AutoTokenizer.from_pretrained("BAAI/bge-m3")
-        # PINNED EMPIRICALLY (14 Sep, ollama 0.33.2): the real embed ceiling
-        # is 2048 ollama-tokens — 2048 passes, 2049 400s, and the truncate
-        # flag does NOT rescue real content (only single-char runs get
-        # pre-truncated). XLM-R and ollama counts diverge up to ~3x on
-        # punctuation-heavy text, so we budget by the CONSERVATIVE ratio:
-        # measured ollama-count ≈ 1.0-1.02 x xlmr-count on prose but ≥3x on
-        # pipe/dash table garbage. 1900-token xlmr budget keeps worst-case
-        # batches under 2048 after the per-request overhead margin.
-        ctx_budget = 1900
-        batches: list[list] = []
-        cur: list = []
-        cur_tokens = 0
-        for c in chunks:
-            t = len(tok(c.text, add_special_tokens=False)["input_ids"])
-            if t > ctx_budget:
-                # pathological single chunk: hard-cut to the token budget
-                import dataclasses
-
-                ids = tok(c.text, truncation=True, max_length=ctx_budget,
-                          add_special_tokens=False)["input_ids"]
-                c = dataclasses.replace(c, text=tok.decode(ids))
-            if cur and cur_tokens + t > ctx_budget or len(cur) >= s.embed_batch_size:
-                batches.append(cur)
-                cur, cur_tokens = [], 0
-            cur.append(c)
-            cur_tokens += t
-        if cur:
-            batches.append(cur)
+        tok = _get_tokenizer(s.embed_model)  # never a hardcoded model name (R-16)
+        # Budget comes from Settings — the 1900 default is the ollama pin
+        # (PINNED EMPIRICALLY, 14 Sep, ollama 0.33.2: the real embed ceiling
+        # is 2048 ollama-tokens; 2049 400s and the truncate flag does NOT
+        # rescue real content); TEI's 8192 ctx means the TEI path should
+        # raise EMBED_CTX_BUDGET.
+        batches = plan_batches(chunks, tok, s.embed_ctx_budget, s.embed_batch_size)
         for group in batches:
             vectors = tei.embed([c.text for c in group])
             for c, vec in zip(group, vectors, strict=True):

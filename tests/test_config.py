@@ -38,3 +38,25 @@ def test_two_tei_urls_independent():
 def test_shard_pages_bounds():
     with pytest.raises(ValueError):  # pydantic ValidationError ⊂ ValueError
         make_settings(shard_pages=2)  # below ge=4
+
+
+def test_embed_ctx_budget_default_and_plumbs():
+    """R-16: 1900 is the ollama pin; TEI deployments raise it via env."""
+    s = make_settings()
+    assert s.embed_ctx_budget == 1900
+    s2 = make_settings(embed_ctx_budget=8000)
+    assert s2.embed_ctx_budget == 8000
+
+
+def test_max_document_pages_default():
+    """R-21: PRD §11 page-count cap, enforced at commit."""
+    s = make_settings()
+    assert s.max_document_pages == 800
+
+
+def test_embed_query_prefix_default():
+    """Minor 5: asymmetric-query prefix; empty disables."""
+    s = make_settings()
+    assert s.embed_query_prefix == "search_query: "
+    s2 = make_settings(embed_query_prefix="")
+    assert s2.embed_query_prefix == ""

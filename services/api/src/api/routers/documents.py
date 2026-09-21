@@ -7,7 +7,10 @@ commit returns 429 with Retry-After (§6.1).
 
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import uuid
+from pathlib import Path
 
 from core.config import get_settings
 from core.db import repo
@@ -34,6 +37,45 @@ router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
 def _redis() -> Redis:
     return streams.make_redis()
+
+
+def _verify_raw_object(s3c, bucket: str, key: str, client_sha: str, max_pages: int) -> None:
+    """Stream the raw object once: sha256 + magic bytes + page cap (R-15/R-21).
+
+    PRD §6.1: the API — not the client — owns the dedupe key; §11: reject
+    non-PDFs and over-cap books at the door rather than inside a parser.
+    Raises HTTPException; the temp file lives only for the pdfium probe."""
+    import pypdfium2 as pdfium
+    from botocore.exceptions import ClientError
+
+    digest = hashlib.sha256()
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        try:
+            obj = s3c.get_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            # a skipped PUT reads as a client error, not a 500
+            raise HTTPException(status_code=400, detail="object not uploaded") from exc
+        stream = obj["Body"]
+        head = stream.read(5)
+        digest.update(head)
+        if head != b"%PDF-":
+            raise HTTPException(status_code=400, detail="uploaded object is not a PDF")
+        tmp.write(head)
+        for chunk in stream.iter_chunks():
+            digest.update(chunk)
+            tmp.write(chunk)
+        tmp.flush()
+        if digest.hexdigest() != client_sha:
+            raise HTTPException(status_code=400, detail="content_sha256 mismatch")
+        try:
+            page_count = len(pdfium.PdfDocument(Path(tmp.name)))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"unreadable PDF: {exc}") from exc
+        if page_count > max_pages:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{page_count} pages over cap {max_pages}",
+            )
 
 
 @router.post("/presign", response_model=PresignResponse)
@@ -70,6 +112,18 @@ def commit(
 
     if repo.find_duplicate(session, body.collection_id, body.content_sha256) is not None:
         raise HTTPException(status_code=409, detail="duplicate document in collection")
+
+    # One streaming pass serves all three checks (R-15/R-21): the verified
+    # hash below is client-supplied but only reaches the row when it equals
+    # the server-computed value — otherwise the request 400s.
+    raw_key_str = s3.raw_key(doc_id)
+    _verify_raw_object(
+        s3.make_s3(),
+        get_settings().s3_bucket_raw,
+        raw_key_str,
+        body.content_sha256,
+        get_settings().max_document_pages,
+    )
 
     doc = Document(
         id=doc_id,
