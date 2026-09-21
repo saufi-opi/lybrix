@@ -149,6 +149,7 @@ def list_documents(
     q: str | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
+    key=Depends(require_scope("search")),
     session: Session = Depends(get_session),
 ):
     stmt = select(Document).order_by(Document.updated_at.desc()).limit(limit).offset(offset)
@@ -163,7 +164,9 @@ def list_documents(
 
 @router.get("/{doc_id}", response_model=DocumentOut)
 def get_document(
-    doc_id: uuid.UUID, session: Session = Depends(get_session)
+    doc_id: uuid.UUID,
+    key=Depends(require_scope("search")),
+    session: Session = Depends(get_session),
 ):
     doc = repo.get_document(session, doc_id)
     if doc is None:
@@ -173,7 +176,9 @@ def get_document(
 
 @router.get("/{doc_id}/shards", response_model=list[ShardOut])
 def get_shards(
-    doc_id: uuid.UUID, session: Session = Depends(get_session)
+    doc_id: uuid.UUID,
+    key=Depends(require_scope("search")),
+    session: Session = Depends(get_session),
 ):
     """Shard rows for the admin UI's shard grid (§8.1)."""
     stmt = select(Shard).where(Shard.doc_id == doc_id).order_by(Shard.idx)

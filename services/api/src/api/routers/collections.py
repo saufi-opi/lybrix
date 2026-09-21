@@ -19,7 +19,10 @@ router = APIRouter(prefix="/v1/collections", tags=["collections"])
 
 
 @router.get("")
-def list_collections(session: Session = Depends(get_session)):
+def list_collections(
+    key=Depends(require_scope("search")),
+    session: Session = Depends(get_session),
+):
     return list(session.execute(select(Collection)).scalars())
 
 
@@ -44,7 +47,9 @@ def create_collection(
 
 @router.get("/{collection_id}/stats")
 def collection_stats(
-    collection_id: str, session: Session = Depends(get_session)
+    collection_id: str,
+    key=Depends(require_scope("search")),
+    session: Session = Depends(get_session),
 ):
     """Per-collection: doc count, chunk count (§8.1 Collections)."""
     col = session.get(Collection, collection_id)
