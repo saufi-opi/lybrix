@@ -27,9 +27,8 @@ make lint        # uvx ruff check . (line-length 100, py312 target)
 
 make up          # docker compose up (both profiles) — first boot runs migrate
 make up-core     # profile core only (postgres/redis/minio/qdrant/api/mcp/web)
-make up-ingest   # profile ingest only (workers + tei-*)
-make scale N=8   # parser replicas — the throughput dial
-make drain       # stop consumers, let in-flight shards finish
+make up-ingest   # parsers run as discrete replicas (worker-parser..worker-parser-4)
+make down-ingest # docker compose down on the ingest profile — stops consumers immediately
 make logs-core / logs-ingest / ps-core / ps-ingest
 ```
 

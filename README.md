@@ -53,8 +53,8 @@ lybrix/
 cp .env.example .env && $EDITOR .env
 
 make up          # GPU=0 make up for CPU-only TEI
-make scale N=8   # parser replicas — the throughput dial
-make drain       # stop consumers, let in-flight shards finish
+make up-ingest   # parsers run as discrete replicas (worker-parser..worker-parser-4)
+make down-ingest # docker compose down on the ingest profile — stops consumers immediately
 ```
 
 First boot runs `migrate` automatically. Then upload through the UI at
@@ -90,6 +90,8 @@ move `latest`.
 ## Status
 
 M1 (spine) is implemented: full pipeline code path, compose stack, MCP
-surface, admin UI skeleton, unit suite. Retry-ladder sub-sharding,
-reranking, and the metrics rollup writer are stubbed for M2/M3 per the
-PRD milestone plan (§15).
+surface, admin UI, unit suite. Also implemented: retry-ladder
+sub-sharding (attempts 2–4: quarter-split, single-page, text-only),
+reranking (`RERANK_ENABLED`), and the janitor's metrics rollup writer
+(per-minute buckets from shards.done_at). Check code + `docs/BACKLOG.md`
+before assuming a feature is real or missing.
