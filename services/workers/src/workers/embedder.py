@@ -142,7 +142,11 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
 
     shard_rows = (
         session.execute(
-            select(Shard).where(Shard.doc_id == doc_id, Shard.state == "done").order_by(Shard.idx)
+            # Sub-shards (retry ladder) continue idx after the parent's;
+            # page_start is the true document order (R-11 ladder, PRD §6.3).
+            select(Shard)
+            .where(Shard.doc_id == doc_id, Shard.state == "done")
+            .order_by(Shard.page_start)
         )
         .scalars()
         .all()

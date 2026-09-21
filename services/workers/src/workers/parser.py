@@ -9,9 +9,9 @@ Memory discipline, all five controls required:
 
 Retry ladder (attempts are not identical):
   1 as configured
-  2 re-split this shard into 4 sub-shards (TODO M2)
-  3 single-page shards (TODO M2)
-  4 disable table structure, text-only (TODO M2)
+  2 re-split this shard into 4 sub-shards
+  3 single-page shards
+  4 disable table structure, text-only
   final mark shard failed, emit event, continue the book
 """
 
@@ -38,6 +38,64 @@ from parsing.converter import (  # noqa: F401  (build_converter kept importable:
 )
 from parsing.memory import check_rss_budget
 from parsing.ocr_gate import needs_ocr
+from parsing.splitter import fixed_bounds as parsing_splitter_fixed_bounds
+
+
+def _ladder_action(shard, s: Settings) -> str:
+    """Attempt 2: quarter-split; attempt 3: single-page; attempt >=4:
+    text-only convert. A shard too small to split skips straight to
+    text-only. Return "split"|"text_only"."""
+    span = shard.page_end - shard.page_start + 1
+    if shard.attempts == 2 and span >= 4 * max(1, s.shard_pages // 4) // 2:  # worth quarter-splitting
+        return "split"
+    if shard.attempts == 3 and span >= 2:
+        return "split"  # single-page sub-shards
+    return "text_only"
+
+
+def _split_and_requeue(session, redis, doc, shard, s: Settings) -> None:
+    """Replace a failing shard with finer sub-shards (ladder attempts 2-3).
+    The parent becomes SKIPPED; each sub-shard is a fresh ParseJob."""
+    from core.events import write_event
+
+    span = shard.page_end - shard.page_start + 1
+    shard_pages = 1 if shard.attempts >= 3 else max(1, span // 4)
+    bounds = [
+        (shard.page_start + b.page_start - 1, shard.page_start + b.page_end - 1)
+        for b in parsing_splitter_fixed_bounds(span, shard_pages, overlap=0)
+        # overlap=0 is required: sub-shards must tile the parent disjointly
+        # (fixed_bounds' default overlap=1 would emit overlapping bounds —
+        # a span-20 attempt-2 shard would yield 5 overlapping bounds like
+        # [1-5],[5-9],[9-13],... instead of 4 disjoint ones, double-counting
+        # total_shards and re-parsing boundary pages).
+    ]
+    start_idx = repo.next_shard_idx(session, doc.id)
+    repo.skip_shard(session, doc.id, shard.idx)
+    repo.insert_shards(session, doc.id, bounds, start_idx=start_idx)
+    doc.total_shards = (doc.total_shards or 0) + len(bounds)
+    session.flush()
+    for i, (ps, pe) in enumerate(bounds):
+        streams.xadd_job(
+            redis,
+            streams.STREAM_PARSE,
+            contracts.ParseJob(
+                doc_id=doc.id,
+                idx=start_idx + i,
+                page_start=ps,
+                page_end=pe,
+                source_uri=doc.source_uri,
+            ),
+        )
+    write_event(
+        session,
+        "warn",
+        "parse",
+        f"shard {shard.idx} re-split into {len(bounds)} sub-shards "
+        f"(ladder attempt {shard.attempts})",
+        doc_id=doc.id,
+        shard_idx=shard.idx,
+        code="SHARD_RESPLIT",
+    )
 
 
 def handle_parse(session, job: dict, redis, settings: Settings | None = None) -> None:
@@ -56,6 +114,14 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
     session.flush()
     if shard is None:
         return  # someone else got it (§6.3 step 1)
+
+    # Retry ladder (PRD §6.3) — attempts are not identical. claim_shard
+    # already incremented attempts, so shard.attempts IS this attempt's number.
+    if shard.attempts >= 2:
+        ladder = _ladder_action(shard, s)
+        if ladder == "split":
+            return _split_and_requeue(session, redis, doc, shard, s)
+        # "text_only": fall through with a degraded converter config
 
     tmpdir = Path(tempfile.mkdtemp(prefix="parse-"))
     pdf_path = tmpdir / "source.pdf"
@@ -104,6 +170,11 @@ def handle_parse(session, job: dict, redis, settings: Settings | None = None) ->
         verdict.mean_chars_per_page,
         verdict.needs_ocr,
     )
+    # Ladder attempt >=4 (text_only): table structure off — a settings copy
+    # so the shared s is untouched; converter_cache_key includes
+    # parsing_do_table_structure, so the cache separates the variants for free.
+    if shard.attempts >= 4 and s.parsing_do_table_structure:
+        s = s.model_copy(update={"parsing_do_table_structure": False})
     cache_key = converter_cache_key(verdict.needs_ocr, s)
     cache_hit = cache_key in _CONVERTER_CACHE
     converter = get_converter(need_ocr=verdict.needs_ocr, settings=s, builder=build_converter)

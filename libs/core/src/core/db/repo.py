@@ -51,15 +51,39 @@ def insert_shards(
     session: Session,
     doc_id: uuid.UUID,
     bounds: list[tuple[int, int]],
+    start_idx: int = 0,
 ) -> int:
-    """Insert one row per shard bound; returns the count inserted."""
+    """Insert one row per shard bound; idx runs from start_idx (retry-ladder
+    sub-shards continue after the parent's idx so idx stays unique per doc).
+    Returns the count inserted."""
     session.add_all(
         [
-            Shard(doc_id=doc_id, idx=i, page_start=s, page_end=e)
+            Shard(doc_id=doc_id, idx=start_idx + i, page_start=s, page_end=e)
             for i, (s, e) in enumerate(bounds)
         ]
     )
     return len(bounds)
+
+
+def next_shard_idx(session: Session, doc_id: uuid.UUID) -> int:
+    """Max idx per doc + 1 — where retry-ladder sub-shards continue."""
+    from sqlalchemy import func
+
+    return int(
+        session.execute(
+            select(func.max(Shard.idx)).where(Shard.doc_id == doc_id)
+        ).scalar_one()
+        or 0
+    ) + 1
+
+
+def skip_shard(session: Session, doc_id: uuid.UUID, idx: int) -> None:
+    """Mark a parent shard SKIPPED — replaced by retry-ladder sub-shards;
+    the embedder selects state=='done' only, so skipped parents never embed."""
+    shard = session.get(Shard, (doc_id, idx))
+    if shard is None:
+        raise LookupError(f"shard {doc_id}/{idx} not found")
+    shard.state = ShardState.SKIPPED
 
 
 def claim_shard(
