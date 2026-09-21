@@ -37,7 +37,7 @@ def search(
     s = get_settings()
     with TeiClient(s.tei_query_url) as qclient:
         try:
-            dense = qclient.embed([f"search_query: {body.query}"])[0]
+            dense = qclient.embed([f"{s.embed_query_prefix}{body.query}"])[0]
         except TeiUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

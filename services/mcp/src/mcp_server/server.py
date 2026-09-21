@@ -51,7 +51,7 @@ def search_impl(
     from retrieval.search import hybrid_search
 
     limit = _clamp_top_k(settings, top_k)
-    dense = query_embedder(f"search_query: {query}")
+    dense = query_embedder(f"{settings.embed_query_prefix}{query}")
     use_bm25 = settings.retrieval_bm25_enabled
     from retrieval.bm25 import encode_bm25
 
