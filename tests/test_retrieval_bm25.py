@@ -238,6 +238,51 @@ def test_hybrid_search_off_mode_no_sparse():
     assert len(client.calls[0]["prefetch"]) == 1
 
 
+# --- build_filter: key-level collection scope (R-14) --------------------------
+
+
+def test_build_filter_collection_ids_match_any():
+    """Key scope serializes to a MatchAny condition on collection_id — the
+    scope rides INSIDE the Qdrant query, not as a post-filter."""
+    f = build_filter(collection_ids=["a", "b"])
+    assert f is not None
+    assert len(f.must) == 1
+    cond = f.must[0]
+    assert cond.key == "collection_id"
+    assert json.loads(qm.MatchAny(any=["a", "b"]).model_dump_json()) == json.loads(
+        cond.match.model_dump_json()
+    )
+
+
+def test_build_filter_collection_id_and_ids_both_present():
+    f = build_filter(collection_id="c1", collection_ids=["a", "b"])
+    assert f is not None
+    assert len(f.must) == 2
+    values = [json.loads(c.match.model_dump_json()) for c in f.must]
+    assert {"value": "c1"} in values
+    assert {"any": ["a", "b"]} in values
+
+
+def test_build_filter_no_args_is_none():
+    assert build_filter() is None
+
+
+def test_hybrid_search_forwards_collection_ids():
+    """hybrid_search(..., collection_ids=[...]) forwards the key scope into
+    BOTH prefetch filters (R-14)."""
+    client = FakeQdrantCapture()
+    hybrid_search(
+        client, "chunks", FakeSession(), [0.1, 0.2], None, 8, collection_ids=["a", "b"]
+    )
+    prefetch = client.calls[0]["prefetch"]
+    assert len(prefetch) == 1
+    body = json.loads(prefetch[0].model_dump_json(exclude_none=True))
+    must = body["filter"]["must"]
+    assert len(must) == 1
+    assert must[0]["match"] == {"any": ["a", "b"]}
+    assert must[0]["key"] == "collection_id"
+
+
 # --- qdrant.py: ensure_bm25_idf ----------------------------------------------
 
 

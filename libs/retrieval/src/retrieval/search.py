@@ -46,12 +46,19 @@ def _rrf_fuse(dense_hits, sparse_hits, k: int = 60) -> dict[str, float]:
 def build_filter(
     collection_id: str | None = None,
     doc_id: str | None = None,
+    collection_ids: list[str] | None = None,
 ) -> qm.Filter | None:
     must = []
     if collection_id:
         must.append(
             qm.FieldCondition(key="collection_id", match=qm.MatchValue(value=collection_id))
         )
+    if collection_ids:
+        # Key-level scope (api keys carry a collections array): MatchAny
+        # pushes the scope INTO the Qdrant query so top_k slots are filled
+        # from allowed collections only — post-filtering after truncation
+        # silently returned fewer than top_k (R-14).
+        must.append(qm.FieldCondition(key="collection_id", match=qm.MatchAny(any=collection_ids)))
     if doc_id:
         must.append(qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)))
     return qm.Filter(must=must) if must else None
@@ -176,9 +183,12 @@ def hybrid_search(
     top_k: int,
     collection_id: str | None = None,
     doc_id: str | None = None,
+    collection_ids: list[str] | None = None,
 ) -> list[SearchHit]:
     """Full §7.1 path minus the (phase 2) rerank: filter → hybrid → hydrate."""
-    qfilter = build_filter(collection_id=collection_id, doc_id=doc_id)
+    qfilter = build_filter(
+        collection_id=collection_id, doc_id=doc_id, collection_ids=collection_ids
+    )
     points, _ = search_vectors(
         qdrant, collection, dense_query, sparse_query, top_k, qfilter
     )

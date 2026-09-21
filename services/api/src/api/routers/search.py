@@ -42,6 +42,7 @@ def search(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     qdrant = QdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key, timeout=5)
+    key_scope = list(getattr(key, "collections", None) or [])
     try:
         hits = rs.hybrid_search(
             qdrant,
@@ -51,13 +52,13 @@ def search(
             sparse_query=_bm25_stub(body.query),
             top_k=min(body.top_k, s.search_max_top_k),
             collection_id=body.collection,
+            collection_ids=key_scope or None,
         )
     finally:
         qdrant.close()
-
-    if getattr(key, "collections", None):
-        allowed = set(key.collections)
-        hits = [h for h in hits if h.doc_id and _doc_collection(session, h.doc_id) in allowed]
+    # key-level scope is pushed into the Qdrant filter (R-14) — no
+    # post-filter here: filtering after top_k truncation returned fewer
+    # than top_k results for scoped keys.
 
     return [
         {
@@ -73,10 +74,3 @@ def search(
         }
         for h in hits
     ]
-
-
-def _doc_collection(session: Session, doc_id) -> str | None:
-    from core.db.models import Document
-
-    doc = session.get(Document, doc_id)
-    return doc.collection_id if doc else None

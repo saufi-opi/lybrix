@@ -139,7 +139,14 @@ def upsert_chunks(
         )
         for p in points
     ]
-    client.upsert(collection_name=name, points=qpoints, wait=True)
+    # Page the upsert (R-17): one ~12MB wait=True request for a whole book
+    # is the most timeout-prone shape available (the 2026-09-11 incident was
+    # exactly a Qdrant upsert timeout loop). 500-point pages keep each
+    # request small; the runner's retry/cap path then re-sends one page on a
+    # transient failure, not the whole book.
+    upsert_page = 500
+    for i in range(0, len(qpoints), upsert_page):
+        client.upsert(collection_name=name, points=qpoints[i : i + upsert_page], wait=True)
     return len(qpoints)
 
 
