@@ -142,6 +142,9 @@ class Shard(Base):
     )
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     peak_rss_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -225,3 +228,27 @@ class KeyUsage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class MetricsRollup(Base):
+    """One row per minute bucket (PRD §10.1): ingest throughput + settling
+    latency, written by the janitor from real data (migration 0001).
+
+    queue_depth is the per-stream snapshot at write time (JSONB); the
+    search_p95_ms/search_count columns stay None until search-latency
+    capture exists.
+    """
+
+    __tablename__ = "metrics_rollup"
+
+    bucket: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    pages_parsed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shards_done: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shards_failed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunks_embedded: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parse_p50_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parse_p95_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    peak_rss_p95_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    queue_depth: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    search_p95_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    search_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

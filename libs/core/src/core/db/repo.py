@@ -133,6 +133,7 @@ def mark_shard_done(
     if shard is None:
         raise LookupError(f"shard {doc_id}/{idx} not found")
     shard.state = ShardState.DONE
+    shard.done_at = datetime.now(UTC)
     shard.needs_ocr = needs_ocr
     shard.duration_ms = duration_ms
     shard.peak_rss_mb = peak_rss_mb

@@ -29,7 +29,7 @@ from core.queue import streams
 from core.storage import s3
 from embedding.client import TeiClient
 from retrieval.qdrant import ensure_collection, upsert_chunks
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -195,6 +195,7 @@ def handle_embed(session: Session, job: dict, redis=None) -> None:
             page_start=c.page_start,
             page_end=c.page_end,
             heading_path=list(c.heading_path),
+            embedded_at=func.now(),  # R-18: re-embed tooling needs the stamp
         ).on_conflict_do_nothing(index_elements=["doc_id", "chunk_hash"])
         session.execute(stmt)
     session.flush()

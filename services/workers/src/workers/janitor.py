@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from core.config import Settings, get_settings
 from core.db import repo
-from core.db.models import DocState, Document, Shard
+from core.db.models import Chunk, DocState, Document, Shard
 from core.db.session import session_scope
 from core.queue import streams
 from sqlalchemy import select
@@ -24,6 +24,82 @@ logger = logging.getLogger(__name__)
 _TERMINAL_STATES = {DocState.READY, DocState.FAILED, DocState.ARCHIVED, DocState.PARTIAL}
 
 SCAN_PAGE = 500
+
+_last_bucket: datetime | None = None
+
+
+def write_metrics_rollup(session, redis, settings: Settings) -> bool:
+    """One row per minute bucket (PRD §10.1): per-minute deltas from the
+    previous bucket's snapshot + windowed p50/p95 from shards.done_at.
+    search_p95_ms/search_count stay None for now — no search-latency
+    capture exists yet (UsageMiddleware records counts, not durations)."""
+    global _last_bucket
+    now = datetime.now(UTC)
+    bucket = now.replace(second=0, microsecond=0)
+    window_start = bucket - timedelta(minutes=1)
+    rows = (
+        session.execute(
+            select(Shard).where(
+                Shard.done_at.is_not(None),
+                Shard.done_at >= window_start,
+                Shard.done_at < bucket,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows and _last_bucket == bucket:
+        return False
+    # Idempotent upsert on the bucket PK; _last_bucket updated on success —
+    # the janitor is a single process, a restart just re-writes one bucket.
+    durations = sorted(r.duration_ms or 0 for r in rows)
+
+    def pct(sorted_list: list[int], p: int) -> int | None:
+        if not sorted_list:
+            return None
+        i = max(0, round((len(sorted_list) - 1) * p / 100))
+        return sorted_list[i]
+
+    # try/except → {}: a Redis queue_depth failure must never abort the
+    # janitor pass transaction (the rollup is informational).
+    queue_depth: dict[str, int] = {}
+    for name in streams.ALL_STREAMS:
+        try:
+            queue_depth[name] = streams.queue_depth(redis, name)
+        except Exception:
+            logger.warning("rollup: queue_depth read failed for %s", name)
+    chunks_embedded = 0
+    try:
+        from sqlalchemy import func
+
+        chunks_embedded = int(
+            session.execute(
+                select(func.count())
+                .select_from(Chunk)
+                .where(Chunk.embedded_at.is_not(None))
+                .where(Chunk.embedded_at >= window_start, Chunk.embedded_at < bucket)
+            ).scalar_one()
+        )
+    except Exception:
+        logger.warning("rollup: chunks_embedded count failed")
+
+    from core.db.models import MetricsRollup
+
+    session.merge(
+        MetricsRollup(
+            bucket=bucket,
+            pages_parsed=sum(r.page_end - r.page_start + 1 for r in rows),
+            shards_done=len(rows),
+            shards_failed=sum(1 for r in rows if r.state == "failed"),
+            chunks_embedded=chunks_embedded,
+            parse_p50_ms=pct(durations, 50),
+            parse_p95_ms=pct(durations, 95),
+            peak_rss_p95_mb=pct(sorted(r.peak_rss_mb or 0 for r in rows), 95),
+            queue_depth=queue_depth,
+        )
+    )
+    _last_bucket = bucket
+    return True
 
 
 def pending_job_doc_ids(r, stream: str) -> set[str] | None:
@@ -276,7 +352,19 @@ def janitor_pass(session, redis, settings: Settings) -> dict:
             )
             warned += 1
 
-    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "embed_swept": embed_swept, "reclaimed": reclaimed, "quarantined": quarantined, "stuck_warned": warned}
+    # 7. Metrics rollup (PRD §10.1): one row per minute bucket from real
+    # data. Runs inside the pass transaction; a Redis read failure is
+    # caught inside write_metrics_rollup and never aborts the pass.
+    rolled_up = 0
+    current_bucket = now.replace(second=0, microsecond=0)
+    if _last_bucket is None or current_bucket > _last_bucket:
+        try:
+            if write_metrics_rollup(session, redis, settings):
+                rolled_up = 1
+        except Exception:
+            logger.exception("metrics rollup write failed")
+
+    return {"requeued_leases": requeued, "escalated": escalated, "reenqueued": reenqueued, "embed_swept": embed_swept, "reclaimed": reclaimed, "quarantined": quarantined, "stuck_warned": warned, "rollup": rolled_up}
 
 
 def write_evt(session, **kwargs) -> None:
