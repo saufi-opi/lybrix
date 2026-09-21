@@ -43,7 +43,7 @@ def _run(tmp_path, cache_dir, doc):
 
     with (
         patch("workers.parser.repo.get_document", return_value=doc),
-        patch("workers.parser.repo.claim_shard", return_value=MagicMock()),
+        patch("workers.parser.repo.claim_shard", return_value=MagicMock(attempts=1)),
         patch("workers.parser.repo.mark_shard_done"),
         patch("workers.parser.repo.book_settled", return_value=False),
         patch("workers.parser.s3.make_s3"),
