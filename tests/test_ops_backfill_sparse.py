@@ -71,9 +71,10 @@ class FakeDryRunClient:
 
 @pytest.fixture
 def rows():
-    """Deterministic rows: hashes ordered so batching/resume boundaries are
-    stable (chunk_hash ordering is lexicographic)."""
-    return [(f"{i:064d}", f"text-{i}") for i in range(23)]
+    """Deterministic rows: (doc_id, chunk_hash, text) triples ordered so
+    batching/resume boundaries are stable ((doc_id, chunk_hash) ordering is
+    lexicographic)."""
+    return [(f"doc-{i // 5}", f"{i:064d}", f"text-{i}") for i in range(23)]
 
 
 def test_batching_points_per_call_and_vector_shape(rows):
@@ -90,9 +91,30 @@ def test_batching_points_per_call_and_vector_shape(rows):
             assert set(pv.vector) == {"bm25"}
             assert isinstance(pv.vector["bm25"], qm.SparseVector)
         assert call["wait"] is False
-    # point ids map back to the deterministic uuid5 of chunk_hash
-    assert client.update_calls[0]["points"][0].id == backfill.point_id_for(rows[0][0])
-    assert client.update_calls[-1]["points"][-1].id == backfill.point_id_for(rows[-1][0])
+    # point ids map back to the deterministic uuid5 of (doc_id, chunk_hash)
+    assert client.update_calls[0]["points"][0].id == backfill.point_id_for(
+        rows[0][0], rows[0][1]
+    )
+    assert client.update_calls[-1]["points"][-1].id == backfill.point_id_for(
+        rows[-1][0], rows[-1][1]
+    )
+
+
+def test_point_ids_are_doc_scoped(rows):
+    """R-12: identical chunk text under two doc_ids yields DIFFERENT point
+    ids — the row's doc_id, not a constant, feeds point_id_for."""
+    client = FakeUpdateVectorsClient()
+    twin_rows = [
+        ("doc-a", "h", "same text"),
+        ("doc-b", "h", "same text"),
+    ]
+    backfill.run_backfill(
+        client, FakeSessionFactory(twin_rows), batch=10, checkpoint_path=None
+    )
+    ids = [pv.id for pv in client.update_calls[0]["points"]]
+    assert ids[0] == backfill.point_id_for("doc-a", "h")
+    assert ids[1] == backfill.point_id_for("doc-b", "h")
+    assert ids[0] != ids[1]
 
 
 def test_update_vectors_values_come_from_encoder(rows):
@@ -108,28 +130,41 @@ def test_update_vectors_values_come_from_encoder(rows):
 
 def test_checkpoint_resume_skips_prefix(rows, tmp_path):
     cp = tmp_path / "cp.json"
-    cp.write_text(json.dumps({"last_chunk_hash": rows[9][0], "done": 10, "total": 23}))
+    cp.write_text(
+        json.dumps({"last_doc_id": rows[9][0], "last_chunk_hash": rows[9][1], "done": 10, "total": 23})
+    )
     client = FakeUpdateVectorsClient()
     backfill.run_backfill(
         client, FakeSessionFactory(rows), batch=10, checkpoint_path=cp
     )
     written = [pv.id for call in client.update_calls for pv in call["points"]]
     assert len(written) == 13  # rows 10..22 only
-    assert written[0] == backfill.point_id_for(rows[10][0])
+    assert written[0] == backfill.point_id_for(rows[10][0], rows[10][1])
 
 
 def test_checkpoint_resume_within_batch(rows, tmp_path):
-    """A batch interrupted mid-way: checkpoint hash inside batch 2 (after 12
+    """A batch interrupted mid-way: checkpoint inside batch 2 (after 12
     rows) -> only rows 13..22 are written."""
     cp = tmp_path / "cp.json"
-    cp.write_text(json.dumps({"last_chunk_hash": rows[11][0], "done": 12, "total": 23}))
+    cp.write_text(
+        json.dumps({"last_doc_id": rows[11][0], "last_chunk_hash": rows[11][1], "done": 12, "total": 23})
+    )
     client = FakeUpdateVectorsClient()
     backfill.run_backfill(
         client, FakeSessionFactory(rows), batch=10, checkpoint_path=cp
     )
     written = [pv.id for call in client.update_calls for pv in call["points"]]
     assert len(written) == 11
-    assert written[0] == backfill.point_id_for(rows[12][0])
+    assert written[0] == backfill.point_id_for(rows[12][0], rows[12][1])
+
+
+def test_checkpoint_old_format_backcompat(rows, tmp_path):
+    """An old checkpoint carrying only last_chunk_hash loads as (doc_id="",
+    hash) — an ordering bound no new row precedes, so nothing is skipped
+    (resumes from scratch rather than silently dropping work)."""
+    cp = tmp_path / "cp.json"
+    cp.write_text(json.dumps({"last_chunk_hash": rows[9][1], "done": 10, "total": 23}))
+    assert backfill.load_checkpoint(cp) == ("", rows[9][1])
 
 
 def test_dry_run_performs_zero_writes(rows, capsys):

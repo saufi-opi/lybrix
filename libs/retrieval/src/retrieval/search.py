@@ -117,19 +117,31 @@ def hydrate(
     fused_points,
     doc_cache: dict[str, Document] | None = None,
 ) -> list[SearchHit]:
-    """Fetch chunk text + doc metadata from Postgres by chunk hash payload."""
+    """Fetch chunk text + doc metadata from Postgres by (doc_id, chunk_hash).
+
+    Both halves of the key matter (R-12): chunk_hash is unique only per
+    (doc_id, chunk_hash) — identical normalized text in two documents
+    shares a hash, and keying rows by hash alone attributed the hit to
+    whichever row the query returned first.
+    """
     cache = doc_cache if doc_cache is not None else {}
-    hashes = [p.payload.get("chunk_hash") for p in fused_points if p.payload]
-    rows: dict[str, Chunk] = {}
+    hashes = list({p.payload.get("chunk_hash") for p in fused_points if p.payload})
+    doc_ids = list(
+        {p.payload.get("doc_id") for p in fused_points if p.payload and p.payload.get("doc_id")}
+    )
+    rows: dict[tuple[str, str], Chunk] = {}
     if hashes:
-        stmt = select(Chunk).where(Chunk.chunk_hash.in_(hashes))
+        stmt = select(Chunk).where(
+            Chunk.chunk_hash.in_(hashes),
+            Chunk.doc_id.in_([uuid.UUID(d) for d in doc_ids]),
+        )
         for c in session.execute(stmt).scalars():
-            rows[c.chunk_hash] = c
+            rows[(str(c.doc_id), c.chunk_hash)] = c
 
     hits: list[SearchHit] = []
     for p in fused_points:
         payload = p.payload or {}
-        chunk = rows.get(payload.get("chunk_hash"))
+        chunk = rows.get((str(payload.get("doc_id")), payload.get("chunk_hash")))
         if chunk is None:
             continue  # vector without a Postgres row: stale point, skip
         doc_id = str(chunk.doc_id)

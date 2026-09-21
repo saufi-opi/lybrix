@@ -1,7 +1,7 @@
 """Backfill Qdrant points with client-side BM25 sparse vectors (PRD §12).
 
-One-time op: streams chunks (chunk_hash → text) from Postgres in
-deterministic chunk_hash order, encodes each chunk's text into a 21-bit
+One-time op: streams chunks (doc_id, chunk_hash → text) from Postgres in
+deterministic (doc_id, chunk_hash) order, encodes each chunk's text into a 21-bit
 TF sparse vector (retrieval.bm25.encode_bm25 — the server's idf modifier
 multiplies in IDF at query time), and update_vectors's the `bm25` sparse
 vector in batches. update_vectors touches ONLY the named sparse vector —
@@ -21,7 +21,7 @@ Runs from VM1 over Tailscale (QDRANT_URL / QDRANT_API_KEY / DATABASE_URL
 from the usual ~/lybrix/.env conventions) or inside the api container.
 Checkpoint scripts/bm25_backfill_checkpoint.json (gitignored) is written
 after every batch and makes interrupted runs resume strictly after the
-last chunk_hash.
+last (doc_id, chunk_hash).
 """
 
 from __future__ import annotations
@@ -53,19 +53,30 @@ def batched(iterable, n: int) -> Iterator[list]:
         yield list(batch)
 
 
-def load_checkpoint(path: Path) -> str | None:
-    """Last completed chunk_hash from a checkpoint file, or None."""
+def load_checkpoint(path: Path) -> tuple[str, str] | None:
+    """Last completed (doc_id, chunk_hash) from a checkpoint file, or None.
+
+    Backwards compatible: an old checkpoint carrying only last_chunk_hash
+    resumes from (doc_id="", hash) — an ordering bound that no new row
+    precedes, so a resumed run restarts from scratch rather than skipping
+    work (R-12 point ids changed the on-disk identity anyway).
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return data.get("last_chunk_hash")
+    if "last_doc_id" in data and "last_chunk_hash" in data:
+        return (data["last_doc_id"], data["last_chunk_hash"])
+    if "last_chunk_hash" in data:
+        return ("", data["last_chunk_hash"])
+    return None
 
 
-def write_checkpoint(path: Path, last_chunk_hash: str, done: int, total: int) -> None:
+def write_checkpoint(path: Path, last_doc_id: str, last_chunk_hash: str, done: int, total: int) -> None:
     path.write_text(
         json.dumps(
             {
+                "last_doc_id": last_doc_id,
                 "last_chunk_hash": last_chunk_hash,
                 "done": done,
                 "total": total,
@@ -97,25 +108,28 @@ def run_backfill(
     """
     resume_after = load_checkpoint(checkpoint_path) if checkpoint_path else None
     if resume_after:
-        print(f"resuming after chunk_hash {resume_after[:12]}…")
+        print(f"resuming after chunk {resume_after[0][:12]}…")
 
     batch_no = 0
     done = 0
+    last_doc_id: str | None = None
     last_hash: str | None = None
     batch_start = time.monotonic()
     try:
         with session_factory() as session:
             stream = session.execute(
-                select(Chunk.chunk_hash, Chunk.text).order_by(Chunk.chunk_hash)
+                select(Chunk.doc_id, Chunk.chunk_hash, Chunk.text).order_by(
+                    Chunk.doc_id, Chunk.chunk_hash
+                )
             ).yield_per(batch)
             for batch_rows in batched(stream, batch):
-                if resume_after and batch_rows[-1][0] <= resume_after:
+                if resume_after and batch_rows[-1][:2] <= resume_after:
                     done += len(batch_rows)
                     continue
                 # trim a partially-finished batch on resume
                 start_index = 0
                 if resume_after:
-                    while start_index < len(batch_rows) and batch_rows[start_index][0] <= resume_after:
+                    while start_index < len(batch_rows) and batch_rows[start_index][:2] <= resume_after:
                         start_index += 1
                     if start_index == len(batch_rows):
                         done += len(batch_rows)
@@ -131,12 +145,12 @@ def run_backfill(
                     # live 2026-09-19: chunk 0415ae5ec985afe4 is such a case.
                     skipped_empty = 0
                     points = []
-                    for chunk_hash, text in batch_rows[start_index:]:
+                    for doc_id, chunk_hash, text in batch_rows[start_index:]:
                         vec = qm.SparseVector(**encode_bm25(text))
                         if vec.indices:
                             points.append(
                                 qm.PointVectors(
-                                    id=point_id_for(chunk_hash),
+                                    id=point_id_for(str(doc_id), chunk_hash),
                                     vector={"bm25": vec},
                                 )
                             )
@@ -151,7 +165,8 @@ def run_backfill(
                     if skipped_empty:
                         print(f"batch {batch_no + 1}: skipped {skipped_empty} empty-vector chunks", flush=True)
                 done += len(batch_rows) - start_index
-                last_hash = batch_rows[-1][0]
+                last_doc_id = str(batch_rows[-1][0])
+                last_hash = batch_rows[-1][1]
                 batch_no += 1
                 # pacing: keep the per-batch write cadence under `rate` calls/s
                 elapsed = time.monotonic() - batch_start
@@ -165,7 +180,7 @@ def run_backfill(
                     f"{'counted (dry-run)' if dry_run else 'written'}"
                 )
                 if not dry_run and checkpoint_path:
-                    write_checkpoint(checkpoint_path, last_hash, done, total_hint or done)
+                    write_checkpoint(checkpoint_path, last_doc_id, last_hash, done, total_hint or done)
     except Exception as exc:  # fatal: report and fail loudly
         print(f"error: backfill failed after {done} chunks: {exc!r}", file=sys.stderr)
         return 1
@@ -185,7 +200,7 @@ def run_backfill(
             f"points with bm25 vector: {with_sparse.count}/{total.count}"
         )
         if last_hash is not None and checkpoint_path:
-            write_checkpoint(checkpoint_path, last_hash, done, total_hint or done)
+            write_checkpoint(checkpoint_path, last_doc_id, last_hash, done, total_hint or done)
     else:
         print(
             f"dry-run: {done} chunks would be encoded + written to {COLLECTION_NAME} "

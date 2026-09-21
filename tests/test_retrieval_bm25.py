@@ -10,12 +10,14 @@ vectors + server-side idf modifier.
 from __future__ import annotations
 
 import json
+import uuid
+from types import SimpleNamespace
 
 import pytest
 from qdrant_client import models as qm
 from retrieval.bm25 import SPARSE_DIM, encode_bm25, fnv1a, tokenize
 from retrieval.qdrant import COLLECTION_NAME, ensure_bm25_idf, point_id_for
-from retrieval.search import build_filter, hybrid_search, search_vectors
+from retrieval.search import build_filter, hybrid_search, hydrate, search_vectors
 
 
 class FakeQueryResponse:
@@ -147,9 +149,67 @@ def test_search_vectors_sparse_prefetch_carries_filter():
     assert client.calls[0]["prefetch"][1].filter is qfilter
 
 
+# --- hydrate: doc-scoped (doc_id, chunk_hash) keys (R-12) ---------------------
+
+
+class FakePoint:
+    def __init__(self, doc_id, chunk_hash, score=0.9):
+        self.id = "point-id"
+        self.payload = {"doc_id": doc_id, "chunk_hash": chunk_hash}
+        self.score = score
+
+
+class FakeHydrateSession:
+    """select(Chunk) returns the canned chunks; get(Document) by pk."""
+
+    def __init__(self, chunks, docs=None):
+        self._chunks = chunks
+        self._docs = docs or {}
+
+    def execute(self, stmt):
+        return SimpleNamespace(scalars=lambda: iter(list(self._chunks)))
+
+    def get(self, model, pk):
+        return self._docs.get(str(pk))
+
+
+def _chunk(doc_id, chunk_hash, page_start=7):
+    from core.db.models import Chunk
+
+    return Chunk(
+        id=uuid.uuid4(),
+        doc_id=uuid.UUID(doc_id),
+        chunk_hash=chunk_hash,
+        seq=0,
+        text=f"text of {doc_id}/{chunk_hash}",
+        token_count=3,
+        page_start=page_start,
+        page_end=page_start + 1,
+        heading_path=["Ch 1"],
+    )
+
+
+def test_hydrate_keys_rows_by_doc_id_and_hash():
+    """Two Chunks sharing one chunk_hash under different doc_ids: each fused
+    point resolves to its OWN doc's chunk (hash-keyed rows attributed the
+    hit to whichever row the query returned first — R-12)."""
+    import uuid as _uuid
+
+    doc_a, doc_b = str(_uuid.uuid4()), str(_uuid.uuid4())
+    chunk_a, chunk_b = _chunk(doc_a, "h"), _chunk(doc_b, "h")
+    docs = {
+        doc_a: SimpleNamespace(title="Doc A", completeness=None),
+        doc_b: SimpleNamespace(title="Doc B", completeness=None),
+    }
+    session = FakeHydrateSession([chunk_a, chunk_b], docs)
+    hits = hydrate(session, [FakePoint(doc_a, "h"), FakePoint(doc_b, "h")])
+    assert [h.doc_id for h in hits] == [_uuid.UUID(doc_a), _uuid.UUID(doc_b)]
+    assert [h.text for h in hits] == [chunk_a.text, chunk_b.text]
+    assert [h.page_start for h in hits] == [7, 7]
+    assert [h.doc_title for h in hits] == ["Doc A", "Doc B"]
+
+
 # --- hybrid_search forwarding -----------------------------------------------
-
-
 class FakeSession:
     def execute(self, stmt):
         class R:
@@ -239,6 +299,9 @@ def test_ensure_bm25_idf_missing_bm25_space_patches():
     assert len(patch) == 1
 
 
-def test_point_id_for_stable():
-    assert point_id_for("abc") == point_id_for("abc")
-    assert point_id_for("abc") != point_id_for("abd")
+def test_point_id_for_stable_and_doc_scoped():
+    """R-12: point ids are stable per (doc_id, chunk_hash) pair and two
+    documents sharing one chunk_hash never collide on one point."""
+    assert point_id_for("d1", "abc") == point_id_for("d1", "abc")
+    assert point_id_for("d1", "abc") != point_id_for("d1", "abd")
+    assert point_id_for("d1", "abc") != point_id_for("d2", "abc")

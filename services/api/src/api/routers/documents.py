@@ -159,10 +159,42 @@ def retry(
         repo.set_doc_state(session, doc_id, DocState.SPLITTING)
         streams.xadd_job(r, streams.STREAM_SPLIT, contracts.SplitJob(doc_id=doc_id, source_uri=doc.source_uri))
     else:  # shards: requeue failed shards only
+        failed_shards = (
+            session.execute(
+                select(Shard).where(Shard.doc_id == doc_id, Shard.state == "failed").order_by(Shard.idx)
+            )
+            .scalars()
+            .all()
+        )
+        if not failed_shards:
+            raise HTTPException(status_code=409, detail="no failed shards to retry")
         session.execute(
             Shard.__table__.update()
             .where(Shard.doc_id == doc_id, Shard.state == "failed")
             .values(state="pending", error_code=None, error_detail=None)
         )
-        streams.xadd_job(r, streams.STREAM_EMBED, contracts.EmbedJob(doc_id=doc_id))
+        # Counter hygiene: mark_shard_failed bumped shards_failed per failure;
+        # requeueing undoes those failures. Without this the embedder would
+        # compute a wrong completeness and book_settled could double-count.
+        session.execute(
+            Document.__table__.update()
+            .where(Document.id == doc_id)
+            .values(shards_failed=Document.shards_failed - len(failed_shards))
+        )
+        # Back to PARSING so the janitor's settled-book sweep and stuck-doc
+        # warnings see this book again (a stranded pending shard in a
+        # terminal-state doc is invisible to every recovery path — R-11).
+        repo.set_doc_state(session, doc_id, DocState.PARSING)
+        for shard in failed_shards:
+            streams.xadd_job(
+                r,
+                streams.STREAM_PARSE,
+                contracts.ParseJob(
+                    doc_id=doc_id,
+                    idx=shard.idx,
+                    page_start=shard.page_start,
+                    page_end=shard.page_end,
+                    source_uri=doc.source_uri,
+                ),
+            )
     return {"id": str(doc_id), "retried": body.scope}

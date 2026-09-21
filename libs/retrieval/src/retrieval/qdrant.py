@@ -104,10 +104,13 @@ def ensure_collection(client: QdrantClient, settings: Settings | None = None) ->
     return name
 
 
-def point_id_for(chunk_hash: str) -> str:
+def point_id_for(doc_id: str, chunk_hash: str) -> str:
     """Qdrant accepts UUIDs or unsigned ints as point ids; derive a stable
-    UUID5 from the chunk hash so re-embedding upserts, never duplicates."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"chunk:{chunk_hash}"))
+    UUID5 from doc_id AND chunk_hash so re-embedding upserts, never
+    duplicates — and two documents sharing identical normalized text
+    (boilerplate, standard clauses) never collide on one point (R-12:
+    chunk_hash is unique only per (doc_id, chunk_hash))."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"chunk:{doc_id}:{chunk_hash}"))
 
 
 def upsert_chunks(
@@ -123,7 +126,7 @@ def upsert_chunks(
     name = _collection(s)
     qpoints = [
         qm.PointStruct(
-            id=point_id_for(p["chunk_hash"]),
+            id=point_id_for(str(p["doc_id"]), p["chunk_hash"]),
             vector={"dense": p["vector"]},
             payload={
                 "doc_id": str(p["doc_id"]),
