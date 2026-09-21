@@ -121,6 +121,14 @@ class CategoryStats:
     def hit_at_8(self) -> float:
         return self.hits_at_8 / self.queries if self.queries else 0.0
 
+    @property
+    def hit_at_top_k(self) -> float:
+        """Any-rank hit rate: a rank was recorded iff the expected doc
+        appeared within the run's top_k (reciprocal_ranks gets one entry
+        per hit, misses append nothing) — correct for any top_k, unlike
+        the fixed hit@1/3/8 counters."""
+        return len(self.reciprocal_ranks) / self.queries if self.queries else 0.0
+
 
 @dataclass
 class Summary:

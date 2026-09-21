@@ -8,10 +8,9 @@ from the write plane's scope discipline).
 
 from __future__ import annotations
 
-from fastapi import Depends
-
 from api.deps import get_session
 from api.routers import collections, documents
+from fastapi import Depends
 
 
 def _route_scopes(router) -> list[tuple[str, bool]]:

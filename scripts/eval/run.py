@@ -211,7 +211,10 @@ def main(argv: list[str] | None = None) -> int:
                     "empty_responses": summary.empty_responses,
                     "hit_at_1": summary.overall.hit_at_1,
                     "hit_at_3": summary.overall.hit_at_3,
-                    f"hit_at_{args.top_k}": summary.overall.hit_at_8,
+                    # hit_at_top_k (R-19): the old f"hit_at_{args.top_k}" key
+                    # carried the judge's fixed hit@8 value, undercounting for
+                    # top_k > 8 and misnaming a correct value for top_k < 8.
+                    "hit_at_top_k": summary.overall.hit_at_top_k,
                     "mrr": summary.overall.mrr,
                     "by_category": {
                         name: {
@@ -236,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     overall = summary.overall
     print(f"label={args.label} queries={summary.total_queries} "
           f"hit@1={overall.hit_at_1:.2f} hit@3={overall.hit_at_3:.2f} "
-          f"hit@{args.top_k}={overall.hit_at_8:.2f} mrr={overall.mrr:.3f}")
+          f"hit@{args.top_k}={overall.hit_at_top_k:.2f} mrr={overall.mrr:.3f}")
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 from api.deps import get_session
 
 router = APIRouter(prefix="/v1/system", tags=["system"])
+
+logger = logging.getLogger(__name__)
 
 
 def _check_postgres(session: Session) -> str:
@@ -158,8 +161,12 @@ def pipeline(session: Session = Depends(get_session)):
                     lane["stale"] += 1
             consumers = r.xinfo_consumers(name, streams.CONSUMER_GROUP)
             lane["consumers"] = sum(1 for c in consumers if c.get("idle", 10**9) < 300_000)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Mirror /queues' stance: a dead Redis must not read as an
+            # empty lane silently. waiting=None already signals unknown;
+            # make the cause explicit and visible in logs (R-20).
+            logger.warning("pipeline lane read failed for %s: %s", name, exc)
+            lane["error"] = str(exc)
         lanes[name] = lane
 
     # -- document/shard counters --------------------------------------------

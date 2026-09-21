@@ -41,6 +41,16 @@ def classify(base_row: dict, cand_row: dict, top_k: int) -> str:
     return "regression" if cand_key > base_key else "improvement"
 
 
+def _summary_value(summary: dict, metric: str) -> float | None:
+    """Metric value from a summary, with a hit_at_top_k back-compat fallback:
+    old result files carry hit_at_8 under a f"hit_at_{top_k}" key instead."""
+    if metric in summary:
+        return summary[metric]
+    if metric == "hit_at_top_k" and "hit_at_8" in summary:
+        return summary["hit_at_8"]
+    return None
+
+
 def compare(base_path: str, cand_path: str, top_k: int) -> dict:
     """Deltas + per-query regression/improvement lists, matched by id."""
     base, cand = json.loads(Path(base_path).read_text(encoding="utf-8")), json.loads(
@@ -57,9 +67,13 @@ def compare(base_path: str, cand_path: str, top_k: int) -> dict:
             improvements.append(query_id)
     base_summary, cand_summary = base.get("summary", {}), cand.get("summary", {})
     deltas = {}
-    for metric in ("hit_at_1", "hit_at_3", "hit_at_8", "mrr"):
-        if metric in base_summary and metric in cand_summary:
-            deltas[metric] = round(cand_summary[metric] - base_summary[metric], 4)
+    # hit_at_top_k (R-19): old result files carried f"hit_at_{top_k}" carrying
+    # the fixed hit@8 value — fall back to hit_at_8 when either file lacks it.
+    for metric in ("hit_at_1", "hit_at_3", "hit_at_top_k", "hit_at_8", "mrr"):
+        b = _summary_value(base_summary, metric)
+        c = _summary_value(cand_summary, metric)
+        if b is not None and c is not None:
+            deltas[metric] = round(c - b, 4)
     return {
         "matched": len(shared),
         "only_in_base": sorted(set(base_rows) - set(cand_rows)),

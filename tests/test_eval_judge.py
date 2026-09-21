@@ -149,9 +149,40 @@ def test_evaluate_heading_hit_rate_among_title_hits():
     assert summary.overall.heading_hits == 0
 
 
+# --- hit_at_top_k (R-19) ------------------------------------------------------
+
+
+def test_hit_at_top_k_any_rank():
+    """hit_at_top_k = len(reciprocal_ranks)/queries — correct for any top_k:
+    3 queries, 2 hits (ranks 2 and 5) -> 2/3, while the fixed hit@1 counter
+    stays 0 (neither hit was rank 1)."""
+    stats = judge.CategoryStats()
+    judge._accumulate(stats, 2, False)
+    judge._accumulate(stats, 5, False)
+    judge._accumulate(stats, None, False)
+    assert stats.queries == 3
+    assert stats.hit_at_top_k == pytest.approx(2 / 3)
+    assert stats.hit_at_8 == pytest.approx(2 / 3)
+    assert stats.hit_at_1 == 0.0
+    assert stats.hit_at_3 == pytest.approx(1 / 3)
+
+
+def test_hit_at_top_k_counts_rank12_for_top16_not_hit8():
+    """A top_k=16-shaped case where rank 12 counts for top_k but not for
+    the fixed hit@8 counters (the old f"hit_at_{top_k}" key carried hit@8
+    and undercounted)."""
+    stats = judge.CategoryStats()
+    judge._accumulate(stats, 12, False)
+    judge._accumulate(stats, None, False)
+    assert stats.hit_at_top_k == pytest.approx(0.5)
+    assert stats.hit_at_8 == 0.0
+
+
+def test_hit_at_top_k_zero_queries():
+    assert judge.CategoryStats().hit_at_top_k == 0.0
+
+
 # --- junk filter ------------------------------------------------------------
-
-
 def test_junk_toc_heading():
     assert is_junk(_result("Any Book", ["Front Matter", "Table of Contents"]))
 
