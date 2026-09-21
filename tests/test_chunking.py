@@ -72,9 +72,11 @@ def test_chunks_carry_page_range_when_pages_given():
     assert len(chunks) == 2
     # page_start is the first BODY line (the heading line is separate)
     assert chunks[0].page_start == 2
-    # section 1 ends at the last line before the "# Ch 2" heading
-    end_of_section_1 = lines.index("# Ch 2") - 1
-    assert chunks[0].page_end == pages[end_of_section_1]
+    # window-level citation (R-13): the last window ends at the section's
+    # last WORD's line ("body line", line 3), not the section's structural
+    # end bound (the empty line 4 the old section-level behavior cited)
+    last_body_word_line = lines.index("body line")
+    assert chunks[0].page_end == pages[last_body_word_line]
     assert chunks[1].page_start > chunks[0].page_start
     assert chunks[1].page_end == pages[-1]
 
@@ -83,3 +85,25 @@ def test_chunks_pages_none_when_pages_absent():
     md = "# Ch 1\nintro line\n\nbody line\n"
     chunks = chunk_markdown(md)
     assert all(c.page_start is None and c.page_end is None for c in chunks)
+
+
+def test_windows_carry_own_page_range():
+    """R-13: each window cites its own first/last line's pages, not the
+    section's full span. 10-line single-section body with max_tokens
+    forcing 3 windows."""
+    md = "# Ch\n" + "\n".join(f"word{i} more{i}" for i in range(10)) + "\n"
+    lines = md.splitlines()
+    pages = list(range(1, len(lines) + 1))  # line i -> page i+1
+    chunks = chunk_markdown(md, tokenizer=lambda t: len(t.split()), max_tokens=8, pages=pages)
+    assert len(chunks) == 3
+    section_end = pages[-1]
+    # strictly increasing page_starts — previously all three shared the
+    # section range
+    starts = [c.page_start for c in chunks]
+    assert starts == sorted(starts) and len(set(starts)) == 3
+    assert all(s < section_end for s in starts)
+    # each window's page_end is its own last word's line, within the section
+    # (the final window may end exactly AT the section end)
+    for c in chunks:
+        assert c.page_end >= c.page_start
+        assert c.page_end <= section_end

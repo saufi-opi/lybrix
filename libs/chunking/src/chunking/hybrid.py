@@ -55,20 +55,22 @@ def chunk_markdown(
     count = tokenizer or whitespace_tokenizer
     chunks: list[Chunk] = []
 
-    for heading_path, body, start_line, end_line in _sections(markdown):
-        words = body.split()
+    for heading_path, body_lines, _start, _end in _sections(markdown):
+        words = [(w, ln) for ln, line in body_lines for w in line.split()]
         if not words:
             continue
         # Greedy pack: accumulate words until the token budget would bust.
-        window: list[str] = []
+        # Each word carries its own global line number so every window can
+        # cite its own first/last line's pages (R-13) — the section's
+        # bounds made every window of a long section cite the full span.
+        window: list[tuple[str, int]] = []
         window_tokens = 0
-        for word in words:
+        for word, line_no in words:
             t = count(word)
             if window and window_tokens + t > max_tokens:
-                _emit(chunks, heading_path, window, count, pages, start_line, end_line)
-                window = []
-                window_tokens = 0
-            window.append(word)
+                _emit(chunks, heading_path, window, count, pages)
+                window, window_tokens = [], 0
+            window.append((word, line_no))
             window_tokens += t
         if window:
             _emit(
@@ -77,8 +79,6 @@ def chunk_markdown(
                 window,
                 count,
                 pages,
-                start_line,
-                end_line,
                 min_tokens=min_tokens,
             )
 
@@ -88,21 +88,19 @@ def chunk_markdown(
 def _emit(
     chunks: list[Chunk],
     heading_path: tuple[str, ...],
-    words: list[str],
+    window_words: list[tuple[str, int]],
     count,
     pages: list[int] | None = None,
-    start_line: int = 0,
-    end_line: int = 0,
     min_tokens: int = 0,
 ) -> None:
-    text = " ".join(words)
+    text = " ".join(w for w, _ in window_words)
     if heading_path:
         text = "\n\n".join([heading_path[-1], text])
     if count(text) < min_tokens:
         return
     h = hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
-    page_start = pages[start_line] if pages else None
-    page_end = pages[end_line] if pages else None
+    page_start = pages[window_words[0][1]] if pages else None
+    page_end = pages[window_words[-1][1]] if pages else None
     chunks.append(
         Chunk(
             text=text,
@@ -116,13 +114,15 @@ def _emit(
     )
 
 
-def _sections(markdown: str) -> list[tuple[tuple[str, ...], str, int, int]]:
-    """Yield (heading_path, body, start_line, end_line) sections; fences
-    protect headings. Line indices are into ``markdown.splitlines()`` —
-    the same indexing stitch's page map uses."""
-    sections: list[tuple[tuple[str, ...], str, int, int]] = []
+def _sections(markdown: str) -> list[tuple[tuple[str, ...], list[tuple[int, str]], int, int]]:
+    """Yield (heading_path, body_lines, start_line, end_line) sections;
+    fences protect headings. body_lines is a list of (global_line_no, text)
+    pairs — the caller packs words carrying their own line number so each
+    window cites its own page range (R-13). Line indices are into
+    ``markdown.splitlines()`` — the same indexing stitch's page map uses."""
+    sections: list[tuple[tuple[str, ...], list[tuple[int, str]], int, int]] = []
     stack: list[tuple[int, str]] = []
-    current: list[str] = []
+    current: list[tuple[int, str]] = []
     in_fence = False
     started = False
     start_line = 0
@@ -131,7 +131,7 @@ def _sections(markdown: str) -> list[tuple[tuple[str, ...], str, int, int]]:
     def flush(end_line: int) -> None:
         nonlocal current
         if started:
-            sections.append((tuple(t for _, t in stack), "\n".join(current), start_line, end_line))
+            sections.append((tuple(t for _, t in stack), list(current), start_line, end_line))
         current = []
 
     last_line_no = -1
@@ -139,7 +139,7 @@ def _sections(markdown: str) -> list[tuple[tuple[str, ...], str, int, int]]:
         last_line_no = line_no
         if _FENCE_RE.match(line.strip()):
             in_fence = not in_fence
-            current.append(line)
+            current.append((line_no, line))
             started = True
             continue
         m = None if in_fence else _HEADING_RE.match(line)
@@ -154,10 +154,10 @@ def _sections(markdown: str) -> list[tuple[tuple[str, ...], str, int, int]]:
                 stack.pop()
             stack.append((level, title))
         else:
-            current.append(line)
+            current.append((line_no, line))
             if line.strip():
                 started = True
-                if not current[:-1] or not any(current[:-1]):
+                if not current[:-1] or not any(t for _, t in current[:-1]):
                     start_line = line_no
     flush(last_line_no)
     return sections
