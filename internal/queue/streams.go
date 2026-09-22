@@ -7,6 +7,7 @@ package queue
 
 import (
 	"context"
+	"strings"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -220,6 +221,9 @@ func ClaimStale(ctx context.Context, r redis.Cmdable, stream, consumer string, m
 func UndeliveredCount(ctx context.Context, r redis.Cmdable, stream string) (int64, error) {
 	groups, err := r.XInfoGroups(ctx, stream).Result()
 	if err != nil {
+		if strings.Contains(err.Error(), "no such key") {
+			return 0, nil
+		}
 		return 0, err
 	}
 	for _, g := range groups {
