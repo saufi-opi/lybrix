@@ -75,7 +75,12 @@ async function pooled<T>(items: T[], limit: number, fn: (item: T) => Promise<voi
   await Promise.all(workers);
 }
 
-const ACCEPTED_MIMES = "application/pdf,application/epub+zip";
+// Full format table (Workstream 2): PDF, EPUB, office (docx/pptx/xlsx),
+// text, markdown, HTML.
+const ACCEPTED_MIMES =
+  "application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/html";
+
+const ACCEPTED_EXT = /\.(pdf|epub|docx|pptx|xlsx|txt|md|markdown|html?|text)$/i;
 
 export default function UploadPage() {
   const { data: collections } = useCollections();
@@ -132,13 +137,10 @@ export default function UploadPage() {
     }
     setBusy(true);
     const arr = Array.from(files).filter(
-      (f) =>
-        f.type === "application/pdf" ||
-        f.type === "application/epub+zip" ||
-        /\.(pdf|epub)$/i.test(f.name),
+      (f) => ACCEPTED_EXT.test(f.name) || ACCEPTED_MIMES.split(",").includes(f.type),
     );
     if (arr.length === 0) {
-      toast.error("only application/pdf and application/epub+zip files are accepted");
+      toast.error("accepted: .pdf .epub .docx .pptx .xlsx .txt .md .html");
       setBusy(false);
       return;
     }
@@ -159,7 +161,7 @@ export default function UploadPage() {
           method: "PUT",
           body: file,
           headers: {
-            "content-type": file.type === "application/epub+zip" ? file.type : "application/pdf",
+            "content-type": file.type || "application/octet-stream",
           },
         });
         updateItem(file.name, { detail: "committing…" });
@@ -169,7 +171,7 @@ export default function UploadPage() {
           body: JSON.stringify({
             collection_id: collection,
             content_sha256,
-            title: title || file.name.replace(/\.(pdf|epub)$/i, ""),
+            title: title || file.name.replace(/\.[a-z0-9]+$/i, ""),
           }),
         });
         if (commit.ok) {
@@ -290,7 +292,10 @@ export default function UploadPage() {
           const acq =
             e.acquisition.find(
               (a) => a.mime_type === "application/pdf" || a.mime_type === "application/epub+zip",
-            ) ?? e.acquisition[0];
+            ) ??
+            e.acquisition.find((a) => a.mime_type.startsWith("application/vnd.openxmlformats")) ??
+            e.acquisition.find((a) => a.mime_type.startsWith("text/")) ??
+            e.acquisition[0];
           return acq ? [{ title: e.title, href: acq.href, mime_type: acq.mime_type }] : [];
         });
       if (selection.length === 0) {
@@ -397,9 +402,10 @@ export default function UploadPage() {
                   : "border-sheet-edge hover:border-ink-faint")
               }
             >
-              <p className="m-0 font-medium">Drop PDFs or EPUBs here</p>
+              <p className="m-0 font-medium">Drop documents here</p>
               <p className="m-0 text-[12.5px] text-muted-foreground">
-                or browse below — multiple files upload in parallel
+                .pdf .epub .docx .pptx .xlsx .txt .md .html — or browse below; multiple files upload
+                in parallel
               </p>
               <Input
                 type="file"

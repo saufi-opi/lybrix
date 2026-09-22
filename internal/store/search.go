@@ -25,6 +25,9 @@ type SearchHit struct {
 	Score        float64
 	Partial      bool
 	Completeness *float64
+	// Reranked marks hits reordered by the cross-encoder stage: Score then
+	// carries the normalized rerank score (0..1), not the RRF score.
+	Reranked bool
 }
 
 // Dense-weight 1.0 / BM25 0.3 — blueprint §5's weighted RRF. 1.0 measured
@@ -42,7 +45,8 @@ var ErrDimMismatch = errors.New("vector dimension mismatch")
 
 // HybridSearch runs the blueprint §5 RRF SQL over pgvector cosine + pg_search
 // BM25, with the key-scope collection filter pushed into BOTH CTEs — never
-// post-filtered after top_k truncation (R-14).
+// post-filtered after top_k truncation (R-14). metaFilter ("" when unset)
+// rides inside every CTE the same way.
 //
 // dim is the query model's declared dimension: the dense CTE filters
 // vector_dims(embedding) = <dim> (literal, matching the per-dim HNSW index
@@ -53,11 +57,13 @@ var ErrDimMismatch = errors.New("vector dimension mismatch")
 //
 // Parameters: $1 query vector, $2 collection filter (empty → all), $3
 // collection scope array (empty → all), $4 bm25 query string, $5 fetch limit,
-// $6 dim (interpolated as a SQL literal — an int from the registry row).
-func (d *DB) HybridSearch(ctx context.Context, queryVec []float32, dim int, collection string, collectionScope []string, bm25Query string, limit int) ([]*SearchHit, error) {
+// $6 dim (interpolated as a SQL literal — an int from the registry row),
+// then the metadata filter's bound values from $7 up.
+func (d *DB) HybridSearch(ctx context.Context, queryVec []float32, dim int, collection string, collectionScope []string, bm25Query string, limit int, metaFilter string, metaArgs []any) ([]*SearchHit, error) {
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
+	params := append([]any{pgvector.NewVector(queryVec), collection, pqTextArray(collectionScope), bm25Query, limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 WITH dense_matches AS (
     SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
@@ -67,6 +73,7 @@ WITH dense_matches AS (
       AND vector_dims(embedding) = %[1]d
       AND ($2 = '' OR collection_id = $2)
       AND ($3 = '{}'::text[] OR collection_id = ANY($3))
+      AND ($6 = '' OR %[4]s)
     ORDER BY embedding::vector(%[1]d) <=> $1
     LIMIT $5
 ),
@@ -77,6 +84,7 @@ bm25_matches AS (
     WHERE id @@@ paradedb.parse($4) AND is_parent = FALSE
       AND ($2 = '' OR collection_id = $2)
       AND ($3 = '{}'::text[] OR collection_id = ANY($3))
+      AND ($6 = '' OR %[4]s)
     LIMIT $5
 )
 SELECT
@@ -96,8 +104,8 @@ LEFT JOIN chunks p ON p.id = COALESCE(d.parent_id, b.parent_id)
 JOIN documents doc ON doc.id = COALESCE(d.doc_id, b.doc_id)
 ORDER BY rrf_score DESC
 LIMIT $5`,
-		dim, float64(RRFK)),
-		pgvector.NewVector(queryVec), collection, pqTextArray(collectionScope), bm25Query, limit)
+		dim, float64(RRFK), metaFilter, metaFilter),
+		params...)
 	if err != nil {
 		return nil, mapDimErr(err)
 	}
@@ -145,8 +153,9 @@ func mapDimErr(err error) error {
 // collections == empty → all collections bind a model; scope is the key's
 // collection allowlist pushed into every leg's SQL filter (R-14 — never
 // post-filtered). embedderFn is called once per unique model, never per
-// collection.
-func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []string, scope []string, topK int, embedderFn func(m *EmbeddingModel) ([]float32, error)) ([]*SearchHit, error) {
+// collection. metaFilter ("" when unset) rides inside every leg the same
+// way.
+func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []string, scope []string, topK int, metaFilter string, metaArgs []any, embedderFn func(m *EmbeddingModel) ([]float32, error)) ([]*SearchHit, error) {
 	// Resolve the target set: explicit ids, else every collection. The key
 	// scope is an allowlist — intersect BEFORE grouping so out-of-scope
 	// models are never embedded (a down backend the key can't see must not
@@ -216,7 +225,7 @@ func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []
 	}
 
 	// One BM25 leg across ALL target collections (sparse needs no model).
-	bm25Hits, err := d.HybridBMSearch(ctx, targets, scope, query, topK)
+	bm25Hits, err := d.HybridBMSearch(ctx, targets, scope, query, topK, metaFilter, metaArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +244,7 @@ func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []
 	addLeg(bm25Hits, BM25Weight)
 	for _, id := range order {
 		g := groups[id]
-		denseHits, err := d.HybridDenseSearch(ctx, g.vec, g.model.VectorDim, g.cols, scope, topK)
+		denseHits, err := d.HybridDenseSearch(ctx, g.vec, g.model.VectorDim, g.cols, scope, topK, metaFilter, metaArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -271,11 +280,13 @@ func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []
 // HybridDenseSearch runs one model group's dense leg: cosine top-K over the
 // group's dimension's partial HNSW, filtered to the group's collections and
 // the key scope. Only ids + ranking data are needed — fusion refetches
-// nothing (each hit carries its full row from the SQL select).
-func (d *DB) HybridDenseSearch(ctx context.Context, queryVec []float32, dim int, collections, scope []string, limit int) ([]*SearchHit, error) {
+// nothing (each hit carries its full row from the SQL select). metaFilter
+// ("" when unset) lives INSIDE the derived table (R-14).
+func (d *DB) HybridDenseSearch(ctx context.Context, queryVec []float32, dim int, collections, scope []string, limit int, metaFilter string, metaArgs []any) ([]*SearchHit, error) {
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
+	params := append([]any{pqTextArray(collections), pqTextArray(scope), pgvector.NewVector(queryVec), limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
        p.text, c.text, doc.completeness
@@ -286,12 +297,13 @@ FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
         AND vector_dims(embedding) = %[1]d
         AND collection_id = ANY($1)
         AND ($2 = '{}'::text[] OR collection_id = ANY($2))
+        AND ($5 = '' OR %[4]s)
       ORDER BY embedding::vector(%[1]d) <=> $3
       LIMIT $4) c
 LEFT JOIN chunks p ON p.id = c.parent_id
 JOIN documents doc ON doc.id = c.doc_id
 ORDER BY c.dense_rank`,
-		dim), pqTextArray(collections), pqTextArray(scope), pgvector.NewVector(queryVec), limit)
+		dim, metaFilter, metaFilter, metaFilter), params...)
 	if err != nil {
 		return nil, mapDimErr(err)
 	}
@@ -301,8 +313,9 @@ ORDER BY c.dense_rank`,
 
 // HybridBMSearch runs the sparse leg across all target collections: BM25
 // top-K over pg_search, filtered by collection set and key scope.
-func (d *DB) HybridBMSearch(ctx context.Context, collections, scope []string, bm25Query string, limit int) ([]*SearchHit, error) {
-	rows, err := d.Pool.Query(ctx, `
+func (d *DB) HybridBMSearch(ctx context.Context, collections, scope []string, bm25Query string, limit int, metaFilter string, metaArgs []any) ([]*SearchHit, error) {
+	params := append([]any{bm25Query, pqTextArray(collections), pqTextArray(scope), limit, metaFilter}, metaArgs...)
+	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
        p.text, c.text, doc.completeness
 FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
@@ -311,12 +324,12 @@ FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
       WHERE id @@@ paradedb.parse($1) AND is_parent = FALSE
         AND ($2 = '{}'::text[] OR collection_id = ANY($2))
         AND ($3 = '{}'::text[] OR collection_id = ANY($3))
+        AND ($5 = '' OR %[4]s)
       ORDER BY paradedb.score(id) DESC
       LIMIT $4) c
 LEFT JOIN chunks p ON p.id = c.parent_id
 JOIN documents doc ON doc.id = c.doc_id
-ORDER BY c.bm25_rank`,
-		bm25Query, pqTextArray(collections), pqTextArray(scope), limit)
+ORDER BY c.bm25_rank`, metaFilter, metaFilter, metaFilter, metaFilter), params...)
 	if err != nil {
 		return nil, mapDimErr(err)
 	}

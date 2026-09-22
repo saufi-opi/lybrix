@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/saufi-opi/lybrix/internal/config"
@@ -121,4 +122,34 @@ func TestToolHandlerMapsErrorIntoResult(t *testing.T) {
 	// tool errors surface inside the result (isError=true), not as
 	// protocol-level errors — the LLM must see and self-correct.
 	_ = errors.New("sentinel")
+}
+
+func TestParseMetadataFilterArg(t *testing.T) {
+	// absent → no filter
+	f, a, err := parseMetadataFilterArg(map[string]any{})
+	if err != nil || f != "" || a != nil {
+		t.Fatalf("absent drift: %q %v %v", f, a, err)
+	}
+	// malformed JSON is a tool error the model can self-correct
+	_, _, err = parseMetadataFilterArg(map[string]any{"metadata_filter": "{nope"})
+	if err == nil || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("malformed JSON must error: %v", err)
+	}
+	// valid object compiles
+	f, a, err = parseMetadataFilterArg(map[string]any{"metadata_filter": `{"author":"x"}`})
+	if err != nil || !strings.Contains(f, "lower(df.author)") || len(a) != 1 {
+		t.Fatalf("valid filter drift: %q %v %v", f, a, err)
+	}
+}
+
+func TestHandleSearchMetadataFilterPropagates(t *testing.T) {
+	// a bad filter key surfaces as a tool error (not a silent pass-through)
+	deps := Deps{Settings: config.DefaultSettings()}
+	ctx := context.WithValue(context.Background(), apiKeyCtxKey, &store.ApiKey{})
+	_, err := handleSearch(ctx, deps, map[string]any{
+		"query": "x", "metadata_filter": `{"bad key!": "v"}`,
+	})
+	if err == nil {
+		t.Fatal("unsafe filter key must error")
+	}
 }

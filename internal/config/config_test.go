@@ -77,8 +77,8 @@ func TestValidation(t *testing.T) {
 	// rerank requires url — env empties fall back to the 1.0 default URL,
 	// so the invariant is exercised directly on the struct.
 	s := DefaultSettings()
-	s.TEIRerankURL = ""
-	s.RerankEnabled = true
+	s.RerankSeed.QueryURL = ""
+	s.RerankSeed.Enabled = true
 	if err := s.Validate(); err == nil {
 		t.Fatal("expected validation error for rerank without url")
 	}

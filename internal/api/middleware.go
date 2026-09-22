@@ -146,7 +146,8 @@ func routeScope(method, path string) string {
 		strings.HasPrefix(path, "/v1/collections/") && strings.HasSuffix(path, "/stats"):
 		return "search"
 	case path == "/v1/collections" && method == http.MethodPost,
-		matchCollectionModelBind(path):
+		matchCollectionModelBind(path),
+		matchCollectionRerankerBind(path):
 		return "admin"
 
 	// model registry — admin scope, all six operations
@@ -154,6 +155,17 @@ func routeScope(method, path string) string {
 		path == "/v1/models/test" && method == http.MethodPost,
 		matchModelID(path):
 		return "admin"
+
+	// reranker registry — admin scope, all five operations
+	case path == "/v1/rerank-models" && (method == http.MethodGet || method == http.MethodPost),
+		path == "/v1/rerank-models/test" && method == http.MethodPost,
+		matchRerankModelID(path):
+		return "admin"
+
+	// chunk inspector — search scope (read-only)
+	case matchDocSub(path, "/chunks"),
+		matchChunkID(path):
+		return "search"
 
 	// search
 	case path == "/v1/search":
@@ -193,6 +205,38 @@ func matchCollectionModelBind(path string) bool {
 		return false
 	}
 	return strings.HasSuffix(path, suffix) && len(path) > len("/v1/collections/")+len(suffix)
+}
+
+// matchCollectionRerankerBind matches /v1/collections/{id}/reranker.
+// Ordering matters: it must resolve before any broader collections rule
+// could swallow it (mirrors matchCollectionModelBind's shape).
+func matchCollectionRerankerBind(path string) bool {
+	const suffix = "/reranker"
+	if !strings.HasPrefix(path, "/v1/collections/") {
+		return false
+	}
+	return strings.HasSuffix(path, suffix) && len(path) > len("/v1/collections/")+len(suffix)
+}
+
+// matchRerankModelID matches /v1/rerank-models/{id} (update + delete).
+func matchRerankModelID(path string) bool {
+	const prefix = "/v1/rerank-models/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	rest := path[len(prefix):]
+	return rest != "" && rest != "test" && !strings.Contains(rest, "/")
+}
+
+// matchChunkID matches /v1/chunks/{id} (chunk inspector detail). Separate
+// prefix from /v1/documents/ — no interaction with matchDocSub.
+func matchChunkID(path string) bool {
+	const prefix = "/v1/chunks/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	rest := path[len(prefix):]
+	return rest != "" && !strings.Contains(rest, "/")
 }
 
 // matchDocSub matches /v1/documents/{id}[/suffix] paths.

@@ -11,8 +11,9 @@ import (
 
 // Golden test: walk the checked-in snapshot's paths and assert each route
 // exists with matching methods (contract discipline — the Go server is
-// pinned to services/web/openapi.json, 25 paths: the original 18 plus the
-// model-registry (6), fetch-url and OPDS (3) operations).
+// pinned to services/web/openapi.json, 31 paths: the previous 25 plus the
+// reranker registry (5) + reranker bind (1) + chunk inspector (2) — the
+// rerank/metadata_filter search fields ride the existing /v1/search path).
 func TestOpenAPIRouteParity(t *testing.T) {
 	data, err := os.ReadFile("openapi_snapshot.json")
 	if err != nil {
@@ -24,7 +25,7 @@ func TestOpenAPIRouteParity(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Paths) != 25 {
+	if len(doc.Paths) != 31 {
 		t.Fatalf("snapshot path count drift: %d", len(doc.Paths))
 	}
 	s := New(Deps{})
@@ -81,6 +82,16 @@ func TestRouteScopeTable(t *testing.T) {
 		{"POST", "/v1/models/11111111-1111-1111-1111-111111111111", "admin"},
 		{"DELETE", "/v1/models/11111111-1111-1111-1111-111111111111", "admin"},
 		{"POST", "/v1/collections/books/model", "admin"},
+		// reranker registry — five admin operations + the collection bind
+		{"GET", "/v1/rerank-models", "admin"},
+		{"POST", "/v1/rerank-models", "admin"},
+		{"POST", "/v1/rerank-models/test", "admin"},
+		{"POST", "/v1/rerank-models/11111111-1111-1111-1111-111111111111", "admin"},
+		{"DELETE", "/v1/rerank-models/11111111-1111-1111-1111-111111111111", "admin"},
+		{"POST", "/v1/collections/books/reranker", "admin"},
+		// chunk inspector — search scope (read-only)
+		{"GET", "/v1/documents/11111111-1111-1111-1111-111111111111/chunks", "search"},
+		{"GET", "/v1/chunks/11111111-1111-1111-1111-111111111111", "search"},
 		// multi-source ingestion — three ingest operations (fetch-url must
 		// resolve "ingest" above the matchDocSub bare-id "search" case)
 		{"POST", "/v1/documents/fetch-url", "ingest"},

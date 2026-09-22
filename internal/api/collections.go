@@ -11,13 +11,15 @@ import (
 )
 
 // collectionOut is the /v1/collections item shape (collections.py parity).
-// embedding_model_id carries the registry binding (nil on legacy rows).
+// embedding_model_id carries the registry binding (nil on legacy rows);
+// rerank_model_id carries the optional reranker binding (Workstream 1).
 type collectionOut struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
 	EmbeddingModel   string    `json:"embedding_model"`
 	VectorDim        int       `json:"vector_dim"`
 	EmbeddingModelID *string   `json:"embedding_model_id"`
+	RerankModelID    *string   `json:"rerank_model_id,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -35,7 +37,8 @@ func toCollectionOut(c *store.Collection) collectionOut {
 	return collectionOut{
 		ID: c.ID, Name: c.Name, EmbeddingModel: c.EmbeddingModel,
 		VectorDim: c.VectorDim, EmbeddingModelID: c.EmbeddingModelID,
-		CreatedAt: c.CreatedAt,
+		RerankModelID: c.RerankModelID,
+		CreatedAt:     c.CreatedAt,
 	}
 }
 

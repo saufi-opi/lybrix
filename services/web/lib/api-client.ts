@@ -15,18 +15,30 @@ import {
   getShardsV1DocumentsDocIdShardsGet,
   healthV1SystemHealthGet,
   listCollectionsV1CollectionsGet,
+  listDocumentChunksV1DocumentsDocIdChunksGet,
   listDocumentsV1DocumentsGet,
   listEventsV1EventsGet,
   listModelsV1ModelsGet,
+  listRerankModelsV1RerankModelsGet,
   pipelineV1SystemPipelineGet,
   queuesV1SystemQueuesGet,
   retryV1DocumentsDocIdRetryPost,
 } from "@/lib/client/sdk.gen";
-import type { DocumentOut, ModelOut, ShardOut } from "@/lib/client/types.gen";
+import type {
+  ChunkList,
+  ChunkOut,
+  DocumentOut,
+  ModelOut,
+  RerankModelOut,
+  ShardOut,
+} from "@/lib/client/types.gen";
 
 /** Re-exported so existing imports of the hand-written types keep working. */
 export type DocumentRow = DocumentOut;
 export type ShardRow = ShardOut;
+export type ChunkRow = ChunkOut;
+export type RerankerRow = RerankModelOut;
+export type ChunkListPage = ChunkList;
 
 /** throwOnError makes the SDK reject non-2xx instead of returning the error
  * envelope — matches the old api<T>() contract of throwing on !res.ok. */
@@ -94,6 +106,19 @@ export const apiClient = {
     viaAdminProxy((baseUrl) => listModelsV1ModelsGet({ ...THROW, baseUrl })).then(
       (r) => r.data as unknown as ModelOut[],
     ),
+  rerankModels: () =>
+    viaAdminProxy((baseUrl) => listRerankModelsV1RerankModelsGet({ ...THROW, baseUrl })).then(
+      (r) => r.data as unknown as RerankModelOut[],
+    ),
+  chunks: (docId: string, page = 1, pageSize = 50) =>
+    viaAdminProxy((baseUrl) =>
+      listDocumentChunksV1DocumentsDocIdChunksGet({
+        path: { doc_id: docId },
+        query: { page, page_size: pageSize },
+        ...THROW,
+        baseUrl,
+      }),
+    ).then((r) => r.data as unknown as ChunkList),
   retry: (id: string, scope: string) =>
     retryV1DocumentsDocIdRetryPost({
       path: { doc_id: id },

@@ -1,9 +1,10 @@
 "use client";
 
-/** Collections (2.0.1): each collection binds one registry model at
- * creation (mandatory) and inherits its model_id + vector_dim; rebinding
- * is available per collection via the bind endpoint. Client component —
- * useCollections() refetches on window focus. */
+/** Collections (2.0.1 / Workstream 1): each collection binds one registry
+ * model at creation (mandatory) and inherits its model_id + vector_dim;
+ * rebinding is available per collection via the bind endpoint. An optional
+ * reranker binding (Rerank stage) rides POST /v1/collections/{id}/reranker.
+ * Client component — useCollections() refetches on window focus. */
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -33,7 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useCollections, useEmbeddingModels } from "@/lib/queries";
+import { useCollections, useEmbeddingModels, useRerankModels } from "@/lib/queries";
 
 interface CollectionRow {
   id: string;
@@ -41,6 +42,7 @@ interface CollectionRow {
   embedding_model: string;
   vector_dim?: number;
   embedding_model_id?: string | null;
+  rerank_model_id?: string | null;
   doc_count?: number;
 }
 
@@ -59,6 +61,7 @@ async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export default function CollectionsPage() {
   const { data: cols, isPending, isError, error, refetch } = useCollections();
   const { data: models } = useEmbeddingModels();
+  const { data: rerankers } = useRerankModels();
 
   const [creating, setCreating] = useState(false);
   const [id, setId] = useState("");
@@ -70,11 +73,21 @@ export default function CollectionsPage() {
   const [rebinding, setRebinding] = useState<CollectionRow | null>(null);
   const [rebindModel, setRebindModel] = useState("");
 
+  // reranker binding state: { collectionId, currentRerankerId }
+  const [reranking, setReranking] = useState<CollectionRow | null>(null);
+  const [rerankChoice, setRerankChoice] = useState("none");
+
   const modelList = (models ?? []) as unknown as Array<{
     id: string;
     name: string;
     model_id: string;
     vector_dim: number;
+  }>;
+
+  const rerankerList = (rerankers ?? []) as unknown as Array<{
+    id: string;
+    name: string;
+    model_id: string;
   }>;
 
   const loadCols = useCallback(async () => {
@@ -126,6 +139,30 @@ export default function CollectionsPage() {
     }
   }
 
+  async function bindReranker() {
+    if (!reranking) return;
+    setBusy(true);
+    try {
+      const reranker = rerankChoice === "none" ? null : rerankChoice;
+      await adminFetch(`/api/admin/v1/collections/${reranking.id}/reranker`, {
+        method: "POST",
+        body: JSON.stringify({ rerank_model_id: reranker }),
+      });
+      toast.success(
+        reranker
+          ? `"${reranking.id}" bound to the reranker — single-collection searches rerank by default`
+          : `"${reranking.id}" rerank stage disabled`,
+      );
+      setReranking(null);
+      await loadCols();
+    } catch (e2) {
+      const msg = e2 instanceof Error ? e2.message : String(e2);
+      toast.error("reranker bind failed", { description: msg });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const selectedModel = modelList.find((m) => m.id === modelId);
 
   return (
@@ -166,6 +203,9 @@ export default function CollectionsPage() {
                 <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
                   docs
                 </TableHead>
+                <TableHead className="text-[11.5px] tracking-[0.02em] text-muted-foreground">
+                  reranker
+                </TableHead>
                 <TableHead className="text-right text-[11.5px] tracking-[0.02em] text-muted-foreground">
                   actions
                 </TableHead>
@@ -179,18 +219,37 @@ export default function CollectionsPage() {
                   <TableCell className="font-mono text-[12.5px]">{c.embedding_model}</TableCell>
                   <TableCell className="tabular-nums">{c.vector_dim ?? "—"}</TableCell>
                   <TableCell className="tabular-nums">{c.doc_count ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-[12.5px]">
+                    {c.rerank_model_id
+                      ? (rerankerList.find((r) => r.id === c.rerank_model_id)?.name ??
+                        c.rerank_model_id.slice(0, 8))
+                      : "—"}
+                  </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      onClick={() => {
-                        setRebinding(c);
-                        setRebindModel(c.embedding_model_id ?? "");
-                      }}
-                    >
-                      Rebind model
-                    </Button>
+                    <div className="inline-flex items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          setReranking(c);
+                          setRerankChoice(c.rerank_model_id ?? "none");
+                        }}
+                      >
+                        Reranker
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          setRebinding(c);
+                          setRebindModel(c.embedding_model_id ?? "");
+                        }}
+                      >
+                        Rebind model
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -269,6 +328,55 @@ export default function CollectionsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== reranker bind modal ===== */}
+      <Dialog
+        open={reranking !== null}
+        onOpenChange={(open) => !open && !busy && setReranking(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-[17px] font-semibold">
+              Rerank stage — {reranking?.id}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="m-0 text-[13px] text-muted-foreground">
+            A bound reranker runs on single-collection searches with that collection as the target
+            (hybrid retrieval first, then cross-encoder re-scoring). &ldquo;None&rdquo; disables the
+            stage; rerank failure degrades to RRF order, never an error. Multi-collection searches
+            require an explicit reranker per request.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-semibold text-muted-foreground">Reranker</Label>
+            <Select value={rerankChoice} onValueChange={setRerankChoice}>
+              <SelectTrigger aria-label="reranker" className="w-full">
+                <SelectValue placeholder="none (rerank off)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None — rerank stage off</SelectItem>
+                {rerankerList.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name} · {r.model_id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setReranking(null)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={bindReranker} disabled={busy}>
+              {busy ? "Applying…" : "Apply"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

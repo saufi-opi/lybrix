@@ -23,6 +23,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/saufi-opi/lybrix/internal/config"
+	"github.com/saufi-opi/lybrix/internal/service"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
 
@@ -38,6 +39,12 @@ type Deps struct {
 	// registered model — the multi-collection grouped search calls it once
 	// per unique model (WeKnora multi-KB architecture; no default row).
 	EmbedForModel func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error)
+	// ResolveReranker is the rerank resolution rule (service.ResolveRerankModel
+	// in production; tests stub). Nil → rerank never runs.
+	ResolveReranker func(ctx context.Context, req service.RerankResolveRequest) (*store.RerankModel, error)
+	// RerankHits is the cross-encoder stage (service.RerankHits composed
+	// with a registry-resolved client in production; tests stub). Nil → off.
+	RerankHits func(ctx context.Context, rm *store.RerankModel, query string, hits []*store.SearchHit, topK int) ([]*store.SearchHit, service.RerankStatus, error)
 }
 
 type ctxKey string
@@ -64,6 +71,8 @@ func New(deps Deps) *server.MCPServer {
 	s.AddTool(listDocumentsTool(), toolHandler(deps, handleListDocuments))
 	s.AddTool(getDocumentTool(), toolHandler(deps, handleGetDocument))
 	s.AddTool(listCollectionsTool(), toolHandler(deps, handleListCollections))
+	s.AddTool(listChunksTool(), toolHandler(deps, handleListChunks))
+	s.AddTool(previewChunkTool(), toolHandler(deps, handlePreviewChunk))
 
 	return s
 }
@@ -102,6 +111,9 @@ title, page range, and heading path for verification.`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("the search query")),
 		mcp.WithString("collection", mcp.Description("optional collection id to scope the search; omitted searches ALL collections — grouped by each collection's bound embedding model, one query embedding per unique model, fused with RRF")),
 		mcp.WithNumber("top_k", mcp.Description("max results (default 8, capped at 25)")),
+		mcp.WithBoolean("rerank", mcp.Description("re-score the candidate pool with the configured cross-encoder reranker (needs a bound or explicitly named rerank model; failure degrades to RRF order, never an error)")),
+		mcp.WithString("rerank_model_id", mcp.Description("explicit reranker registry id — overrides the collection's bound reranker (required for multi-collection searches)")),
+		mcp.WithString("metadata_filter", mcp.Description(`optional document-level filter as a JSON object string, e.g. {"author": "Tolkien", "year_from": 2018, "custom_tag": "x"}; author matches case-insensitively, year_from/year_to bound the metadata "year" field, any other key matches metadata exactly`)),
 	)
 }
 
@@ -148,6 +160,27 @@ func listCollectionsTool() mcp.Tool {
 	return mcp.NewTool("list_collections",
 		mcp.WithDescription(`Enumerate collections (id, name, model, doc count). Call this
 first to scope later searches to a subject area.`),
+	)
+}
+
+func listChunksTool() mcp.Tool {
+	return mcp.NewTool("list_chunks",
+		mcp.WithDescription(`Chunk-level debugging: list a document's chunks in document
+order (seq, pages, token count, heading path, text preview). Use when a
+citation seems truncated or mis-attributed and you need to see how the
+document was segmented.`),
+		mcp.WithString("doc_id", mcp.Required(), mcp.Description("document id")),
+		mcp.WithNumber("page", mcp.Description("1-based page of the listing (default 1)")),
+		mcp.WithNumber("page_size", mcp.Description("rows per page (default 50, capped at 200)")),
+	)
+}
+
+func previewChunkTool() mcp.Tool {
+	return mcp.NewTool("preview_chunk",
+		mcp.WithDescription(`Full detail for one chunk: complete text, token count,
+breadcrumb, parent text, and seq neighbours. Use after list_chunks (or a
+suspicious search hit) to inspect exactly what was embedded.`),
+		mcp.WithString("chunk_id", mcp.Required(), mcp.Description("the chunk id to preview")),
 	)
 }
 

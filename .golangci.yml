@@ -1,29 +1,38 @@
-# lybrix 2.0 linter config — errcheck, govet, staticcheck, revive
-# (line-length 100 per the 1.0 standard).
-run:
-  timeout: 5m
-
-issues:
-  exclude-rules:
-    - linters:
-        - staticcheck
-      text: "SA1019:.*superceded by feature/s3/transfermanager"
-    - path: _test\.go
-      linters:
-        - errcheck
-    - linters:
-        - revive
-      text: "line-length-limit"
-
+version: "2"
 linters:
   enable:
-    - errcheck
-    - govet
-    - staticcheck
     - revive
-
-linters-settings:
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: line-length-limit
+          arguments:
+            - 140
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: line-length-limit
-        arguments: [140]
+      - linters:
+          - staticcheck
+        text: SA1019:.*superceded by feature/s3/transfermanager
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - revive
+        text: line-length-limit
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

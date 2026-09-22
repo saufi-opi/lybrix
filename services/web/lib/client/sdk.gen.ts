@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { BindCollectionModelV1CollectionsCollectionIdModelPostData, BindCollectionModelV1CollectionsCollectionIdModelPostErrors, BindCollectionModelV1CollectionsCollectionIdModelPostResponses, CollectionStatsV1CollectionsCollectionIdStatsGetData, CollectionStatsV1CollectionsCollectionIdStatsGetErrors, CollectionStatsV1CollectionsCollectionIdStatsGetResponses, CommitV1DocumentsDocIdCommitPostData, CommitV1DocumentsDocIdCommitPostErrors, CommitV1DocumentsDocIdCommitPostResponses, CreateCollectionV1CollectionsPostData, CreateCollectionV1CollectionsPostErrors, CreateCollectionV1CollectionsPostResponses, CreateKeyV1KeysPostData, CreateKeyV1KeysPostErrors, CreateKeyV1KeysPostResponses, CreateModelV1ModelsPostData, CreateModelV1ModelsPostErrors, CreateModelV1ModelsPostResponses, DeleteModelV1ModelsModelIdDeleteData, DeleteModelV1ModelsModelIdDeleteErrors, DeleteModelV1ModelsModelIdDeleteResponses, EventStreamV1EventsStreamGetData, EventStreamV1EventsStreamGetErrors, EventStreamV1EventsStreamGetResponses, FetchUrlV1DocumentsFetchUrlPostData, FetchUrlV1DocumentsFetchUrlPostErrors, FetchUrlV1DocumentsFetchUrlPostResponses, GetDocumentV1DocumentsDocIdGetData, GetDocumentV1DocumentsDocIdGetErrors, GetDocumentV1DocumentsDocIdGetResponses, GetMetricsV1SystemMetricsGetData, GetMetricsV1SystemMetricsGetResponses, GetShardsV1DocumentsDocIdShardsGetData, GetShardsV1DocumentsDocIdShardsGetErrors, GetShardsV1DocumentsDocIdShardsGetResponses, HealthV1SystemHealthGetData, HealthV1SystemHealthGetResponses, ListCollectionsV1CollectionsGetData, ListCollectionsV1CollectionsGetResponses, ListDocumentsV1DocumentsGetData, ListDocumentsV1DocumentsGetErrors, ListDocumentsV1DocumentsGetResponses, ListEventsV1EventsGetData, ListEventsV1EventsGetErrors, ListEventsV1EventsGetResponses, ListKeysV1KeysGetData, ListKeysV1KeysGetErrors, ListKeysV1KeysGetResponses, ListModelsV1ModelsGetData, ListModelsV1ModelsGetErrors, ListModelsV1ModelsGetResponses, OpdsBrowseV1ConnectorsOpdsBrowsePostData, OpdsBrowseV1ConnectorsOpdsBrowsePostErrors, OpdsBrowseV1ConnectorsOpdsBrowsePostResponses, OpdsSyncV1ConnectorsOpdsSyncPostData, OpdsSyncV1ConnectorsOpdsSyncPostErrors, OpdsSyncV1ConnectorsOpdsSyncPostResponses, PipelineV1SystemPipelineGetData, PipelineV1SystemPipelineGetResponses, PresignV1DocumentsPresignPostData, PresignV1DocumentsPresignPostErrors, PresignV1DocumentsPresignPostResponses, QueuesV1SystemQueuesGetData, QueuesV1SystemQueuesGetResponses, RetryV1DocumentsDocIdRetryPostData, RetryV1DocumentsDocIdRetryPostErrors, RetryV1DocumentsDocIdRetryPostResponses, RevokeKeyV1KeysKeyIdRevokePostData, RevokeKeyV1KeysKeyIdRevokePostErrors, RevokeKeyV1KeysKeyIdRevokePostResponses, SearchV1SearchPostData, SearchV1SearchPostErrors, SearchV1SearchPostResponses, TestModelV1ModelsTestPostData, TestModelV1ModelsTestPostErrors, TestModelV1ModelsTestPostResponses, UpdateModelV1ModelsModelIdPostData, UpdateModelV1ModelsModelIdPostErrors, UpdateModelV1ModelsModelIdPostResponses, UsageSummaryV1UsageSummaryGetData, UsageSummaryV1UsageSummaryGetErrors, UsageSummaryV1UsageSummaryGetResponses } from './types.gen';
+import type { BindCollectionModelV1CollectionsCollectionIdModelPostData, BindCollectionModelV1CollectionsCollectionIdModelPostErrors, BindCollectionModelV1CollectionsCollectionIdModelPostResponses, BindCollectionRerankerV1CollectionsCollectionIdRerankerPostData, BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors, BindCollectionRerankerV1CollectionsCollectionIdRerankerPostResponses, CollectionStatsV1CollectionsCollectionIdStatsGetData, CollectionStatsV1CollectionsCollectionIdStatsGetErrors, CollectionStatsV1CollectionsCollectionIdStatsGetResponses, CommitV1DocumentsDocIdCommitPostData, CommitV1DocumentsDocIdCommitPostErrors, CommitV1DocumentsDocIdCommitPostResponses, CreateCollectionV1CollectionsPostData, CreateCollectionV1CollectionsPostErrors, CreateCollectionV1CollectionsPostResponses, CreateKeyV1KeysPostData, CreateKeyV1KeysPostErrors, CreateKeyV1KeysPostResponses, CreateModelV1ModelsPostData, CreateModelV1ModelsPostErrors, CreateModelV1ModelsPostResponses, CreateRerankModelV1RerankModelsPostData, CreateRerankModelV1RerankModelsPostErrors, CreateRerankModelV1RerankModelsPostResponses, DeleteModelV1ModelsModelIdDeleteData, DeleteModelV1ModelsModelIdDeleteErrors, DeleteModelV1ModelsModelIdDeleteResponses, DeleteRerankModelV1RerankModelsModelIdDeleteData, DeleteRerankModelV1RerankModelsModelIdDeleteErrors, EventStreamV1EventsStreamGetData, EventStreamV1EventsStreamGetErrors, EventStreamV1EventsStreamGetResponses, FetchUrlV1DocumentsFetchUrlPostData, FetchUrlV1DocumentsFetchUrlPostErrors, FetchUrlV1DocumentsFetchUrlPostResponses, GetChunkV1ChunksChunkIdGetData, GetChunkV1ChunksChunkIdGetErrors, GetChunkV1ChunksChunkIdGetResponses, GetDocumentV1DocumentsDocIdGetData, GetDocumentV1DocumentsDocIdGetErrors, GetDocumentV1DocumentsDocIdGetResponses, GetMetricsV1SystemMetricsGetData, GetMetricsV1SystemMetricsGetResponses, GetShardsV1DocumentsDocIdShardsGetData, GetShardsV1DocumentsDocIdShardsGetErrors, GetShardsV1DocumentsDocIdShardsGetResponses, HealthV1SystemHealthGetData, HealthV1SystemHealthGetResponses, ListCollectionsV1CollectionsGetData, ListCollectionsV1CollectionsGetResponses, ListDocumentChunksV1DocumentsDocIdChunksGetData, ListDocumentChunksV1DocumentsDocIdChunksGetErrors, ListDocumentChunksV1DocumentsDocIdChunksGetResponses, ListDocumentsV1DocumentsGetData, ListDocumentsV1DocumentsGetErrors, ListDocumentsV1DocumentsGetResponses, ListEventsV1EventsGetData, ListEventsV1EventsGetErrors, ListEventsV1EventsGetResponses, ListKeysV1KeysGetData, ListKeysV1KeysGetErrors, ListKeysV1KeysGetResponses, ListModelsV1ModelsGetData, ListModelsV1ModelsGetErrors, ListModelsV1ModelsGetResponses, ListRerankModelsV1RerankModelsGetData, ListRerankModelsV1RerankModelsGetErrors, ListRerankModelsV1RerankModelsGetResponses, OpdsBrowseV1ConnectorsOpdsBrowsePostData, OpdsBrowseV1ConnectorsOpdsBrowsePostErrors, OpdsBrowseV1ConnectorsOpdsBrowsePostResponses, OpdsSyncV1ConnectorsOpdsSyncPostData, OpdsSyncV1ConnectorsOpdsSyncPostErrors, OpdsSyncV1ConnectorsOpdsSyncPostResponses, PipelineV1SystemPipelineGetData, PipelineV1SystemPipelineGetResponses, PresignV1DocumentsPresignPostData, PresignV1DocumentsPresignPostErrors, PresignV1DocumentsPresignPostResponses, QueuesV1SystemQueuesGetData, QueuesV1SystemQueuesGetResponses, RetryV1DocumentsDocIdRetryPostData, RetryV1DocumentsDocIdRetryPostErrors, RetryV1DocumentsDocIdRetryPostResponses, RevokeKeyV1KeysKeyIdRevokePostData, RevokeKeyV1KeysKeyIdRevokePostErrors, RevokeKeyV1KeysKeyIdRevokePostResponses, SearchV1SearchPostData, SearchV1SearchPostErrors, SearchV1SearchPostResponses, TestModelV1ModelsTestPostData, TestModelV1ModelsTestPostErrors, TestModelV1ModelsTestPostResponses, TestRerankModelV1RerankModelsTestPostData, TestRerankModelV1RerankModelsTestPostErrors, TestRerankModelV1RerankModelsTestPostResponses, UpdateModelV1ModelsModelIdPostData, UpdateModelV1ModelsModelIdPostErrors, UpdateModelV1ModelsModelIdPostResponses, UpdateRerankModelV1RerankModelsModelIdPostData, UpdateRerankModelV1RerankModelsModelIdPostErrors, UpdateRerankModelV1RerankModelsModelIdPostResponses, UsageSummaryV1UsageSummaryGetData, UsageSummaryV1UsageSummaryGetErrors, UsageSummaryV1UsageSummaryGetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -289,3 +289,71 @@ export const opdsSyncV1ConnectorsOpdsSyncPost = <ThrowOnError extends boolean = 
         ...options.headers
     }
 });
+
+/**
+ * List Rerank Models
+ */
+export const listRerankModelsV1RerankModelsGet = <ThrowOnError extends boolean = false>(options?: Options<ListRerankModelsV1RerankModelsGetData, ThrowOnError>): RequestResult<ListRerankModelsV1RerankModelsGetResponses, ListRerankModelsV1RerankModelsGetErrors, ThrowOnError> => (options?.client ?? client).get<ListRerankModelsV1RerankModelsGetResponses, ListRerankModelsV1RerankModelsGetErrors, ThrowOnError>({ url: '/v1/rerank-models', ...options });
+
+/**
+ * Create Rerank Model
+ */
+export const createRerankModelV1RerankModelsPost = <ThrowOnError extends boolean = false>(options: Options<CreateRerankModelV1RerankModelsPostData, ThrowOnError>): RequestResult<CreateRerankModelV1RerankModelsPostResponses, CreateRerankModelV1RerankModelsPostErrors, ThrowOnError> => (options.client ?? client).post<CreateRerankModelV1RerankModelsPostResponses, CreateRerankModelV1RerankModelsPostErrors, ThrowOnError>({
+    url: '/v1/rerank-models',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Test Rerank Model
+ */
+export const testRerankModelV1RerankModelsTestPost = <ThrowOnError extends boolean = false>(options: Options<TestRerankModelV1RerankModelsTestPostData, ThrowOnError>): RequestResult<TestRerankModelV1RerankModelsTestPostResponses, TestRerankModelV1RerankModelsTestPostErrors, ThrowOnError> => (options.client ?? client).post<TestRerankModelV1RerankModelsTestPostResponses, TestRerankModelV1RerankModelsTestPostErrors, ThrowOnError>({
+    url: '/v1/rerank-models/test',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete Rerank Model
+ */
+export const deleteRerankModelV1RerankModelsModelIdDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteRerankModelV1RerankModelsModelIdDeleteData, ThrowOnError>): RequestResult<unknown, DeleteRerankModelV1RerankModelsModelIdDeleteErrors, ThrowOnError> => (options.client ?? client).delete<unknown, DeleteRerankModelV1RerankModelsModelIdDeleteErrors, ThrowOnError>({ url: '/v1/rerank-models/{model_id}', ...options });
+
+/**
+ * Update Rerank Model
+ */
+export const updateRerankModelV1RerankModelsModelIdPost = <ThrowOnError extends boolean = false>(options: Options<UpdateRerankModelV1RerankModelsModelIdPostData, ThrowOnError>): RequestResult<UpdateRerankModelV1RerankModelsModelIdPostResponses, UpdateRerankModelV1RerankModelsModelIdPostErrors, ThrowOnError> => (options.client ?? client).post<UpdateRerankModelV1RerankModelsModelIdPostResponses, UpdateRerankModelV1RerankModelsModelIdPostErrors, ThrowOnError>({
+    url: '/v1/rerank-models/{model_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Bind Collection Reranker
+ */
+export const bindCollectionRerankerV1CollectionsCollectionIdRerankerPost = <ThrowOnError extends boolean = false>(options: Options<BindCollectionRerankerV1CollectionsCollectionIdRerankerPostData, ThrowOnError>): RequestResult<BindCollectionRerankerV1CollectionsCollectionIdRerankerPostResponses, BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors, ThrowOnError> => (options.client ?? client).post<BindCollectionRerankerV1CollectionsCollectionIdRerankerPostResponses, BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors, ThrowOnError>({
+    url: '/v1/collections/{collection_id}/reranker',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get Chunk
+ */
+export const getChunkV1ChunksChunkIdGet = <ThrowOnError extends boolean = false>(options: Options<GetChunkV1ChunksChunkIdGetData, ThrowOnError>): RequestResult<GetChunkV1ChunksChunkIdGetResponses, GetChunkV1ChunksChunkIdGetErrors, ThrowOnError> => (options.client ?? client).get<GetChunkV1ChunksChunkIdGetResponses, GetChunkV1ChunksChunkIdGetErrors, ThrowOnError>({ url: '/v1/chunks/{chunk_id}', ...options });
+
+/**
+ * List Document Chunks
+ */
+export const listDocumentChunksV1DocumentsDocIdChunksGet = <ThrowOnError extends boolean = false>(options: Options<ListDocumentChunksV1DocumentsDocIdChunksGetData, ThrowOnError>): RequestResult<ListDocumentChunksV1DocumentsDocIdChunksGetResponses, ListDocumentChunksV1DocumentsDocIdChunksGetErrors, ThrowOnError> => (options.client ?? client).get<ListDocumentChunksV1DocumentsDocIdChunksGetResponses, ListDocumentChunksV1DocumentsDocIdChunksGetErrors, ThrowOnError>({ url: '/v1/documents/{doc_id}/chunks', ...options });

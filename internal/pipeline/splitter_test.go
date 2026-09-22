@@ -139,7 +139,7 @@ func TestChapterAlignedNoShardCrossesChapterEdge(t *testing.T) {
 	}
 	for _, b := range bounds {
 		// shard either ends before chapter B starts, or starts at/after it
-		if !(b.PageEnd < 10 || b.PageStart >= 10) {
+		if b.PageEnd >= 10 && b.PageStart < 10 {
 			t.Fatalf("shard crosses chapter edge: %+v", b)
 		}
 	}

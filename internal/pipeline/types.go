@@ -20,11 +20,16 @@ type ParseRequest struct {
 	// SkipAnyDoc forces the docling tier (EPUB: anydoc cannot open a zip
 	// container; docling parses EPUB natively).
 	SkipAnyDoc bool
-	// IsEpub marks the shard as an EPUB-derived single synthetic shard:
-	// docling returns the whole book as one markdown unit and the page
-	// map treats it as page 1..1.
-	IsEpub bool
+	// DocFormat marks which ingestion format family this shard belongs to
+	// (office/text shards are single synthetic shards — the whole file is
+	// the unit). PDF remains the default zero value.
+	DocFormat Format
 }
+
+// IsSynthetic reports whether the shard is a non-PDF single synthetic
+// shard (EPUB / office / text / HTML): the whole file is the unit and the
+// page map treats it as page 1..1.
+func (r ParseRequest) IsSynthetic() bool { return r.DocFormat != FmtPDF }
 
 // ParseResult is one parsed shard.
 type ParseResult struct {

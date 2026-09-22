@@ -37,6 +37,14 @@ func derefInt(p *int) int {
 	return *p
 }
 
+// derefStr dereferences an optional string (nil → "").
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // strPtr/intPtr are optional-pointer shorthands for events.
 func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }

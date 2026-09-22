@@ -192,6 +192,62 @@ export default function PlaygroundPage() {
   );
 }
 
+/** JSON-object text input with client-side parse validation and an inline
+ * error — metadata_filter rides the MCP search tool as a JSON string. */
+function JsonFilterInput({
+  id,
+  placeholder,
+  value,
+  onChange,
+}: {
+  id: string;
+  placeholder?: string;
+  value: string;
+  onChange: (v: unknown) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+
+  function commit(next: string) {
+    setDraft(next);
+    if (next.trim() === "") {
+      setError(null);
+      onChange(undefined);
+      return;
+    }
+    try {
+      const parsed: unknown = JSON.parse(next);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        setError("must be a JSON object");
+        return;
+      }
+      setError(null);
+      onChange(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Textarea
+        id={id}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => commit(e.target.value)}
+        rows={3}
+        className="font-mono text-xs"
+        aria-invalid={error != null}
+      />
+      {error && (
+        <p className="m-0 font-mono text-[11.5px] text-redink" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Renders inputs from the tool's inputSchema; smart prefills for collection
  * and doc_id (suggestions via the control-plane API — raw values still OK). */
 function ToolForm({
@@ -232,7 +288,14 @@ function ToolForm({
               {key}
               {isRequired ? "" : " (optional)"}
             </Label>
-            {schema.enum ? (
+            {key === "metadata_filter" ? (
+              <JsonFilterInput
+                id={`arg-${key}`}
+                placeholder={schema.description ?? '{"author": "…", "year_from": 2018}'}
+                value={typeof value === "string" ? value : ""}
+                onChange={setValue}
+              />
+            ) : schema.enum ? (
               <Select value={typeof value === "string" ? value : ""} onValueChange={setValue}>
                 <SelectTrigger id={`arg-${key}`} aria-label={key}>
                   <SelectValue placeholder="—" />

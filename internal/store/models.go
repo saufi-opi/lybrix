@@ -105,6 +105,7 @@ type Collection struct {
 	EmbeddingModel   string
 	VectorDim        int
 	EmbeddingModelID *string
+	RerankModelID    *string
 	CreatedAt        time.Time
 }
 
