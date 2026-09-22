@@ -81,9 +81,13 @@ func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
 	for _, name := range queue.AllStreams {
 		length, err := s.deps.Redis.XLen(r.Context(), name).Result()
 		if err != nil {
-			// a dead Redis must not read as an empty queue — propagate (500)
-			writeDetail(w, http.StatusInternalServerError, err.Error())
-			return
+			if strings.Contains(err.Error(), "no such key") {
+				length = 0
+			} else {
+				// a dead Redis must not read as an empty queue — propagate (500)
+				writeDetail(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 		pending, err := s.deps.Redis.XPending(r.Context(), name, queue.ConsumerGroup).Result()
 		if err != nil {
@@ -95,8 +99,12 @@ func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
 		}
 		undelivered, err := queue.UndeliveredCount(r.Context(), s.deps.Redis, name)
 		if err != nil {
-			writeDetail(w, http.StatusInternalServerError, err.Error())
-			return
+			if strings.Contains(err.Error(), "no such key") {
+				undelivered = 0
+			} else {
+				writeDetail(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 		out[name] = map[string]any{
 			// "length" is XLEN (every entry ever written — streams are never
