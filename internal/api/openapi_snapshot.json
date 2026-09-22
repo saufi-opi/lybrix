@@ -1,3669 +1,4301 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "lybrix control plane",
-    "description": "Document Ingestion & Retrieval Platform — PRD docs/prd.md",
-    "version": "0.1.0"
-  },
-  "paths": {
-    "/v1/documents/presign": {
-      "post": {
-        "tags": ["documents"],
-        "summary": "Presign",
-        "description": "Step 1: client asks for a presigned URL, then PUTs bytes to MinIO.",
-        "operationId": "presign_v1_documents_presign_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PresignRequest"
-              }
-            }
-          }
+ "openapi": "3.1.0",
+ "info": {
+  "title": "lybrix control plane",
+  "description": "Document Ingestion & Retrieval Platform \u2014 PRD docs/prd.md",
+  "version": "0.1.0"
+ },
+ "paths": {
+  "/v1/documents/presign": {
+   "post": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Presign",
+    "description": "Step 1: client asks for a presigned URL, then PUTs bytes to MinIO.",
+    "operationId": "presign_v1_documents_presign_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
         },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PresignResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
+        {
+         "type": "null"
         }
+       ],
+       "title": "Authorization"
       }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PresignRequest"
+       }
+      }
+     }
     },
-    "/v1/documents/{doc_id}/commit": {
-      "post": {
-        "tags": ["documents"],
-        "summary": "Commit",
-        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (§6.1 backpressure).",
-        "operationId": "commit_v1_documents__doc_id__commit_post",
-        "parameters": [
-          {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Doc Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CommitRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PresignResponse"
         }
+       }
       }
-    },
-    "/v1/documents": {
-      "get": {
-        "tags": ["documents"],
-        "summary": "List Documents",
-        "operationId": "list_documents_v1_documents_get",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/DocState"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "State"
-            }
-          },
-          {
-            "name": "collection",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Collection"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Q"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "default": 50,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Offset"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentOut"
-                  },
-                  "title": "Response List Documents V1 Documents Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
         }
+       }
       }
-    },
-    "/v1/documents/{doc_id}": {
-      "get": {
-        "tags": ["documents"],
-        "summary": "Get Document",
-        "operationId": "get_document_v1_documents__doc_id__get",
-        "parameters": [
-          {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Doc Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/documents/{doc_id}/shards": {
-      "get": {
-        "tags": ["documents"],
-        "summary": "Get Shards",
-        "description": "Shard rows for the admin UI's shard grid (§8.1).",
-        "operationId": "get_shards_v1_documents__doc_id__shards_get",
-        "parameters": [
-          {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Doc Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ShardOut"
-                  },
-                  "title": "Response Get Shards V1 Documents  Doc Id  Shards Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/documents/{doc_id}/retry": {
-      "post": {
-        "tags": ["documents"],
-        "summary": "Retry",
-        "description": "Three retry scopes cost very different amounts (§8.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
-        "operationId": "retry_v1_documents__doc_id__retry_post",
-        "parameters": [
-          {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Doc Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RetryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/collections": {
-      "get": {
-        "tags": ["collections"],
-        "summary": "List Collections",
-        "operationId": "list_collections_v1_collections_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": ["collections"],
-        "summary": "Create Collection",
-        "operationId": "create_collection_v1_collections_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/collections/{collection_id}/stats": {
-      "get": {
-        "tags": ["collections"],
-        "summary": "Collection Stats",
-        "description": "Per-collection: doc count, chunk count (§8.1 Collections).",
-        "operationId": "collection_stats_v1_collections__collection_id__stats_get",
-        "parameters": [
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/search": {
-      "post": {
-        "tags": ["search"],
-        "summary": "Search",
-        "operationId": "search_v1_search_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/keys": {
-      "post": {
-        "tags": ["keys"],
-        "summary": "Create Key",
-        "operationId": "create_key_v1_keys_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/KeyCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KeyCreated"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": ["keys"],
-        "summary": "List Keys",
-        "operationId": "list_keys_v1_keys_get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/KeyOut"
-                  },
-                  "title": "Response List Keys V1 Keys Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/keys/{key_id}/revoke": {
-      "post": {
-        "tags": ["keys"],
-        "summary": "Revoke Key",
-        "operationId": "revoke_key_v1_keys__key_id__revoke_post",
-        "parameters": [
-          {
-            "name": "key_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KeyOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/usage/summary": {
-      "get": {
-        "tags": ["usage"],
-        "summary": "Usage Summary",
-        "description": "{period, total, by_key: [{key_id, name, calls, last_used_at}]}, calls desc.",
-        "operationId": "usage_summary_v1_usage_summary_get",
-        "parameters": [
-          {
-            "name": "period",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "enum": ["today", "24h", "7d", "30d"],
-              "type": "string",
-              "default": "24h",
-              "title": "Period"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/events": {
-      "get": {
-        "tags": ["events"],
-        "summary": "List Events",
-        "operationId": "list_events_v1_events_get",
-        "parameters": [
-          {
-            "name": "doc_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Doc Id"
-            }
-          },
-          {
-            "name": "level",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Level"
-            }
-          },
-          {
-            "name": "stage",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Stage"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/events/stream": {
-      "get": {
-        "tags": ["events"],
-        "summary": "Event Stream",
-        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5–50 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
-        "operationId": "event_stream_v1_events_stream_get",
-        "parameters": [
-          {
-            "name": "poll_s",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "number",
-              "default": 2.0,
-              "title": "Poll S"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/system/health": {
-      "get": {
-        "tags": ["system"],
-        "summary": "Health",
-        "operationId": "health_v1_system_health_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/system/queues": {
-      "get": {
-        "tags": ["system"],
-        "summary": "Queues",
-        "description": "Depth + consumer lag per stream (PRD §10.1).\n\nundelivered comes from streams.undelivered_count() — NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
-        "operationId": "queues_v1_system_queues_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/system/pipeline": {
-      "get": {
-        "tags": ["system"],
-        "summary": "Pipeline",
-        "description": "Aggregate snapshot for the pipeline live view (web /pipeline page).\n\nOne call answers: is every component up, how deep is each queue lane,\nwho is holding in-flight work, and how fast are shards settling.",
-        "operationId": "pipeline_v1_system_pipeline_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/system/metrics": {
-      "get": {
-        "tags": ["system"],
-        "summary": "Get Metrics",
-        "description": "JSON counters, Prometheus-convertible shape (§10.4).",
-        "operationId": "get_metrics_v1_system_metrics_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/models": {
-      "get": {
-        "tags": ["models"],
-        "summary": "List Models",
-        "operationId": "list_models_v1_models_get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": ["models"],
-        "summary": "Create Model",
-        "operationId": "create_model_v1_models_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelOut"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Duplicate name",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/models/test": {
-      "post": {
-        "tags": ["models"],
-        "summary": "Test Model",
-        "operationId": "test_model_v1_models_test_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelTestResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/models/{model_id}": {
-      "post": {
-        "tags": ["models"],
-        "summary": "Update Model",
-        "operationId": "update_model_v1_models__model_id__post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ModelOut"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {}
-          },
-          "409": {
-            "description": "Name clash",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": ["models"],
-        "summary": "Delete Model",
-        "operationId": "delete_model_v1_models__model_id__delete",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response",
-            "content": {}
-          },
-          "404": {
-            "description": "Not found",
-            "content": {}
-          },
-          "409": {
-            "description": "Bound or default",
-            "content": {}
-          }
-        }
-      }
-    },
-    "/v1/collections/{collection_id}/model": {
-      "post": {
-        "tags": ["models"],
-        "summary": "Bind Collection Model",
-        "operationId": "bind_collection_model_v1_collections__collection_id__model_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ModelCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {}
-          },
-          "404": {
-            "description": "Not found",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/documents/fetch-url": {
-      "post": {
-        "tags": ["documents"],
-        "summary": "Fetch Url",
-        "operationId": "fetch_url_v1_documents_fetch_url_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FetchUrlRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Accepted",
-            "content": {}
-          },
-          "400": {
-            "description": "Fetch/verify failure",
-            "content": {}
-          },
-          "409": {
-            "description": "Duplicate",
-            "content": {}
-          },
-          "429": {
-            "description": "Backlog",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/connectors/opds/browse": {
-      "post": {
-        "tags": ["connectors"],
-        "summary": "Opds Browse",
-        "operationId": "opds_browse_v1_connectors_opds_browse_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OpdsBrowseRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OpdsBrowseResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad credentials or not Atom",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/connectors/opds/sync": {
-      "post": {
-        "tags": ["connectors"],
-        "summary": "Opds Sync",
-        "operationId": "opds_sync_v1_connectors_opds_sync_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OpdsSyncRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OpdsSyncResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad credentials",
-            "content": {}
-          },
-          "404": {
-            "description": "Collection not found",
-            "content": {}
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/rerank-models": {
-      "get": {
-        "tags": ["rerank-models"],
-        "summary": "List Rerank Models",
-        "operationId": "list_rerank_models_v1_rerank_models_get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/RerankModelOut"
-                  }
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": ["rerank-models"],
-        "summary": "Create Rerank Model",
-        "operationId": "create_rerank_model_v1_rerank_models_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RerankModelCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RerankModelOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/rerank-models/test": {
-      "post": {
-        "tags": ["rerank-models"],
-        "summary": "Test Rerank Model",
-        "operationId": "test_rerank_model_v1_rerank_models_test_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RerankModelCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RerankTestResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/rerank-models/{model_id}": {
-      "post": {
-        "tags": ["rerank-models"],
-        "summary": "Update Rerank Model",
-        "operationId": "update_rerank_model_v1_rerank_models__model_id__post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Model Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RerankModelUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RerankModelOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": ["rerank-models"],
-        "summary": "Delete Rerank Model",
-        "operationId": "delete_rerank_model_v1_rerank_models__model_id__delete",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "model_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Model Id"
-            }
-          }
-        ],
-        "responses": {
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/collections/{collection_id}/reranker": {
-      "post": {
-        "tags": ["collections"],
-        "summary": "Bind Collection Reranker",
-        "operationId": "bind_collection_reranker_v1_collections__collection_id__reranker_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionRerankerBind"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CollectionOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/chunks/{chunk_id}": {
-      "get": {
-        "tags": ["chunks"],
-        "summary": "Get Chunk",
-        "operationId": "get_chunk_v1_chunks__chunk_id__get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "chunk_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Chunk Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChunkDetail"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/documents/{doc_id}/chunks": {
-      "get": {
-        "tags": ["documents"],
-        "summary": "List Document Chunks",
-        "operationId": "list_document_chunks_v1_documents__doc_id__chunks_get",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Doc Id"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "default": 50,
-              "title": "Page Size"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChunkList"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
+     }
     }
+   }
   },
-  "components": {
-    "schemas": {
-      "CollectionCreate": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "embedding_model_id": {
-            "type": "string",
-            "title": "Embedding Model Id"
-          }
+  "/v1/documents/{doc_id}/commit": {
+   "post": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Commit",
+    "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (\u00a76.1 backpressure).",
+    "operationId": "commit_v1_documents__doc_id__commit_post",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
         },
-        "type": "object",
-        "required": ["id", "name", "embedding_model_id"],
-        "title": "CollectionCreate"
-      },
-      "CommitRequest": {
-        "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id"
-          },
-          "content_sha256": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 64,
-            "title": "Content Sha256"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "author": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Author"
-          },
-          "metadata": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metadata"
-          }
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommitRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents": {
+   "get": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "List Documents",
+    "operationId": "list_documents_v1_documents_get",
+    "parameters": [
+     {
+      "name": "state",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/DocState"
         },
-        "type": "object",
-        "required": ["collection_id", "content_sha256"],
-        "title": "CommitRequest"
+        {
+         "type": "null"
+        }
+       ],
+       "title": "State"
+      }
+     },
+     {
+      "name": "collection",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Collection"
+      }
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Q"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/DocumentOut"
+         },
+         "title": "Response List Documents V1 Documents Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/{doc_id}": {
+   "get": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Get Document",
+    "operationId": "get_document_v1_documents__doc_id__get",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DocumentOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Delete Document",
+    "description": "Single-doc delete: DB row removed, chunks/shards cascade; the raw\nMinIO object is left for janitor GC (an events row notes the orphan).",
+    "operationId": "delete_document_v1_documents__doc_id__delete",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/{doc_id}/shards": {
+   "get": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Get Shards",
+    "description": "Shard rows for the admin UI's shard grid (\u00a78.1).",
+    "operationId": "get_shards_v1_documents__doc_id__shards_get",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ShardOut"
+         },
+         "title": "Response Get Shards V1 Documents  Doc Id  Shards Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/{doc_id}/retry": {
+   "post": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Retry",
+    "description": "Three retry scopes cost very different amounts (\u00a78.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
+    "operationId": "retry_v1_documents__doc_id__retry_post",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RetryRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/collections": {
+   "get": {
+    "tags": [
+     "collections"
+    ],
+    "summary": "List Collections",
+    "operationId": "list_collections_v1_collections_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "collections"
+    ],
+    "summary": "Create Collection",
+    "operationId": "create_collection_v1_collections_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CollectionCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/collections/{collection_id}/stats": {
+   "get": {
+    "tags": [
+     "collections"
+    ],
+    "summary": "Collection Stats",
+    "description": "Per-collection: doc count, chunk count (\u00a78.1 Collections).",
+    "operationId": "collection_stats_v1_collections__collection_id__stats_get",
+    "parameters": [
+     {
+      "name": "collection_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Collection Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CollectionStats"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/search": {
+   "post": {
+    "tags": [
+     "search"
+    ],
+    "summary": "Search",
+    "operationId": "search_v1_search_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SearchRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/keys": {
+   "post": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "Create Key",
+    "operationId": "create_key_v1_keys_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/KeyCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KeyCreated"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "List Keys",
+    "operationId": "list_keys_v1_keys_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/KeyOut"
+         },
+         "title": "Response List Keys V1 Keys Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/keys/{key_id}/revoke": {
+   "post": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "Revoke Key",
+    "operationId": "revoke_key_v1_keys__key_id__revoke_post",
+    "parameters": [
+     {
+      "name": "key_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Key Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/KeyOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/usage/summary": {
+   "get": {
+    "tags": [
+     "usage"
+    ],
+    "summary": "Usage Summary",
+    "description": "{period, total, by_key: [{key_id, name, calls, last_used_at}]}, calls desc.",
+    "operationId": "usage_summary_v1_usage_summary_get",
+    "parameters": [
+     {
+      "name": "period",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "enum": [
+        "today",
+        "24h",
+        "7d",
+        "30d"
+       ],
+       "type": "string",
+       "default": "24h",
+       "title": "Period"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/events": {
+   "get": {
+    "tags": [
+     "events"
+    ],
+    "summary": "List Events",
+    "operationId": "list_events_v1_events_get",
+    "parameters": [
+     {
+      "name": "doc_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "level",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Level"
+      }
+     },
+     {
+      "name": "stage",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Stage"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "default": 100,
+       "title": "Limit"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/events/stream": {
+   "get": {
+    "tags": [
+     "events"
+    ],
+    "summary": "Event Stream",
+    "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5\u201350 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
+    "operationId": "event_stream_v1_events_stream_get",
+    "parameters": [
+     {
+      "name": "poll_s",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "number",
+       "default": 2.0,
+       "title": "Poll S"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/system/health": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Health",
+    "operationId": "health_v1_system_health_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/system/queues": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Queues",
+    "description": "Depth + consumer lag per stream (PRD \u00a710.1).\n\nundelivered comes from streams.undelivered_count() \u2014 NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
+    "operationId": "queues_v1_system_queues_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/system/pipeline": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Pipeline",
+    "description": "Aggregate snapshot for the pipeline live view (web /pipeline page).\n\nOne call answers: is every component up, how deep is each queue lane,\nwho is holding in-flight work, and how fast are shards settling.",
+    "operationId": "pipeline_v1_system_pipeline_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/system/metrics": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Get Metrics",
+    "description": "JSON counters, Prometheus-convertible shape (\u00a710.4).",
+    "operationId": "get_metrics_v1_system_metrics_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/models": {
+   "get": {
+    "tags": [
+     "models"
+    ],
+    "summary": "List Models",
+    "operationId": "list_models_v1_models_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "models"
+    ],
+    "summary": "Create Model",
+    "operationId": "create_model_v1_models_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelOut"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Duplicate name",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/models/test": {
+   "post": {
+    "tags": [
+     "models"
+    ],
+    "summary": "Test Model",
+    "operationId": "test_model_v1_models_test_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelTestResult"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/models/{model_id}": {
+   "post": {
+    "tags": [
+     "models"
+    ],
+    "summary": "Update Model",
+    "operationId": "update_model_v1_models__model_id__post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelUpdate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelOut"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "Not found",
+      "content": {}
+     },
+     "409": {
+      "description": "Name clash",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "models"
+    ],
+    "summary": "Delete Model",
+    "operationId": "delete_model_v1_models__model_id__delete",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response",
+      "content": {}
+     },
+     "404": {
+      "description": "Not found",
+      "content": {}
+     },
+     "409": {
+      "description": "Bound or default",
+      "content": {}
+     }
+    }
+   }
+  },
+  "/v1/collections/{collection_id}/model": {
+   "post": {
+    "tags": [
+     "models"
+    ],
+    "summary": "Bind Collection Model",
+    "operationId": "bind_collection_model_v1_collections__collection_id__model_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ModelCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {}
+     },
+     "404": {
+      "description": "Not found",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/fetch-url": {
+   "post": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Fetch Url",
+    "operationId": "fetch_url_v1_documents_fetch_url_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/FetchUrlRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Accepted",
+      "content": {}
+     },
+     "400": {
+      "description": "Fetch/verify failure",
+      "content": {}
+     },
+     "409": {
+      "description": "Duplicate",
+      "content": {}
+     },
+     "429": {
+      "description": "Backlog",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/connectors/opds/browse": {
+   "post": {
+    "tags": [
+     "connectors"
+    ],
+    "summary": "Opds Browse",
+    "operationId": "opds_browse_v1_connectors_opds_browse_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/OpdsBrowseRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OpdsBrowseResult"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Bad credentials or not Atom",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/connectors/opds/sync": {
+   "post": {
+    "tags": [
+     "connectors"
+    ],
+    "summary": "Opds Sync",
+    "operationId": "opds_sync_v1_connectors_opds_sync_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/OpdsSyncRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OpdsSyncResult"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Bad credentials",
+      "content": {}
+     },
+     "404": {
+      "description": "Collection not found",
+      "content": {}
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/rerank-models": {
+   "get": {
+    "tags": [
+     "rerank-models"
+    ],
+    "summary": "List Rerank Models",
+    "operationId": "list_rerank_models_v1_rerank_models_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/RerankModelOut"
+         }
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "rerank-models"
+    ],
+    "summary": "Create Rerank Model",
+    "operationId": "create_rerank_model_v1_rerank_models_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RerankModelCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RerankModelOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/rerank-models/test": {
+   "post": {
+    "tags": [
+     "rerank-models"
+    ],
+    "summary": "Test Rerank Model",
+    "operationId": "test_rerank_model_v1_rerank_models_test_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RerankModelCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RerankTestResult"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/rerank-models/{model_id}": {
+   "post": {
+    "tags": [
+     "rerank-models"
+    ],
+    "summary": "Update Rerank Model",
+    "operationId": "update_rerank_model_v1_rerank_models__model_id__post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     },
+     {
+      "name": "model_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Model Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RerankModelUpdate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RerankModelOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "rerank-models"
+    ],
+    "summary": "Delete Rerank Model",
+    "operationId": "delete_rerank_model_v1_rerank_models__model_id__delete",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     },
+     {
+      "name": "model_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Model Id"
+      }
+     }
+    ],
+    "responses": {
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/collections/{collection_id}/reranker": {
+   "post": {
+    "tags": [
+     "collections"
+    ],
+    "summary": "Bind Collection Reranker",
+    "operationId": "bind_collection_reranker_v1_collections__collection_id__reranker_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CollectionRerankerBind"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CollectionOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/chunks/{chunk_id}": {
+   "get": {
+    "tags": [
+     "chunks"
+    ],
+    "summary": "Get Chunk",
+    "operationId": "get_chunk_v1_chunks__chunk_id__get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     },
+     {
+      "name": "chunk_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Chunk Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChunkDetail"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/{doc_id}/chunks": {
+   "get": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "List Document Chunks",
+    "operationId": "list_document_chunks_v1_documents__doc_id__chunks_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     },
+     {
+      "name": "doc_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "minimum": 1,
+       "default": 50,
+       "title": "Page Size"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChunkList"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/documents/batch": {
+   "post": {
+    "tags": [
+     "documents"
+    ],
+    "summary": "Document Batch",
+    "description": "Batch delete or batch re-parse over doc_ids. Fail-closed scope\nchecks: every doc_id must resolve (422 otherwise) and every resolved\ncollection must fall within the key's allowlist (403 otherwise) before\nanything is applied \u2014 never partially.",
+    "operationId": "document_batch_v1_documents_batch_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DocumentBatchRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DocumentBatchResultList"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/collections/{collection_id}/chunks": {
+   "get": {
+    "tags": [
+     "collections"
+    ],
+    "summary": "List Collection Chunks",
+    "description": "KB-wide paginated chunk browsing across all documents in the\ncollection, with an optional per-doc narrowing (Chunk Inspector, KB tab).",
+    "operationId": "list_collection_chunks_v1_collections__collection_id__chunks_get",
+    "parameters": [
+     {
+      "name": "collection_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Collection Id"
+      }
+     },
+     {
+      "name": "doc_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Doc Id"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "page_size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "default": 50,
+       "title": "Page Size"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChunkList"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/system/settings": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "System Settings",
+    "description": "Env-configured runtime constants (chunking, splitting, retry\nladder, backpressure, search caps) as a read-only projection of\nconfig.Settings \u2014 the KB Settings tab's chunking preview data source.",
+    "operationId": "system_settings_v1_system_settings_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemSettings"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "CollectionCreate": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "embedding_model_id": {
+      "type": "string",
+      "title": "Embedding Model Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "embedding_model_id"
+    ],
+    "title": "CollectionCreate"
+   },
+   "CommitRequest": {
+    "properties": {
+     "collection_id": {
+      "type": "string",
+      "title": "Collection Id"
+     },
+     "content_sha256": {
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Content Sha256"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author"
+     },
+     "metadata": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Metadata"
+     }
+    },
+    "type": "object",
+    "required": [
+     "collection_id",
+     "content_sha256"
+    ],
+    "title": "CommitRequest"
+   },
+   "DocState": {
+    "type": "string",
+    "enum": [
+     "uploaded",
+     "splitting",
+     "parsing",
+     "embedding",
+     "indexing",
+     "ready",
+     "failed",
+     "partial",
+     "archived"
+    ],
+    "title": "DocState"
+   },
+   "DocumentOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "collection_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Collection Id"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author"
+     },
+     "page_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Count"
+     },
+     "byte_size": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Byte Size"
+     },
+     "state": {
+      "$ref": "#/components/schemas/DocState"
+     },
+     "total_shards": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total Shards"
+     },
+     "shards_done": {
+      "type": "integer",
+      "title": "Shards Done"
+     },
+     "shards_failed": {
+      "type": "integer",
+      "title": "Shards Failed"
+     },
+     "completeness": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Completeness"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "collection_id",
+     "title",
+     "author",
+     "page_count",
+     "byte_size",
+     "state",
+     "total_shards",
+     "shards_done",
+     "shards_failed",
+     "completeness",
+     "error_code",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "DocumentOut"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
       },
-      "DocState": {
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "KeyCreate": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name"
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "minItems": 1,
+      "title": "Scopes"
+     },
+     "collections": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Collections"
+     },
+     "expires_in": {
+      "type": "string",
+      "enum": [
+       "1d",
+       "7d",
+       "30d",
+       "90d",
+       "never"
+      ],
+      "title": "Expires In",
+      "default": "never"
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "scopes"
+    ],
+    "title": "KeyCreate"
+   },
+   "KeyCreated": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "scopes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scopes"
+     },
+     "collections": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Collections"
+     },
+     "last_used_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Used At"
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At"
+     },
+     "revoked_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revoked At"
+     },
+     "raw_key": {
+      "type": "string",
+      "title": "Raw Key"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "scopes",
+     "collections",
+     "last_used_at",
+     "expires_at",
+     "revoked_at",
+     "raw_key"
+    ],
+    "title": "KeyCreated"
+   },
+   "KeyOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "scopes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scopes"
+     },
+     "collections": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Collections"
+     },
+     "last_used_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Used At"
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At"
+     },
+     "revoked_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Revoked At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "scopes",
+     "collections",
+     "last_used_at",
+     "expires_at",
+     "revoked_at"
+    ],
+    "title": "KeyOut"
+   },
+   "PresignRequest": {
+    "properties": {
+     "collection_id": {
+      "type": "string",
+      "title": "Collection Id"
+     },
+     "byte_size": {
+      "type": "integer",
+      "exclusiveMinimum": 0.0,
+      "title": "Byte Size"
+     }
+    },
+    "type": "object",
+    "required": [
+     "collection_id",
+     "byte_size"
+    ],
+    "title": "PresignRequest"
+   },
+   "PresignResponse": {
+    "properties": {
+     "doc_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Doc Id"
+     },
+     "upload_url": {
+      "type": "string",
+      "title": "Upload Url"
+     }
+    },
+    "type": "object",
+    "required": [
+     "doc_id",
+     "upload_url"
+    ],
+    "title": "PresignResponse"
+   },
+   "RetryRequest": {
+    "properties": {
+     "scope": {
+      "type": "string",
+      "pattern": "^(shards|embed|full)$",
+      "title": "Scope"
+     }
+    },
+    "type": "object",
+    "required": [
+     "scope"
+    ],
+    "title": "RetryRequest"
+   },
+   "SearchRequest": {
+    "properties": {
+     "query": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Query"
+     },
+     "collection": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Collection"
+     },
+     "collections": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "title": "Collections",
+      "description": "Multi-collection search: grouped by bound embedding model, fused with RRF"
+     },
+     "top_k": {
+      "type": "integer",
+      "maximum": 25.0,
+      "minimum": 1.0,
+      "title": "Top K",
+      "default": 8
+     },
+     "rerank": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rerank",
+      "description": "Re-score the candidate pool with the configured cross-encoder reranker"
+     },
+     "rerank_model_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rerank Model Id",
+      "description": "Explicit reranker registry id \u2014 overrides the collection's bound reranker"
+     },
+     "metadata_filter": {
+      "type": "object",
+      "additionalProperties": true,
+      "title": "Metadata Filter",
+      "description": "Document-level filter: {\"author\"} (case-insensitive), {\"year_from\"/\"year_to\"} (metadata year range), other keys match metadata->>key exactly"
+     }
+    },
+    "type": "object",
+    "required": [
+     "query"
+    ],
+    "title": "SearchRequest"
+   },
+   "ShardOut": {
+    "properties": {
+     "idx": {
+      "type": "integer",
+      "title": "Idx"
+     },
+     "page_start": {
+      "type": "integer",
+      "title": "Page Start"
+     },
+     "page_end": {
+      "type": "integer",
+      "title": "Page End"
+     },
+     "state": {
+      "type": "string",
+      "title": "State"
+     },
+     "attempts": {
+      "type": "integer",
+      "title": "Attempts"
+     },
+     "needs_ocr": {
+      "type": "boolean",
+      "title": "Needs Ocr"
+     },
+     "duration_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duration Ms"
+     },
+     "peak_rss_mb": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Peak Rss Mb"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     }
+    },
+    "type": "object",
+    "required": [
+     "idx",
+     "page_start",
+     "page_end",
+     "state",
+     "attempts",
+     "needs_ocr",
+     "duration_ms",
+     "peak_rss_mb",
+     "error_code"
+    ],
+    "title": "ShardOut"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   },
+   "ModelOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name"
+     },
+     "provider": {
+      "type": "string",
+      "enum": [
+       "tei",
+       "ollama",
+       "openai"
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "type": "string",
+      "title": "Model Id"
+     },
+     "ingest_url": {
+      "type": "string",
+      "title": "Ingest Url"
+     },
+     "query_url": {
+      "type": "string",
+      "title": "Query Url"
+     },
+     "has_api_key": {
+      "type": "boolean",
+      "title": "Has Api Key"
+     },
+     "vector_dim": {
+      "type": "integer",
+      "maximum": 2000,
+      "minimum": 1,
+      "title": "Vector Dim"
+     },
+     "query_prefix": {
+      "type": "string",
+      "title": "Query Prefix",
+      "default": "search_query: "
+     },
+     "batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Batch Size",
+      "default": 48
+     },
+     "ctx_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Ctx Budget",
+      "default": 1900
+     },
+     "truncate_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Truncate Chars",
+      "default": 6000
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "provider",
+     "model_id",
+     "ingest_url",
+     "query_url",
+     "vector_dim"
+    ],
+    "title": "ModelOut"
+   },
+   "ModelCreate": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name"
+     },
+     "provider": {
+      "type": "string",
+      "enum": [
+       "tei",
+       "ollama",
+       "openai"
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "type": "string",
+      "title": "Model Id"
+     },
+     "ingest_url": {
+      "type": "string",
+      "title": "Ingest Url"
+     },
+     "query_url": {
+      "type": "string",
+      "title": "Query Url"
+     },
+     "api_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Api Key"
+     },
+     "vector_dim": {
+      "type": "integer",
+      "maximum": 2000,
+      "minimum": 1,
+      "title": "Vector Dim"
+     },
+     "query_prefix": {
+      "type": "string",
+      "title": "Query Prefix",
+      "default": "search_query: "
+     },
+     "batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Batch Size",
+      "default": 48
+     },
+     "ctx_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Ctx Budget",
+      "default": 1900
+     },
+     "truncate_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Truncate Chars",
+      "default": 6000
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "provider",
+     "model_id",
+     "ingest_url",
+     "query_url",
+     "vector_dim"
+    ],
+    "title": "ModelCreate"
+   },
+   "ModelUpdate": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Name"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "provider": {
+      "anyOf": [
+       {
         "type": "string",
         "enum": [
-          "uploaded",
-          "splitting",
-          "parsing",
-          "embedding",
-          "indexing",
-          "ready",
-          "failed",
-          "partial",
-          "archived"
+         "tei",
+         "ollama",
+         "openai"
         ],
-        "title": "DocState"
+        "title": "Provider"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "title": "Model Id"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Id"
+     },
+     "ingest_url": {
+      "anyOf": [
+       {
+        "type": "string",
+        "title": "Ingest Url"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ingest Url"
+     },
+     "query_url": {
+      "anyOf": [
+       {
+        "type": "string",
+        "title": "Query Url"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Query Url"
+     },
+     "api_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Api Key",
+      "description": "null = unchanged"
+     },
+     "vector_dim": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 2000,
+        "minimum": 1,
+        "title": "Vector Dim"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vector Dim"
+     },
+     "query_prefix": {
+      "anyOf": [
+       {
+        "type": "string",
+        "title": "Query Prefix",
+        "default": "search_query: "
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Query Prefix"
+     },
+     "batch_size": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "title": "Batch Size",
+        "default": 48
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Batch Size"
+     },
+     "ctx_budget": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 1,
+        "title": "Ctx Budget",
+        "default": 1900
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ctx Budget"
+     },
+     "truncate_chars": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 0,
+        "title": "Truncate Chars",
+        "default": 6000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncate Chars"
+     }
+    },
+    "type": "object",
+    "title": "ModelUpdate"
+   },
+   "ModelTestResult": {
+    "properties": {
+     "reachable": {
+      "type": "boolean",
+      "title": "Reachable"
+     },
+     "latency_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latency Ms"
+     },
+     "detail": {
+      "type": "string",
+      "title": "Detail"
+     },
+     "vector_dim": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vector Dim"
+     }
+    },
+    "type": "object",
+    "required": [
+     "reachable",
+     "detail"
+    ],
+    "title": "ModelTestResult"
+   },
+   "FetchUrlRequest": {
+    "properties": {
+     "collection_id": {
+      "type": "string",
+      "title": "Collection Id"
+     },
+     "url": {
+      "type": "string",
+      "title": "Url"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author"
+     },
+     "metadata": {
+      "type": "object",
+      "title": "Metadata",
+      "default": {}
+     }
+    },
+    "type": "object",
+    "required": [
+     "collection_id",
+     "url"
+    ],
+    "title": "FetchUrlRequest"
+   },
+   "OpdsAcqLink": {
+    "properties": {
+     "href": {
+      "type": "string",
+      "title": "Href"
+     },
+     "mime_type": {
+      "type": "string",
+      "title": "Mime Type"
+     }
+    },
+    "type": "object",
+    "title": "OpdsAcqLink"
+   },
+   "OpdsEntry": {
+    "properties": {
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "authors": {
+      "items": {
+       "type": "string"
       },
-      "DocumentOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "collection_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Collection Id"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "author": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Author"
-          },
-          "page_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Count"
-          },
-          "byte_size": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Byte Size"
-          },
-          "state": {
-            "$ref": "#/components/schemas/DocState"
-          },
-          "total_shards": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Shards"
-          },
-          "shards_done": {
-            "type": "integer",
-            "title": "Shards Done"
-          },
-          "shards_failed": {
-            "type": "integer",
-            "title": "Shards Failed"
-          },
-          "completeness": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completeness"
-          },
-          "error_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Code"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "collection_id",
-          "title",
-          "author",
-          "page_count",
-          "byte_size",
-          "state",
-          "total_shards",
-          "shards_done",
-          "shards_failed",
-          "completeness",
-          "error_code",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "DocumentOut"
+      "type": "array",
+      "title": "Authors"
+     },
+     "summary": {
+      "type": "string",
+      "title": "Summary"
+     },
+     "acquisition": {
+      "items": {
+       "$ref": "#/components/schemas/OpdsAcqLink"
       },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "type": "array",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "title": "HTTPValidationError"
+      "type": "array",
+      "title": "Acquisition"
+     }
+    },
+    "type": "object",
+    "required": [
+     "title",
+     "authors",
+     "acquisition"
+    ],
+    "title": "OpdsEntry"
+   },
+   "OpdsBrowseRequest": {
+    "properties": {
+     "url": {
+      "type": "string",
+      "title": "Url"
+     },
+     "username": {
+      "type": "string",
+      "title": "Username"
+     },
+     "password": {
+      "type": "string",
+      "title": "Password"
+     },
+     "feed_url": {
+      "type": "string",
+      "title": "Feed Url"
+     }
+    },
+    "type": "object",
+    "required": [
+     "url"
+    ],
+    "title": "OpdsBrowseRequest"
+   },
+   "OpdsBrowseResult": {
+    "properties": {
+     "entries": {
+      "items": {
+       "$ref": "#/components/schemas/OpdsEntry"
       },
-      "KeyCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "scopes": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Scopes"
-          },
-          "collections": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Collections"
-          },
-          "expires_in": {
-            "type": "string",
-            "enum": ["1d", "7d", "30d", "90d", "never"],
-            "title": "Expires In",
-            "default": "never"
-          }
-        },
-        "type": "object",
-        "required": ["name", "scopes"],
-        "title": "KeyCreate"
+      "type": "array",
+      "title": "Entries"
+     },
+     "next_href": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Href"
+     }
+    },
+    "type": "object",
+    "required": [
+     "entries"
+    ],
+    "title": "OpdsBrowseResult"
+   },
+   "OpdsEntryRef": {
+    "properties": {
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "href": {
+      "type": "string",
+      "title": "Href"
+     },
+     "mime_type": {
+      "type": "string",
+      "title": "Mime Type"
+     }
+    },
+    "type": "object",
+    "title": "OpdsEntryRef"
+   },
+   "OpdsSyncRequest": {
+    "properties": {
+     "url": {
+      "type": "string",
+      "title": "Url"
+     },
+     "username": {
+      "type": "string",
+      "title": "Username"
+     },
+     "password": {
+      "type": "string",
+      "title": "Password"
+     },
+     "collection_id": {
+      "type": "string",
+      "title": "Collection Id"
+     },
+     "selection": {
+      "items": {
+       "$ref": "#/components/schemas/OpdsEntryRef"
       },
-      "KeyCreated": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "scopes": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scopes"
-          },
-          "collections": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Collections"
-          },
-          "last_used_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Used At"
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
-          },
-          "revoked_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revoked At"
-          },
-          "raw_key": {
-            "type": "string",
-            "title": "Raw Key"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "scopes",
-          "collections",
-          "last_used_at",
-          "expires_at",
-          "revoked_at",
-          "raw_key"
-        ],
-        "title": "KeyCreated"
+      "type": "array",
+      "title": "Selection",
+      "default": []
+     }
+    },
+    "type": "object",
+    "required": [
+     "url",
+     "collection_id"
+    ],
+    "title": "OpdsSyncRequest"
+   },
+   "OpdsItemResult": {
+    "properties": {
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "accepted",
+       "duplicate",
+       "rejected"
+      ],
+      "title": "Status"
+     },
+     "doc_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Doc Id"
+     },
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "required": [
+     "title",
+     "status"
+    ],
+    "title": "OpdsItemResult"
+   },
+   "OpdsSyncResult": {
+    "properties": {
+     "synced": {
+      "type": "integer",
+      "title": "Synced"
+     },
+     "failed": {
+      "type": "integer",
+      "title": "Failed"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/OpdsItemResult"
       },
-      "KeyOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "scopes": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scopes"
-          },
-          "collections": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Collections"
-          },
-          "last_used_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Used At"
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
-          },
-          "revoked_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Revoked At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "scopes",
-          "collections",
-          "last_used_at",
-          "expires_at",
-          "revoked_at"
-        ],
-        "title": "KeyOut"
+      "type": "array",
+      "title": "Results"
+     }
+    },
+    "type": "object",
+    "required": [
+     "synced",
+     "failed",
+     "results"
+    ],
+    "title": "OpdsSyncResult"
+   },
+   "RerankModelOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name"
+     },
+     "provider": {
+      "type": "string",
+      "enum": [
+       "tei",
+       "openai"
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "type": "string",
+      "title": "Model Id"
+     },
+     "query_url": {
+      "type": "string",
+      "title": "Query Url"
+     },
+     "has_api_key": {
+      "type": "boolean",
+      "title": "Has Api Key"
+     },
+     "truncate_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Truncate Chars",
+      "default": 6000
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "provider",
+     "model_id",
+     "query_url"
+    ],
+    "title": "RerankModelOut"
+   },
+   "RerankModelCreate": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name"
+     },
+     "provider": {
+      "type": "string",
+      "enum": [
+       "tei",
+       "openai"
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "type": "string",
+      "title": "Model Id"
+     },
+     "query_url": {
+      "type": "string",
+      "title": "Query Url"
+     },
+     "api_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Api Key"
+     },
+     "truncate_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Truncate Chars",
+      "default": 6000
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "provider",
+     "model_id",
+     "query_url"
+    ],
+    "title": "RerankModelCreate"
+   },
+   "RerankModelUpdate": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "provider": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "tei",
+         "openai"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider"
+     },
+     "model_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Id"
+     },
+     "query_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Query Url"
+     },
+     "api_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Api Key"
+     },
+     "truncate_chars": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncate Chars"
+     }
+    },
+    "type": "object",
+    "title": "RerankModelUpdate"
+   },
+   "RerankTestResult": {
+    "properties": {
+     "reachable": {
+      "type": "boolean",
+      "title": "Reachable"
+     },
+     "latency_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latency Ms"
+     },
+     "detail": {
+      "type": "string",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "required": [
+     "reachable",
+     "detail"
+    ],
+    "title": "RerankTestResult"
+   },
+   "CollectionRerankerBind": {
+    "properties": {
+     "rerank_model_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rerank Model Id",
+      "description": "null clears the binding"
+     }
+    },
+    "type": "object",
+    "title": "CollectionRerankerBind"
+   },
+   "ChunkOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "seq": {
+      "type": "integer",
+      "title": "Seq"
+     },
+     "is_parent": {
+      "type": "boolean",
+      "title": "Is Parent"
+     },
+     "parent_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent Id"
+     },
+     "page_start": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Start"
+     },
+     "page_end": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page End"
+     },
+     "heading_path": {
+      "type": "array",
+      "items": {
+       "type": "string"
       },
-      "PresignRequest": {
-        "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id"
-          },
-          "byte_size": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Byte Size"
-          }
-        },
-        "type": "object",
-        "required": ["collection_id", "byte_size"],
-        "title": "PresignRequest"
+      "title": "Heading Path"
+     },
+     "header_breadcrumb": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Header Breadcrumb"
+     },
+     "text": {
+      "type": "string",
+      "title": "Text"
+     },
+     "token_count": {
+      "type": "integer",
+      "title": "Token Count"
+     },
+     "embedded_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Embedded At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "seq",
+     "is_parent",
+     "text",
+     "token_count"
+    ],
+    "title": "ChunkOut"
+   },
+   "ChunkList": {
+    "properties": {
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     },
+     "page": {
+      "type": "integer",
+      "title": "Page"
+     },
+     "page_size": {
+      "type": "integer",
+      "title": "Page Size"
+     },
+     "chunks": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/ChunkOut"
       },
-      "PresignResponse": {
-        "properties": {
-          "doc_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Doc Id"
-          },
-          "upload_url": {
-            "type": "string",
-            "title": "Upload Url"
-          }
-        },
-        "type": "object",
-        "required": ["doc_id", "upload_url"],
-        "title": "PresignResponse"
+      "title": "Chunks"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total",
+     "page",
+     "page_size",
+     "chunks"
+    ],
+    "title": "ChunkList"
+   },
+   "ChunkDetail": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "seq": {
+      "type": "integer",
+      "title": "Seq"
+     },
+     "is_parent": {
+      "type": "boolean",
+      "title": "Is Parent"
+     },
+     "parent_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent Id"
+     },
+     "page_start": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page Start"
+     },
+     "page_end": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Page End"
+     },
+     "heading_path": {
+      "type": "array",
+      "items": {
+       "type": "string"
       },
-      "RetryRequest": {
-        "properties": {
-          "scope": {
-            "type": "string",
-            "pattern": "^(shards|embed|full)$",
-            "title": "Scope"
-          }
-        },
-        "type": "object",
-        "required": ["scope"],
-        "title": "RetryRequest"
+      "title": "Heading Path"
+     },
+     "header_breadcrumb": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Header Breadcrumb"
+     },
+     "text": {
+      "type": "string",
+      "title": "Text"
+     },
+     "token_count": {
+      "type": "integer",
+      "title": "Token Count"
+     },
+     "embedded_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Embedded At"
+     },
+     "parent_text": {
+      "type": "string",
+      "title": "Parent Text"
+     },
+     "prev_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Prev Id"
+     },
+     "next_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Id"
+     },
+     "neighbours": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/ChunkOut"
       },
-      "SearchRequest": {
-        "properties": {
-          "query": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Query"
-          },
-          "collection": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Collection"
-          },
-          "collections": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Collections",
-            "description": "Multi-collection search: grouped by bound embedding model, fused with RRF"
-          },
-          "top_k": {
-            "type": "integer",
-            "maximum": 25.0,
-            "minimum": 1.0,
-            "title": "Top K",
-            "default": 8
-          },
-          "rerank": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank",
-            "description": "Re-score the candidate pool with the configured cross-encoder reranker"
-          },
-          "rerank_model_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Model Id",
-            "description": "Explicit reranker registry id — overrides the collection's bound reranker"
-          },
-          "metadata_filter": {
-            "type": "object",
-            "additionalProperties": true,
-            "title": "Metadata Filter",
-            "description": "Document-level filter: {\"author\"} (case-insensitive), {\"year_from\"/\"year_to\"} (metadata year range), other keys match metadata->>key exactly"
-          }
-        },
-        "type": "object",
-        "required": ["query"],
-        "title": "SearchRequest"
+      "title": "Neighbours"
+     }
+    },
+    "type": "object",
+    "title": "ChunkDetail"
+   },
+   "DocumentBatchRequest": {
+    "properties": {
+     "action": {
+      "type": "string",
+      "enum": [
+       "delete",
+       "reparse"
+      ],
+      "title": "Action"
+     },
+     "doc_ids": {
+      "items": {
+       "type": "string",
+       "format": "uuid"
       },
-      "ShardOut": {
-        "properties": {
-          "idx": {
-            "type": "integer",
-            "title": "Idx"
-          },
-          "page_start": {
-            "type": "integer",
-            "title": "Page Start"
-          },
-          "page_end": {
-            "type": "integer",
-            "title": "Page End"
-          },
-          "state": {
-            "type": "string",
-            "title": "State"
-          },
-          "attempts": {
-            "type": "integer",
-            "title": "Attempts"
-          },
-          "needs_ocr": {
-            "type": "boolean",
-            "title": "Needs Ocr"
-          },
-          "duration_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Ms"
-          },
-          "peak_rss_mb": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Peak Rss Mb"
-          },
-          "error_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "idx",
-          "page_start",
-          "page_end",
-          "state",
-          "attempts",
-          "needs_ocr",
-          "duration_ms",
-          "peak_rss_mb",
-          "error_code"
-        ],
-        "title": "ShardOut"
+      "type": "array",
+      "title": "Doc Ids"
+     }
+    },
+    "type": "object",
+    "required": [
+     "action",
+     "doc_ids"
+    ],
+    "title": "DocumentBatchRequest"
+   },
+   "DocumentBatchResult": {
+    "properties": {
+     "doc_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Doc Id"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "required": [
+     "doc_id",
+     "status"
+    ],
+    "title": "DocumentBatchResult"
+   },
+   "DocumentBatchResultList": {
+    "properties": {
+     "action": {
+      "type": "string",
+      "title": "Action"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/DocumentBatchResult"
       },
-      "ValidationError": {
-        "properties": {
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Location"
-          },
-          "msg": {
-            "type": "string",
-            "title": "Message"
-          },
-          "type": {
-            "type": "string",
-            "title": "Error Type"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "ctx": {
-            "type": "object",
-            "title": "Context"
-          }
-        },
-        "type": "object",
-        "required": ["loc", "msg", "type"],
-        "title": "ValidationError"
-      },
-      "ModelOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "provider": {
-            "type": "string",
-            "enum": ["tei", "ollama", "openai"],
-            "title": "Provider"
-          },
-          "model_id": {
-            "type": "string",
-            "title": "Model Id"
-          },
-          "ingest_url": {
-            "type": "string",
-            "title": "Ingest Url"
-          },
-          "query_url": {
-            "type": "string",
-            "title": "Query Url"
-          },
-          "has_api_key": {
-            "type": "boolean",
-            "title": "Has Api Key"
-          },
-          "vector_dim": {
-            "type": "integer",
-            "maximum": 2000,
-            "minimum": 1,
-            "title": "Vector Dim"
-          },
-          "query_prefix": {
-            "type": "string",
-            "title": "Query Prefix",
-            "default": "search_query: "
-          },
-          "batch_size": {
-            "type": "integer",
-            "minimum": 1,
-            "title": "Batch Size",
-            "default": 48
-          },
-          "ctx_budget": {
-            "type": "integer",
-            "minimum": 1,
-            "title": "Ctx Budget",
-            "default": 1900
-          },
-          "truncate_chars": {
-            "type": "integer",
-            "minimum": 0,
-            "title": "Truncate Chars",
-            "default": 6000
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": ["id", "name", "provider", "model_id", "ingest_url", "query_url", "vector_dim"],
-        "title": "ModelOut"
-      },
-      "ModelCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "provider": {
-            "type": "string",
-            "enum": ["tei", "ollama", "openai"],
-            "title": "Provider"
-          },
-          "model_id": {
-            "type": "string",
-            "title": "Model Id"
-          },
-          "ingest_url": {
-            "type": "string",
-            "title": "Ingest Url"
-          },
-          "query_url": {
-            "type": "string",
-            "title": "Query Url"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "vector_dim": {
-            "type": "integer",
-            "maximum": 2000,
-            "minimum": 1,
-            "title": "Vector Dim"
-          },
-          "query_prefix": {
-            "type": "string",
-            "title": "Query Prefix",
-            "default": "search_query: "
-          },
-          "batch_size": {
-            "type": "integer",
-            "minimum": 1,
-            "title": "Batch Size",
-            "default": 48
-          },
-          "ctx_budget": {
-            "type": "integer",
-            "minimum": 1,
-            "title": "Ctx Budget",
-            "default": 1900
-          },
-          "truncate_chars": {
-            "type": "integer",
-            "minimum": 0,
-            "title": "Truncate Chars",
-            "default": 6000
-          }
-        },
-        "type": "object",
-        "required": ["name", "provider", "model_id", "ingest_url", "query_url", "vector_dim"],
-        "title": "ModelCreate"
-      },
-      "ModelUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 200,
-                "minLength": 1,
-                "title": "Name"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": ["tei", "ollama", "openai"],
-                "title": "Provider"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider"
-          },
-          "model_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "title": "Model Id"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Id"
-          },
-          "ingest_url": {
-            "anyOf": [
-              {
-                "type": "string",
-                "title": "Ingest Url"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ingest Url"
-          },
-          "query_url": {
-            "anyOf": [
-              {
-                "type": "string",
-                "title": "Query Url"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Url"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key",
-            "description": "null = unchanged"
-          },
-          "vector_dim": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "maximum": 2000,
-                "minimum": 1,
-                "title": "Vector Dim"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Vector Dim"
-          },
-          "query_prefix": {
-            "anyOf": [
-              {
-                "type": "string",
-                "title": "Query Prefix",
-                "default": "search_query: "
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Prefix"
-          },
-          "batch_size": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "title": "Batch Size",
-                "default": 48
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Size"
-          },
-          "ctx_budget": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1,
-                "title": "Ctx Budget",
-                "default": 1900
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ctx Budget"
-          },
-          "truncate_chars": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "title": "Truncate Chars",
-                "default": 6000
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Truncate Chars"
-          }
-        },
-        "type": "object",
-        "title": "ModelUpdate"
-      },
-      "ModelTestResult": {
-        "properties": {
-          "reachable": {
-            "type": "boolean",
-            "title": "Reachable"
-          },
-          "latency_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latency Ms"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          },
-          "vector_dim": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Vector Dim"
-          }
-        },
-        "type": "object",
-        "required": ["reachable", "detail"],
-        "title": "ModelTestResult"
-      },
-      "FetchUrlRequest": {
-        "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id"
-          },
-          "url": {
-            "type": "string",
-            "title": "Url"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "author": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Author"
-          },
-          "metadata": {
-            "type": "object",
-            "title": "Metadata",
-            "default": {}
-          }
-        },
-        "type": "object",
-        "required": ["collection_id", "url"],
-        "title": "FetchUrlRequest"
-      },
-      "OpdsAcqLink": {
-        "properties": {
-          "href": {
-            "type": "string",
-            "title": "Href"
-          },
-          "mime_type": {
-            "type": "string",
-            "title": "Mime Type"
-          }
-        },
-        "type": "object",
-        "title": "OpdsAcqLink"
-      },
-      "OpdsEntry": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "authors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Authors"
-          },
-          "summary": {
-            "type": "string",
-            "title": "Summary"
-          },
-          "acquisition": {
-            "items": {
-              "$ref": "#/components/schemas/OpdsAcqLink"
-            },
-            "type": "array",
-            "title": "Acquisition"
-          }
-        },
-        "type": "object",
-        "required": ["title", "authors", "acquisition"],
-        "title": "OpdsEntry"
-      },
-      "OpdsBrowseRequest": {
-        "properties": {
-          "url": {
-            "type": "string",
-            "title": "Url"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "password": {
-            "type": "string",
-            "title": "Password"
-          },
-          "feed_url": {
-            "type": "string",
-            "title": "Feed Url"
-          }
-        },
-        "type": "object",
-        "required": ["url"],
-        "title": "OpdsBrowseRequest"
-      },
-      "OpdsBrowseResult": {
-        "properties": {
-          "entries": {
-            "items": {
-              "$ref": "#/components/schemas/OpdsEntry"
-            },
-            "type": "array",
-            "title": "Entries"
-          },
-          "next_href": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Href"
-          }
-        },
-        "type": "object",
-        "required": ["entries"],
-        "title": "OpdsBrowseResult"
-      },
-      "OpdsEntryRef": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "href": {
-            "type": "string",
-            "title": "Href"
-          },
-          "mime_type": {
-            "type": "string",
-            "title": "Mime Type"
-          }
-        },
-        "type": "object",
-        "title": "OpdsEntryRef"
-      },
-      "OpdsSyncRequest": {
-        "properties": {
-          "url": {
-            "type": "string",
-            "title": "Url"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "password": {
-            "type": "string",
-            "title": "Password"
-          },
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id"
-          },
-          "selection": {
-            "items": {
-              "$ref": "#/components/schemas/OpdsEntryRef"
-            },
-            "type": "array",
-            "title": "Selection",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": ["url", "collection_id"],
-        "title": "OpdsSyncRequest"
-      },
-      "OpdsItemResult": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "status": {
-            "type": "string",
-            "enum": ["accepted", "duplicate", "rejected"],
-            "title": "Status"
-          },
-          "doc_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Doc Id"
-          },
-          "detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "required": ["title", "status"],
-        "title": "OpdsItemResult"
-      },
-      "OpdsSyncResult": {
-        "properties": {
-          "synced": {
-            "type": "integer",
-            "title": "Synced"
-          },
-          "failed": {
-            "type": "integer",
-            "title": "Failed"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/OpdsItemResult"
-            },
-            "type": "array",
-            "title": "Results"
-          }
-        },
-        "type": "object",
-        "required": ["synced", "failed", "results"],
-        "title": "OpdsSyncResult"
-      },
-      "RerankModelOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "provider": {
-            "type": "string",
-            "enum": ["tei", "openai"],
-            "title": "Provider"
-          },
-          "model_id": {
-            "type": "string",
-            "title": "Model Id"
-          },
-          "query_url": {
-            "type": "string",
-            "title": "Query Url"
-          },
-          "has_api_key": {
-            "type": "boolean",
-            "title": "Has Api Key"
-          },
-          "truncate_chars": {
-            "type": "integer",
-            "minimum": 0,
-            "title": "Truncate Chars",
-            "default": 6000
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": ["id", "name", "provider", "model_id", "query_url"],
-        "title": "RerankModelOut"
-      },
-      "RerankModelCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "provider": {
-            "type": "string",
-            "enum": ["tei", "openai"],
-            "title": "Provider"
-          },
-          "model_id": {
-            "type": "string",
-            "title": "Model Id"
-          },
-          "query_url": {
-            "type": "string",
-            "title": "Query Url"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "truncate_chars": {
-            "type": "integer",
-            "minimum": 0,
-            "title": "Truncate Chars",
-            "default": 6000
-          }
-        },
-        "type": "object",
-        "required": ["name", "provider", "model_id", "query_url"],
-        "title": "RerankModelCreate"
-      },
-      "RerankModelUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": ["tei", "openai"]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider"
-          },
-          "model_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Id"
-          },
-          "query_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Url"
-          },
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "truncate_chars": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Truncate Chars"
-          }
-        },
-        "type": "object",
-        "title": "RerankModelUpdate"
-      },
-      "RerankTestResult": {
-        "properties": {
-          "reachable": {
-            "type": "boolean",
-            "title": "Reachable"
-          },
-          "latency_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latency Ms"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "required": ["reachable", "detail"],
-        "title": "RerankTestResult"
-      },
-      "CollectionRerankerBind": {
-        "properties": {
-          "rerank_model_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Model Id",
-            "description": "null clears the binding"
-          }
-        },
-        "type": "object",
-        "title": "CollectionRerankerBind"
-      },
-      "ChunkOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "seq": {
-            "type": "integer",
-            "title": "Seq"
-          },
-          "is_parent": {
-            "type": "boolean",
-            "title": "Is Parent"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          },
-          "page_start": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Start"
-          },
-          "page_end": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page End"
-          },
-          "heading_path": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Heading Path"
-          },
-          "header_breadcrumb": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Header Breadcrumb"
-          },
-          "text": {
-            "type": "string",
-            "title": "Text"
-          },
-          "token_count": {
-            "type": "integer",
-            "title": "Token Count"
-          },
-          "embedded_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedded At"
-          }
-        },
-        "type": "object",
-        "required": ["id", "seq", "is_parent", "text", "token_count"],
-        "title": "ChunkOut"
-      },
-      "ChunkList": {
-        "properties": {
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "title": "Page"
-          },
-          "page_size": {
-            "type": "integer",
-            "title": "Page Size"
-          },
-          "chunks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChunkOut"
-            },
-            "title": "Chunks"
-          }
-        },
-        "type": "object",
-        "required": ["total", "page", "page_size", "chunks"],
-        "title": "ChunkList"
-      },
-      "ChunkDetail": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "seq": {
-            "type": "integer",
-            "title": "Seq"
-          },
-          "is_parent": {
-            "type": "boolean",
-            "title": "Is Parent"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          },
-          "page_start": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Start"
-          },
-          "page_end": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page End"
-          },
-          "heading_path": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "title": "Heading Path"
-          },
-          "header_breadcrumb": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Header Breadcrumb"
-          },
-          "text": {
-            "type": "string",
-            "title": "Text"
-          },
-          "token_count": {
-            "type": "integer",
-            "title": "Token Count"
-          },
-          "embedded_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedded At"
-          },
-          "parent_text": {
-            "type": "string",
-            "title": "Parent Text"
-          },
-          "prev_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prev Id"
-          },
-          "next_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Id"
-          },
-          "neighbours": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChunkOut"
-            },
-            "title": "Neighbours"
-          }
-        },
-        "type": "object",
-        "title": "ChunkDetail"
-      }
-    }
+      "type": "array",
+      "title": "Results"
+     }
+    },
+    "type": "object",
+    "required": [
+     "action",
+     "results"
+    ],
+    "title": "DocumentBatchResultList"
+   },
+   "CollectionStats": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "embedding_model": {
+      "type": "string",
+      "title": "Embedding Model"
+     },
+     "doc_count": {
+      "type": "integer",
+      "title": "Doc Count"
+     },
+     "chunk_count": {
+      "type": "integer",
+      "title": "Chunk Count"
+     },
+     "byte_size": {
+      "type": "integer",
+      "title": "Byte Size"
+     },
+     "total_shards": {
+      "type": "integer",
+      "title": "Total Shards"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "embedding_model",
+     "doc_count",
+     "chunk_count",
+     "byte_size",
+     "total_shards"
+    ],
+    "title": "CollectionStats"
+   },
+   "SystemSettings": {
+    "properties": {
+     "parent_tokens": {
+      "type": "integer",
+      "title": "Parent Tokens"
+     },
+     "parent_hard_cap": {
+      "type": "integer",
+      "title": "Parent Hard Cap"
+     },
+     "child_tokens": {
+      "type": "integer",
+      "title": "Child Tokens"
+     },
+     "child_stride_tokens": {
+      "type": "integer",
+      "title": "Child Stride Tokens"
+     },
+     "shard_pages": {
+      "type": "integer",
+      "title": "Shard Pages"
+     },
+     "min_yield_chars_per_page": {
+      "type": "integer",
+      "title": "Min Yield Chars Per Page"
+     },
+     "shard_lease_seconds": {
+      "type": "integer",
+      "title": "Shard Lease Seconds"
+     },
+     "max_shard_attempts": {
+      "type": "integer",
+      "title": "Max Shard Attempts"
+     },
+     "max_parse_backlog": {
+      "type": "integer",
+      "title": "Max Parse Backlog"
+     },
+     "max_document_pages": {
+      "type": "integer",
+      "title": "Max Document Pages"
+     },
+     "embed_max_attempts": {
+      "type": "integer",
+      "title": "Embed Max Attempts"
+     },
+     "search_default_top_k": {
+      "type": "integer",
+      "title": "Search Default Top K"
+     },
+     "search_max_top_k": {
+      "type": "integer",
+      "title": "Search Max Top K"
+     },
+     "rerank_candidates": {
+      "type": "integer",
+      "title": "Rerank Candidates"
+     }
+    },
+    "type": "object",
+    "required": [
+     "parent_tokens",
+     "parent_hard_cap",
+     "child_tokens",
+     "child_stride_tokens",
+     "shard_pages",
+     "min_yield_chars_per_page",
+     "shard_lease_seconds",
+     "max_shard_attempts",
+     "max_parse_backlog",
+     "max_document_pages",
+     "embed_max_attempts",
+     "search_default_top_k",
+     "search_max_top_k",
+     "rerank_candidates"
+    ],
+    "title": "SystemSettings"
+   }
   }
+ }
 }

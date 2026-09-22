@@ -74,10 +74,12 @@ func (s *Server) Router() http.Handler {
 	r.Post("/v1/documents/fetch-url", s.handleFetchURL)
 	r.Get("/v1/documents", s.handleListDocuments)
 	r.Get("/v1/documents/{doc_id}", s.handleGetDocument)
+	r.Delete("/v1/documents/{doc_id}", s.handleDeleteDocument)
 	r.Get("/v1/documents/{doc_id}/shards", s.handleGetShards)
 	r.Get("/v1/documents/{doc_id}/chunks", s.handleListDocChunks)
 	r.Get("/v1/chunks/{chunk_id}", s.handleGetChunk)
 	r.Post("/v1/documents/{doc_id}/retry", s.handleRetry)
+	r.Post("/v1/documents/batch", s.handleDocumentBatch)
 
 	// Connectors (OPDS)
 	r.Post("/v1/connectors/opds/browse", s.handleOpdsBrowse)
@@ -87,6 +89,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/v1/collections", s.handleListCollections)
 	r.Post("/v1/collections", s.handleCreateCollection)
 	r.Get("/v1/collections/{collection_id}/stats", s.handleCollectionStats)
+	r.Get("/v1/collections/{collection_id}/chunks", s.handleListCollectionChunks)
 	r.Post("/v1/collections/{collection_id}/model", s.handleBindCollectionModel)
 	r.Post("/v1/collections/{collection_id}/reranker", s.handleBindCollectionReranker)
 
@@ -124,6 +127,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/v1/system/queues", s.handleQueues)
 	r.Get("/v1/system/pipeline", s.handlePipeline)
 	r.Get("/v1/system/metrics", s.handleMetrics)
+	r.Get("/v1/system/settings", s.handleSettingsSummary)
 
 	// OpenAPI snapshot: byte-identical contract keeps
 	// `npm run generate-client` deterministic.

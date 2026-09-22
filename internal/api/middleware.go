@@ -131,9 +131,17 @@ func routeScope(method, path string) string {
 		return "ingest"
 	case matchDocSub(path, "/retry"):
 		return "admin"
+	// single-doc delete — admin, ABOVE the matchDocSub bare-id "search" case
+	case method == http.MethodDelete && matchDocSub(path, ""):
+		return "admin"
+	case path == "/v1/documents/batch" && method == http.MethodPost:
+		// batch delete / reparse — admin, ABOVE the matchDocSub bare-id rule
+		// so "batch" is never read as a doc_id (same ordering concern as
+		// fetch-url).
+		return "admin"
 	case matchDocSub(path, "/shards"),
 		matchDocSub(path, ""),
-		path == "/v1/documents":
+		path == "/v1/documents" && method == http.MethodGet:
 		return "search"
 
 	// connectors (OPDS) — ingest scope: they ingest books into collections
@@ -149,6 +157,11 @@ func routeScope(method, path string) string {
 		matchCollectionModelBind(path),
 		matchCollectionRerankerBind(path):
 		return "admin"
+	// KB-wide chunk browsing — search scope (read-only), above nothing that
+	// could shadow it (suffix /chunks cannot collide with /stats, /model,
+	// /reranker).
+	case matchCollectionSub(path, "/chunks"):
+		return "search"
 
 	// model registry — admin scope, all six operations
 	case path == "/v1/models" && (method == http.MethodGet || method == http.MethodPost),
@@ -169,6 +182,10 @@ func routeScope(method, path string) string {
 
 	// search
 	case path == "/v1/search":
+		return "search"
+
+	// system settings readout — search scope (read-only config projection)
+	case path == "/v1/system/settings" && method == http.MethodGet:
 		return "search"
 
 	// keys
@@ -196,6 +213,17 @@ func matchModelID(path string) bool {
 	}
 	rest := path[len(prefix):]
 	return rest != "" && rest != "test" && !strings.Contains(rest, "/")
+}
+
+// matchCollectionSub matches /v1/collections/{id}[suffix] paths (the
+// /chunks listing uses it; mirrors matchDocSub's shape).
+func matchCollectionSub(path, suffix string) bool {
+	const prefix = "/v1/collections/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	rest := path[len(prefix):]
+	return strings.HasSuffix(rest, suffix) && len(rest) > len(suffix)
 }
 
 // matchCollectionModelBind matches /v1/collections/{id}/model.

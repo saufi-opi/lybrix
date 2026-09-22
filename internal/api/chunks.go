@@ -86,6 +86,20 @@ func (s *Server) keyScopeChunks(w http.ResponseWriter, r *http.Request, docID st
 	return false
 }
 
+// keyAllowedCollection is the collection-id form of the allowlist guard —
+// used by the collection-chunk listing (404 unknown checked separately).
+// Unscoped keys pass everything; writes the 403 itself.
+func keyAllowedCollection(w http.ResponseWriter, key *store.ApiKey, collectionID *string) bool {
+	if key == nil || len(key.Collections) == 0 {
+		return true
+	}
+	if collectionID != nil && store.CollectionAllowed(key, *collectionID) {
+		return true
+	}
+	writeDetail(w, http.StatusForbidden, "key is not scoped to this collection")
+	return false
+}
+
 func (s *Server) handleListDocChunks(w http.ResponseWriter, r *http.Request) {
 	docID := chi.URLParam(r, "doc_id")
 	if !s.keyScopeChunks(w, r, docID) {

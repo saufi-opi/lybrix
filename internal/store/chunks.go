@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -273,6 +274,45 @@ func (d *DB) ListDocChunks(ctx context.Context, docID string, page, pageSize int
 	rows, err := d.Pool.Query(ctx, `SELECT `+chunkCols+` FROM chunks
 		WHERE doc_id = $1 ORDER BY seq LIMIT $2 OFFSET $3`,
 		docID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	chunks, err := collectChunks(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chunks, total, nil
+}
+
+// ListCollectionChunks selects one seq-ordered page of a collection's chunks
+// across all its documents (KB-wide chunk browsing) with an optional doc_id
+// narrowing, plus the total row count for pagination. pageSize is clamped to
+// 200. Same projection as ListDocChunks — the ChunkInspector renders both.
+func (d *DB) ListCollectionChunks(ctx context.Context, collectionID string, docID *string, page, pageSize int) ([]*Chunk, int, error) {
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+	if page < 1 {
+		page = 1
+	}
+	// The join is the CollectionCounts pattern: chunks hang off documents,
+	// collection_id filters on the document side.
+	where := `d.collection_id = $1`
+	args := []any{collectionID}
+	if docID != nil && *docID != "" {
+		args = append(args, *docID)
+		where += fmt.Sprintf(" AND c.doc_id = $%d", len(args))
+	}
+	var total int
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.doc_id WHERE `+where,
+		args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := d.Pool.Query(ctx, `SELECT `+chunkCols+` FROM chunks c
+		JOIN documents d ON d.id = c.doc_id WHERE `+where+`
+		ORDER BY c.doc_id, c.seq LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
+		append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		return nil, 0, err
 	}

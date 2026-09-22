@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/saufi-opi/lybrix/internal/pipeline"
 	"github.com/saufi-opi/lybrix/internal/queue"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
@@ -258,6 +259,54 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 		// 2.0 delta: qdrant_points is replaced by chunks_total from ParadeDB.
 		"chunks_total": chunksTotal,
 		"server_time":  nil, // web layer stamps local time
+	})
+}
+
+// settingsOut is the GET /v1/system/settings readout — the env-configured
+// runtime constants the KB Settings tab (chunking preview) and the pipeline
+// page (retry-ladder/DLQ strip) render. Read-only projection of
+// core.config.Settings; nothing here is writable from the UI.
+type settingsOut struct {
+	// chunking (hierarchical parent-child, § Phase 3 Tab 4 preview)
+	ParentTokens int `json:"parent_tokens"`
+	ParentCap    int `json:"parent_hard_cap"`
+	ChildTokens  int `json:"child_tokens"`
+	ChildStride  int `json:"child_stride_tokens"`
+	// splitting / parsing
+	ShardPages           int `json:"shard_pages"`
+	MinYieldCharsPerPage int `json:"min_yield_chars_per_page"`
+	// retry ladder / backpressure
+	ShardLeaseSeconds int `json:"shard_lease_seconds"`
+	MaxShardAttempts  int `json:"max_shard_attempts"`
+	MaxParseBacklog   int `json:"max_parse_backlog"`
+	MaxDocumentPages  int `json:"max_document_pages"`
+	EmbedMaxAttempts  int `json:"embed_max_attempts"`
+	// search
+	SearchDefaultTopK int `json:"search_default_top_k"`
+	SearchMaxTopK     int `json:"search_max_top_k"`
+	RerankCandidates  int `json:"rerank_candidates"`
+}
+
+func (s *Server) handleSettingsSummary(w http.ResponseWriter, r *http.Request) {
+	st := s.deps.Settings
+	WriteJSON(w, http.StatusOK, settingsOut{
+		ParentTokens: pipeline.ParentBudgetTokens,
+		ParentCap:    pipeline.ParentHardCap,
+		ChildTokens:  pipeline.ChildWindowTokens,
+		ChildStride:  pipeline.ChildStrideTokens,
+
+		ShardPages:           st.ShardPages,
+		MinYieldCharsPerPage: st.MinYieldCharsPerPage,
+
+		ShardLeaseSeconds: st.ShardLeaseSeconds,
+		MaxShardAttempts:  st.MaxShardAttempts,
+		MaxParseBacklog:   st.MaxParseBacklog,
+		MaxDocumentPages:  st.MaxDocumentPages,
+		EmbedMaxAttempts:  st.EmbedMaxAttempts,
+
+		SearchDefaultTopK: st.SearchDefaultTopK,
+		SearchMaxTopK:     st.SearchMaxTopK,
+		RerankCandidates:  st.RerankCandidates,
 	})
 }
 

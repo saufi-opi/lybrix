@@ -11,9 +11,12 @@
 import "@/lib/oid-client";
 
 import {
+  collectionStatsV1CollectionsCollectionIdStatsGet,
+  deleteDocumentV1DocumentsDocIdDelete,
   getDocumentV1DocumentsDocIdGet,
   getShardsV1DocumentsDocIdShardsGet,
   healthV1SystemHealthGet,
+  listCollectionChunksV1CollectionsCollectionIdChunksGet,
   listCollectionsV1CollectionsGet,
   listDocumentChunksV1DocumentsDocIdChunksGet,
   listDocumentsV1DocumentsGet,
@@ -23,6 +26,7 @@ import {
   pipelineV1SystemPipelineGet,
   queuesV1SystemQueuesGet,
   retryV1DocumentsDocIdRetryPost,
+  systemSettingsV1SystemSettingsGet,
 } from "@/lib/client/sdk.gen";
 import type {
   ChunkList,
@@ -60,6 +64,49 @@ function viaAdminProxy<T>(call: (baseUrl: string) => Promise<T>): Promise<T> {
     return call("");
   }
   return call("/api/admin");
+}
+
+/** Per-collection stats readout shape (openapi CollectionStats). */
+export interface CollectionStats {
+  id: string;
+  name: string;
+  embedding_model: string;
+  doc_count: number;
+  chunk_count: number;
+  byte_size: number;
+  total_shards: number;
+}
+
+/** GET /v1/system/settings readout (openapi SystemSettings). */
+export interface SystemSettings {
+  parent_tokens: number;
+  parent_hard_cap: number;
+  child_tokens: number;
+  child_stride_tokens: number;
+  shard_pages: number;
+  min_yield_chars_per_page: number;
+  shard_lease_seconds: number;
+  max_shard_attempts: number;
+  max_parse_backlog: number;
+  max_document_pages: number;
+  embed_max_attempts: number;
+  search_default_top_k: number;
+  search_max_top_k: number;
+  rerank_candidates: number;
+}
+
+/** One /v1/search hit (search.py mapping). */
+export interface SearchHitRow {
+  chunk_id: string;
+  doc_id: string;
+  doc_title: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  heading_path: string[];
+  text: string;
+  score: number;
+  partial: boolean;
+  reranked?: boolean;
 }
 
 export const apiClient = {
@@ -125,4 +172,63 @@ export const apiClient = {
       body: { scope },
       ...THROW,
     }).then((r) => r.data as { retried: string }),
+  /** Single-doc delete (Phase 1) — cascades shards/chunks; the raw MinIO
+   * object stays for janitor GC. Rides the admin proxy in the browser. */
+  deleteDocument: (id: string) =>
+    viaAdminProxy((baseUrl) =>
+      deleteDocumentV1DocumentsDocIdDelete({ path: { doc_id: id }, ...THROW, baseUrl }),
+    ).then((r) => r.data as { id: string; deleted: boolean }),
+  /** Batch delete / batch re-parse (Phase 1) — fail-closed: the API rejects
+   * the whole batch (422 unknown id / 403 out-of-scope collection) before
+   * applying anything. */
+  batchDocuments: (action: "delete" | "reparse", docIds: string[]) =>
+    viaAdminProxy(async (baseUrl) => {
+      const { documentBatchV1DocumentsBatchPost } = await import("@/lib/client/sdk.gen");
+      return documentBatchV1DocumentsBatchPost({
+        body: { action, doc_ids: docIds },
+        ...THROW,
+        baseUrl,
+      });
+    }).then(
+      (r) =>
+        r.data as {
+          action: string;
+          results: Array<{ doc_id: string; status: string; detail?: string }>;
+        },
+    ),
+  /** Per-collection stats readout (Phase 1: byte_size + total_shards added). */
+  collectionStats: (id: string) =>
+    viaAdminProxy((baseUrl) =>
+      collectionStatsV1CollectionsCollectionIdStatsGet({
+        path: { collection_id: id },
+        ...THROW,
+        baseUrl,
+      }),
+    ).then((r) => r.data as unknown as CollectionStats),
+  /** KB-wide chunk browsing (Phase 1) — optional doc_id narrowing. */
+  collectionChunks: (collectionId: string, docId: string | undefined, page = 1, pageSize = 50) =>
+    viaAdminProxy((baseUrl) =>
+      listCollectionChunksV1CollectionsCollectionIdChunksGet({
+        path: { collection_id: collectionId },
+        query: { page, page_size: pageSize, ...(docId ? { doc_id: docId } : {}) },
+        ...THROW,
+        baseUrl,
+      }),
+    ).then((r) => r.data as unknown as ChunkList),
+  /** Env-configured runtime constants (Phase 1) — the KB Settings tab's
+   * chunking preview data source. */
+  systemSettings: () =>
+    systemSettingsV1SystemSettingsGet(THROW).then((r) => r.data as unknown as SystemSettings),
+  /** Single-collection retrieval test (Phase 3 Tab 3) — pinned POST /v1/search. */
+  search: (body: {
+    query: string;
+    collection?: string;
+    collections?: string[];
+    top_k?: number;
+    rerank?: boolean;
+  }) =>
+    viaAdminProxy(async (baseUrl) => {
+      const { searchV1SearchPost } = await import("@/lib/client/sdk.gen");
+      return searchV1SearchPost({ body, ...THROW, baseUrl });
+    }).then((r) => r.data as unknown as SearchHitRow[]),
 };

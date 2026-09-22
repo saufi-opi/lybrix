@@ -206,6 +206,100 @@ body {
     animation: none;
   }
 }
+
+/* ===== WeKnora revamp: micro-animation keyframes (Phase 6) ==================
+ * All transform/opacity only. Reveal/pulse/underline utilities degrade to
+ * opacity-only (or off) under prefers-reduced-motion; coarse pointers skip
+ * the hover tactility (pointer:fine media gate in .hover-tactile). */
+
+/* sidebar section-label reveal — one-shot on mount (animation 3) */
+@keyframes section-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nav-section-reveal {
+  animation: section-reveal 0.5s ease both;
+}
+
+.nav-section-reveal:nth-child(2) {
+  animation-delay: 0.08s;
+}
+
+/* KB cards / dashboard tiles stagger reveal — CSS-only entry animation
+ * (GSAP ScrollTrigger takes over the scroll-linked version on desktop);
+ * per-card delay rides the data-stagger index via nth-of-style is not
+ * available in CSS, so gsap does the stagger when it's active and this
+ * fallback gives each card the same one-shot reveal */
+@keyframes card-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.kb-card-reveal {
+  animation: card-reveal 0.8s ease both;
+}
+
+/* KB detail tab-underline slide (animation 5) — transform-only underline
+ * that slides between active tabs via CSS transition on ::after scale */
+@keyframes tab-underline-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.tabs-trigger-slide[data-state="active"]::after {
+  transform-origin: left center;
+  animation: tab-underline-in 0.25s ease both;
+}
+
+/* hover tactility on KB cards — scale + press border shift, fine pointers
+ * only (animation 2) */
+@media (pointer: fine) {
+  .hover-tactile {
+    transition:
+      transform 0.3s ease,
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+  .hover-tactile:hover {
+    transform: scale(1.02);
+    border-color: var(--press);
+  }
+  .hover-tactile:active {
+    transform: scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-section-reveal {
+    animation: none;
+  }
+  .tabs-trigger-slide[data-state="active"]::after {
+    animation: none;
+  }
+  .hover-tactile {
+    transition: none;
+  }
+  .hover-tactile:hover {
+    transform: none;
+  }
+}
 /* ---break---
  */
 @theme inline {

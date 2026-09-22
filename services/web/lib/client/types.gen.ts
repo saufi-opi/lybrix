@@ -1010,6 +1010,148 @@ export type ChunkDetail = {
     neighbours?: Array<ChunkOut>;
 };
 
+/**
+ * DocumentBatchRequest
+ */
+export type DocumentBatchRequest = {
+    /**
+     * Action
+     */
+    action: 'delete' | 'reparse';
+    /**
+     * Doc Ids
+     */
+    doc_ids: Array<string>;
+};
+
+/**
+ * DocumentBatchResult
+ */
+export type DocumentBatchResult = {
+    /**
+     * Doc Id
+     */
+    doc_id: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Detail
+     */
+    detail?: string | null;
+};
+
+/**
+ * DocumentBatchResultList
+ */
+export type DocumentBatchResultList = {
+    /**
+     * Action
+     */
+    action: string;
+    /**
+     * Results
+     */
+    results: Array<DocumentBatchResult>;
+};
+
+/**
+ * CollectionStats
+ */
+export type CollectionStats = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Embedding Model
+     */
+    embedding_model: string;
+    /**
+     * Doc Count
+     */
+    doc_count: number;
+    /**
+     * Chunk Count
+     */
+    chunk_count: number;
+    /**
+     * Byte Size
+     */
+    byte_size: number;
+    /**
+     * Total Shards
+     */
+    total_shards: number;
+};
+
+/**
+ * SystemSettings
+ */
+export type SystemSettings = {
+    /**
+     * Parent Tokens
+     */
+    parent_tokens: number;
+    /**
+     * Parent Hard Cap
+     */
+    parent_hard_cap: number;
+    /**
+     * Child Tokens
+     */
+    child_tokens: number;
+    /**
+     * Child Stride Tokens
+     */
+    child_stride_tokens: number;
+    /**
+     * Shard Pages
+     */
+    shard_pages: number;
+    /**
+     * Min Yield Chars Per Page
+     */
+    min_yield_chars_per_page: number;
+    /**
+     * Shard Lease Seconds
+     */
+    shard_lease_seconds: number;
+    /**
+     * Max Shard Attempts
+     */
+    max_shard_attempts: number;
+    /**
+     * Max Parse Backlog
+     */
+    max_parse_backlog: number;
+    /**
+     * Max Document Pages
+     */
+    max_document_pages: number;
+    /**
+     * Embed Max Attempts
+     */
+    embed_max_attempts: number;
+    /**
+     * Search Default Top K
+     */
+    search_default_top_k: number;
+    /**
+     * Search Max Top K
+     */
+    search_max_top_k: number;
+    /**
+     * Rerank Candidates
+     */
+    rerank_candidates: number;
+};
+
 export type PresignV1DocumentsPresignPostData = {
     body: PresignRequest;
     headers?: {
@@ -1122,6 +1264,40 @@ export type ListDocumentsV1DocumentsGetResponses = {
 };
 
 export type ListDocumentsV1DocumentsGetResponse = ListDocumentsV1DocumentsGetResponses[keyof ListDocumentsV1DocumentsGetResponses];
+
+export type DeleteDocumentV1DocumentsDocIdDeleteData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Doc Id
+         */
+        doc_id: string;
+    };
+    query?: never;
+    url: '/v1/documents/{doc_id}';
+};
+
+export type DeleteDocumentV1DocumentsDocIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteDocumentV1DocumentsDocIdDeleteError = DeleteDocumentV1DocumentsDocIdDeleteErrors[keyof DeleteDocumentV1DocumentsDocIdDeleteErrors];
+
+export type DeleteDocumentV1DocumentsDocIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
 
 export type GetDocumentV1DocumentsDocIdGetData = {
     body?: never;
@@ -1287,8 +1463,10 @@ export type CollectionStatsV1CollectionsCollectionIdStatsGetResponses = {
     /**
      * Successful Response
      */
-    200: unknown;
+    200: CollectionStats;
 };
+
+export type CollectionStatsV1CollectionsCollectionIdStatsGetResponse = CollectionStatsV1CollectionsCollectionIdStatsGetResponses[keyof CollectionStatsV1CollectionsCollectionIdStatsGetResponses];
 
 export type SearchV1SearchPostData = {
     body: SearchRequest;
@@ -2159,3 +2337,99 @@ export type ListDocumentChunksV1DocumentsDocIdChunksGetResponses = {
 };
 
 export type ListDocumentChunksV1DocumentsDocIdChunksGetResponse = ListDocumentChunksV1DocumentsDocIdChunksGetResponses[keyof ListDocumentChunksV1DocumentsDocIdChunksGetResponses];
+
+export type DocumentBatchV1DocumentsBatchPostData = {
+    body: DocumentBatchRequest;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/documents/batch';
+};
+
+export type DocumentBatchV1DocumentsBatchPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DocumentBatchV1DocumentsBatchPostError = DocumentBatchV1DocumentsBatchPostErrors[keyof DocumentBatchV1DocumentsBatchPostErrors];
+
+export type DocumentBatchV1DocumentsBatchPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: DocumentBatchResultList;
+};
+
+export type DocumentBatchV1DocumentsBatchPostResponse = DocumentBatchV1DocumentsBatchPostResponses[keyof DocumentBatchV1DocumentsBatchPostResponses];
+
+export type ListCollectionChunksV1CollectionsCollectionIdChunksGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Collection Id
+         */
+        collection_id: string;
+    };
+    query?: {
+        /**
+         * Doc Id
+         */
+        doc_id?: string | null;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/v1/collections/{collection_id}/chunks';
+};
+
+export type ListCollectionChunksV1CollectionsCollectionIdChunksGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListCollectionChunksV1CollectionsCollectionIdChunksGetError = ListCollectionChunksV1CollectionsCollectionIdChunksGetErrors[keyof ListCollectionChunksV1CollectionsCollectionIdChunksGetErrors];
+
+export type ListCollectionChunksV1CollectionsCollectionIdChunksGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ChunkList;
+};
+
+export type ListCollectionChunksV1CollectionsCollectionIdChunksGetResponse = ListCollectionChunksV1CollectionsCollectionIdChunksGetResponses[keyof ListCollectionChunksV1CollectionsCollectionIdChunksGetResponses];
+
+export type SystemSettingsV1SystemSettingsGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/v1/system/settings';
+};
+
+export type SystemSettingsV1SystemSettingsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: SystemSettings;
+};
+
+export type SystemSettingsV1SystemSettingsGetResponse = SystemSettingsV1SystemSettingsGetResponses[keyof SystemSettingsV1SystemSettingsGetResponses];
