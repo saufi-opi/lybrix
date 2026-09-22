@@ -269,6 +269,12 @@ export type SearchRequest = {
      */
     collection?: string | null;
     /**
+     * Collections
+     *
+     * Multi-collection search: grouped by bound embedding model, fused with RRF
+     */
+    collections?: Array<string>;
+    /**
      * Top K
      */
     top_k?: number;
@@ -397,10 +403,6 @@ export type ModelOut = {
      */
     truncate_chars?: number;
     /**
-     * Is Default
-     */
-    is_default?: boolean;
-    /**
      * Created At
      */
     created_at?: string;
@@ -458,10 +460,6 @@ export type ModelCreate = {
      * Truncate Chars
      */
     truncate_chars?: number;
-    /**
-     * Is Default
-     */
-    is_default?: boolean;
 };
 
 /**
@@ -514,10 +512,6 @@ export type ModelUpdate = {
      * Truncate Chars
      */
     truncate_chars?: number | null;
-    /**
-     * Is Default
-     */
-    is_default?: boolean | null;
 };
 
 /**

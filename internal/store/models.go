@@ -124,7 +124,6 @@ type EmbeddingModel struct {
 	BatchSize     int
 	CtxBudget     int
 	TruncateChars int
-	IsDefault     bool
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

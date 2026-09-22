@@ -190,7 +190,9 @@ CREATE TABLE IF NOT EXISTS metrics_rollup (
 
 -- Model registry (2.0.1 — dynamic model providers). One row per usable
 -- embedding model; collections bind to a row at creation. api_key is the
--- openai provider's secret — write-only, never serialized out.
+-- openai provider's secret — write-only, never serialized out. There is no
+-- default model: the registry is a pure catalog of backends, and search
+-- groups collections by their bound model (WeKnora multi-KB architecture).
 CREATE TABLE IF NOT EXISTS embedding_models (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,              -- display name, e.g. "bge-m3 @ ingest host"
@@ -204,16 +206,20 @@ CREATE TABLE IF NOT EXISTS embedding_models (
     batch_size INT NOT NULL DEFAULT 48 CHECK (batch_size >= 1),
     ctx_budget INT NOT NULL DEFAULT 1900 CHECK (ctx_budget >= 1),
     truncate_chars INT NOT NULL DEFAULT 6000 CHECK (truncate_chars >= 0),
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_embedding_models_single_default
-    ON embedding_models ((is_default)) WHERE is_default;
+
+-- Default-model retirement (2.0.2 — WeKnora multi-KB search): the column and
+-- its uniqueness guard are dropped; resolution is the collection's bound row
+-- only. Unbound legacy collections resolve to no model until rebound via
+-- POST /v1/collections/{id}/model.
+ALTER TABLE embedding_models DROP COLUMN IF EXISTS is_default;
+DROP INDEX IF EXISTS uq_embedding_models_single_default;
 
 -- Collections binding. MANDATORY at creation from now on; the column stays
--- nullable so pre-registry collections keep resolving via the seeded
--- default row (read path only — see the resolution rules in PLAN.md §5).
+-- nullable so pre-registry rows still exist, but a NULL binding resolves to
+-- no model (no dense leg for it, no ingest) until rebound.
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFERENCES embedding_models(id);
 -- Legacy embedding_model / vector_dim columns remain (OpenAPI CollectionOut
 -- compat) and are kept in sync FROM the bound row on create/bind.

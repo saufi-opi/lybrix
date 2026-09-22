@@ -9,12 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ErrModelNotFound / ErrModelInUse / ErrModelDefault are the typed registry
-// failures — the API maps them to 404 / 409 / 409.
+// ErrModelNotFound / ErrModelInUse are the typed registry failures — the
+// API maps them to 404 / 409. There is no default model to protect (2.0.2:
+// the registry is a pure catalog of backends), so the old ErrModelDefault
+// is gone alongside the is_default column.
 var (
 	ErrModelNotFound = errors.New("embedding model not found")
 	ErrModelInUse    = errors.New("model bound to collection(s)")
-	ErrModelDefault  = errors.New("cannot delete the default model")
 )
 
 // EmbeddingSeed is the first-boot seed config — the retired EMBED_* env
@@ -31,23 +32,23 @@ type EmbeddingSeed struct {
 // selected raw — has_api_key is computed from IS NOT NULL.
 const modelCols = `id, name, provider, model_id, ingest_url, query_url,
 	(api_key IS NOT NULL) AS has_api_key, vector_dim, query_prefix,
-	batch_size, ctx_budget, truncate_chars, is_default, created_at, updated_at`
+	batch_size, ctx_budget, truncate_chars, created_at, updated_at`
 
 func scanModel(row pgx.Row) (*EmbeddingModel, error) {
 	var m EmbeddingModel
 	err := row.Scan(&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.IngestURL,
 		&m.QueryURL, &m.HasAPIKey, &m.VectorDim, &m.QueryPrefix, &m.BatchSize,
-		&m.CtxBudget, &m.TruncateChars, &m.IsDefault, &m.CreatedAt, &m.UpdatedAt)
+		&m.CtxBudget, &m.TruncateChars, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
 }
 
-// ListEmbeddingModels returns every registered model, default first.
+// ListEmbeddingModels returns every registered model in registration order.
 func (d *DB) ListEmbeddingModels(ctx context.Context) ([]*EmbeddingModel, error) {
 	rows, err := d.Pool.Query(ctx, `SELECT `+modelCols+`
-		FROM embedding_models ORDER BY is_default DESC, created_at`)
+		FROM embedding_models ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -73,34 +74,16 @@ func (d *DB) GetEmbeddingModel(ctx context.Context, id string) (*EmbeddingModel,
 	return m, err
 }
 
-// GetDefaultEmbeddingModel returns the is_default row; nil when the
-// registry is empty.
-func (d *DB) GetDefaultEmbeddingModel(ctx context.Context) (*EmbeddingModel, error) {
-	row := d.Pool.QueryRow(ctx, `SELECT `+modelCols+`
-		FROM embedding_models WHERE is_default ORDER BY created_at LIMIT 1`)
-	m, err := scanModel(row)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	return m, err
-}
-
-// InsertEmbeddingModel registers a model. The previous default (if any) is
-// cleared first when the new row is_default; EnsureDimIndex provisions the
+// InsertEmbeddingModel registers a model; EnsureDimIndex provisions the
 // dimension's HNSW up front.
 func (d *DB) InsertEmbeddingModel(ctx context.Context, m *EmbeddingModel, apiKey *string) (*EmbeddingModel, error) {
-	if m.IsDefault {
-		if _, err := d.Pool.Exec(ctx, `UPDATE embedding_models SET is_default = FALSE WHERE is_default`); err != nil {
-			return nil, err
-		}
-	}
 	row := d.Pool.QueryRow(ctx, `INSERT INTO embedding_models
 		(name, provider, model_id, ingest_url, query_url, api_key, vector_dim,
-		 query_prefix, batch_size, ctx_budget, truncate_chars, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		 query_prefix, batch_size, ctx_budget, truncate_chars)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING `+modelCols,
 		m.Name, m.Provider, m.ModelID, m.IngestURL, m.QueryURL, apiKey,
-		m.VectorDim, m.QueryPrefix, m.BatchSize, m.CtxBudget, m.TruncateChars, m.IsDefault)
+		m.VectorDim, m.QueryPrefix, m.BatchSize, m.CtxBudget, m.TruncateChars)
 	out, err := scanModel(row)
 	if err != nil {
 		return nil, err
@@ -114,21 +97,15 @@ func (d *DB) InsertEmbeddingModel(ctx context.Context, m *EmbeddingModel, apiKey
 // UpdateEmbeddingModel partially updates one model. apiKey == nil means
 // unchanged; dim change provisions the new dimension's HNSW.
 func (d *DB) UpdateEmbeddingModel(ctx context.Context, id string, m *EmbeddingModel, apiKey *string) (*EmbeddingModel, error) {
-	if m.IsDefault {
-		if _, err := d.Pool.Exec(ctx, `UPDATE embedding_models SET is_default = FALSE
-			WHERE is_default AND id <> $1`, id); err != nil {
-			return nil, err
-		}
-	}
 	row := d.Pool.QueryRow(ctx, `UPDATE embedding_models SET
 		name = $2, provider = $3, model_id = $4, ingest_url = $5, query_url = $6,
 		api_key = COALESCE($7, api_key), vector_dim = $8, query_prefix = $9,
 		batch_size = $10, ctx_budget = $11, truncate_chars = $12,
-		is_default = $13, updated_at = NOW()
+		updated_at = NOW()
 		WHERE id = $1
 		RETURNING `+modelCols,
 		id, m.Name, m.Provider, m.ModelID, m.IngestURL, m.QueryURL, apiKey,
-		m.VectorDim, m.QueryPrefix, m.BatchSize, m.CtxBudget, m.TruncateChars, m.IsDefault)
+		m.VectorDim, m.QueryPrefix, m.BatchSize, m.CtxBudget, m.TruncateChars)
 	out, err := scanModel(row)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -142,9 +119,8 @@ func (d *DB) UpdateEmbeddingModel(ctx context.Context, id string, m *EmbeddingMo
 	return out, nil
 }
 
-// DeleteEmbeddingModel removes a model row. It refuses (ErrModelInUse /
-// ErrModelDefault) when collections still reference it or it is the
-// default — the caller maps those to 409.
+// DeleteEmbeddingModel removes a model row. It refuses (ErrModelInUse) when
+// collections still reference it — the caller maps that to 409.
 func (d *DB) DeleteEmbeddingModel(ctx context.Context, id string) error {
 	m, err := d.GetEmbeddingModel(ctx, id)
 	if err != nil {
@@ -152,9 +128,6 @@ func (d *DB) DeleteEmbeddingModel(ctx context.Context, id string) error {
 	}
 	if m == nil {
 		return ErrModelNotFound
-	}
-	if m.IsDefault {
-		return ErrModelDefault
 	}
 	n, err := d.CountCollectionRefs(ctx, id)
 	if err != nil {
@@ -207,14 +180,16 @@ func (d *DB) CountCollectionRefs(ctx context.Context, modelID string) (int, erro
 	return n, err
 }
 
-// SeedDefaultEmbeddingModel seeds exactly one default row from the retired
+// SeedDefaultEmbeddingModel seeds exactly one catalog row from the retired
 // EMBED_* env vars when the registry is empty (idempotent INSERT … WHERE
-// NOT EXISTS), then provisions the seed dimension's HNSW index.
+// NOT EXISTS), then provisions the seed dimension's HNSW index. The name is
+// historical (2.0.1 seed); the row it creates is an ordinary catalog entry
+// with no default status — collections must bind it explicitly.
 func (d *DB) SeedDefaultEmbeddingModel(ctx context.Context, seed EmbeddingSeed) error {
 	if _, err := d.Pool.Exec(ctx, `INSERT INTO embedding_models
 		(name, provider, model_id, ingest_url, query_url, vector_dim,
-		 query_prefix, batch_size, ctx_budget, truncate_chars, is_default)
-		SELECT 'bge-m3 @ seed', $1, $2, $3, $4, $5, 'search_query: ', 48, 1900, 6000, TRUE
+		 query_prefix, batch_size, ctx_budget, truncate_chars)
+		SELECT 'bge-m3 @ seed', $1, $2, $3, $4, $5, 'search_query: ', 48, 1900, 6000
 		WHERE NOT EXISTS (SELECT 1 FROM embedding_models)`,
 		seed.Provider, seed.ModelID, seed.IngestURL, seed.QueryURL, seed.Dim); err != nil {
 		return err
@@ -267,19 +242,51 @@ func (d *DB) EnsureDimIndex(ctx context.Context, dim int) error {
 	return nil
 }
 
-// ResolveCollectionModel is the single resolution rule (PLAN.md §5): the
-// doc's/collection's bound model; legacy NULL binding → the default row;
-// empty registry → nil (caller raises EMBED_DIM_MISMATCH).
+// ResolveCollectionModel resolves the doc's/collection's bound model row —
+// the single resolution rule (PLAN.md §5, default fallback retired in
+// 2.0.2): the collection's bound row, or nil when unbound/unknown (callers
+// raise EMBED_DIM_MISMATCH).
 func (d *DB) ResolveCollectionModel(ctx context.Context, collectionID string) (*EmbeddingModel, error) {
 	row := d.Pool.QueryRow(ctx, `SELECT `+modelCols+`
 		FROM embedding_models m
-		WHERE m.id = COALESCE(
-			(SELECT embedding_model_id FROM collections WHERE id = $1),
-			(SELECT id FROM embedding_models WHERE is_default ORDER BY created_at LIMIT 1))
+		JOIN collections c ON c.embedding_model_id = m.id
+		WHERE c.id = $1
 		LIMIT 1`, collectionID)
 	m, err := scanModel(row)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	return m, err
+}
+
+// GetModelsByCollectionIDs resolves one model per collection id. Collection
+// ids with no row, no binding, or a dangling binding are simply absent from
+// the map — search groups only collections that can contribute a dense leg.
+func (d *DB) GetModelsByCollectionIDs(ctx context.Context, collectionIDs []string) (map[string]*EmbeddingModel, error) {
+	out := map[string]*EmbeddingModel{}
+	if len(collectionIDs) == 0 {
+		return out, nil
+	}
+	rows, err := d.Pool.Query(ctx, `SELECT `+modelCols+`, c.id
+		FROM embedding_models m
+		JOIN collections c ON c.embedding_model_id = m.id
+		WHERE c.id = ANY($1)`, collectionIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		// modelCols + the joining collection id — one scan target list
+		// covering all columns; scanModel can't be reused because it pins
+		// the exact column set.
+		var m EmbeddingModel
+		var cid string
+		if err := rows.Scan(&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.IngestURL,
+			&m.QueryURL, &m.HasAPIKey, &m.VectorDim, &m.QueryPrefix, &m.BatchSize,
+			&m.CtxBudget, &m.TruncateChars, &m.CreatedAt, &m.UpdatedAt, &cid); err != nil {
+			return nil, err
+		}
+		out[cid] = &m
+	}
+	return out, rows.Err()
 }

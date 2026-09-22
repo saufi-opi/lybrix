@@ -2006,6 +2006,14 @@
             ],
             "title": "Collection"
           },
+          "collections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "description": "Multi-collection search: grouped by bound embedding model, fused with RRF"
+          },
           "top_k": {
             "type": "integer",
             "maximum": 25.0,
@@ -2190,10 +2198,6 @@
             "title": "Truncate Chars",
             "default": 6000
           },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2273,11 +2277,6 @@
             "minimum": 0,
             "title": "Truncate Chars",
             "default": 6000
-          },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default",
-            "default": false
           }
         },
         "type": "object",
@@ -2429,19 +2428,6 @@
               }
             ],
             "title": "Truncate Chars"
-          },
-          "is_default": {
-            "anyOf": [
-              {
-                "type": "boolean",
-                "title": "Is Default",
-                "default": false
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Default"
           }
         },
         "type": "object",

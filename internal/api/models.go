@@ -17,7 +17,8 @@ import (
 )
 
 // modelOut mirrors OpenAPI ModelOut. api_key is NEVER in this shape —
-// has_api_key carries its presence; the secret is write-only.
+// has_api_key carries its presence; the secret is write-only. There is no
+// is_default — the registry is a pure catalog (2.0.2).
 type modelOut struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
@@ -31,7 +32,6 @@ type modelOut struct {
 	BatchSize     int       `json:"batch_size"`
 	CtxBudget     int       `json:"ctx_budget"`
 	TruncateChars int       `json:"truncate_chars"`
-	IsDefault     bool      `json:"is_default"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -50,7 +50,6 @@ type modelCreate struct {
 	BatchSize     int     `json:"batch_size"`
 	CtxBudget     int     `json:"ctx_budget"`
 	TruncateChars int     `json:"truncate_chars"`
-	IsDefault     bool    `json:"is_default"`
 }
 
 // modelUpdate mirrors OpenAPI ModelUpdate — partial; api_key null means
@@ -67,7 +66,6 @@ type modelUpdate struct {
 	BatchSize     *int    `json:"batch_size"`
 	CtxBudget     *int    `json:"ctx_budget"`
 	TruncateChars *int    `json:"truncate_chars"`
-	IsDefault     *bool   `json:"is_default"`
 }
 
 // modelTestResult mirrors OpenAPI ModelTestResult.
@@ -84,8 +82,8 @@ func toModelOut(m *store.EmbeddingModel) modelOut {
 		IngestURL: m.IngestURL, QueryURL: m.QueryURL, HasAPIKey: m.HasAPIKey,
 		VectorDim: m.VectorDim, QueryPrefix: m.QueryPrefix,
 		BatchSize: m.BatchSize, CtxBudget: m.CtxBudget,
-		TruncateChars: m.TruncateChars, IsDefault: m.IsDefault,
-		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
+		TruncateChars: m.TruncateChars,
+		CreatedAt:     m.CreatedAt, UpdatedAt: m.UpdatedAt,
 	}
 }
 
@@ -204,7 +202,7 @@ func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {
 		IngestURL: body.IngestURL, QueryURL: body.QueryURL,
 		VectorDim: body.VectorDim, QueryPrefix: body.QueryPrefix,
 		BatchSize: body.BatchSize, CtxBudget: body.CtxBudget,
-		TruncateChars: body.TruncateChars, IsDefault: body.IsDefault,
+		TruncateChars: body.TruncateChars,
 	}
 	var apiKey *string
 	if body.APIKey != nil && *body.APIKey != "" {
@@ -285,8 +283,8 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		IngestURL: existing.IngestURL, QueryURL: existing.QueryURL,
 		VectorDim: existing.VectorDim, QueryPrefix: existing.QueryPrefix,
 		BatchSize: existing.BatchSize, CtxBudget: existing.CtxBudget,
-		TruncateChars: existing.TruncateChars, IsDefault: existing.IsDefault,
-		APIKey: nil, // api_key omitted → unchanged (COALESCE in the store)
+		TruncateChars: existing.TruncateChars,
+		APIKey:        nil, // api_key omitted → unchanged (COALESCE in the store)
 	}
 	if body.Name != nil {
 		b.Name = *body.Name
@@ -318,9 +316,6 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	if body.TruncateChars != nil {
 		b.TruncateChars = *body.TruncateChars
 	}
-	if body.IsDefault != nil {
-		b.IsDefault = *body.IsDefault
-	}
 	if msg := validateModelCreate(b); msg != "" {
 		writeDetail(w, http.StatusUnprocessableEntity, msg)
 		return
@@ -341,7 +336,7 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 		IngestURL: b.IngestURL, QueryURL: b.QueryURL,
 		VectorDim: b.VectorDim, QueryPrefix: b.QueryPrefix,
 		BatchSize: b.BatchSize, CtxBudget: b.CtxBudget,
-		TruncateChars: b.TruncateChars, IsDefault: b.IsDefault,
+		TruncateChars: b.TruncateChars,
 	}
 	var apiKey *string
 	if body.APIKey != nil && *body.APIKey != "" {
@@ -367,8 +362,6 @@ func (s *Server) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, store.ErrModelNotFound):
 		writeDetail(w, http.StatusNotFound, "model not found")
-	case errors.Is(err, store.ErrModelDefault):
-		writeDetail(w, http.StatusConflict, "cannot delete the default model")
 	case errors.Is(err, store.ErrModelInUse):
 		// ErrModelInUse carries the bound-collection count (fmt-wrapped)
 		writeDetail(w, http.StatusConflict, "model bound to collection(s): "+strings.TrimPrefix(err.Error(), store.ErrModelInUse.Error()))

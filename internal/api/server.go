@@ -31,6 +31,16 @@ type Deps struct {
 	// 65k-token ingest batch destroys p99). Returns the vector plus the
 	// resolved model so handlers forward its dim into HybridSearch.
 	EmbedQuery func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error)
+	// HybridSearch is the single-collection RRF fusion — production wiring
+	// is db.HybridSearch; tests stub it.
+	HybridSearch func(ctx context.Context, queryVec []float32, dim int, collection string, collectionScope []string, bm25Query string, limit int) ([]*store.SearchHit, error)
+	// EmbedForModel produces a query-plane embedding with a SPECIFIC
+	// registered model — the multi-collection grouped search calls it once
+	// per unique model (WeKnora multi-KB architecture; no default row).
+	EmbedForModel func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error)
+	// MultiSearch runs the grouped multi-collection fusion — production
+	// wiring is DB.MultiHybridSearch; tests stub it.
+	MultiSearch func(ctx context.Context, query string, collections, scope []string, topK int, embedFn func(*store.EmbeddingModel) ([]float32, error)) ([]*store.SearchHit, error)
 }
 
 // Server is the assembled REST API.

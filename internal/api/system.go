@@ -52,9 +52,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Redis.Ping(r.Context()).Err(); err != nil {
 		redisStatus = "down"
 	}
-	tei := "down"
-	if def, err := s.deps.DB.GetDefaultEmbeddingModel(r.Context()); err == nil && def != nil {
-		tei = checkURL(r.Context(), def.QueryURL)
+	// tei_query reflects the query-plane endpoints of ALL registered models
+	// — the catalog has no default row (2.0.2); degraded when any model's
+	// query endpoint is unreachable.
+	tei := "ok"
+	if models, err := s.deps.DB.ListEmbeddingModels(r.Context()); err != nil || len(models) == 0 {
+		tei = "down"
+	} else {
+		for _, m := range models {
+			if checkURL(r.Context(), m.QueryURL) != "ok" {
+				tei = "down"
+				break
+			}
+		}
 	}
 	status := "ok"
 	if pg != "ok" {
@@ -125,11 +135,29 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	components["embed_backend"] = "down"
 	components["embedding_model"] = ""
 	components["embed_provider"] = ""
-	if def, err := s.deps.DB.GetDefaultEmbeddingModel(ctx); err == nil && def != nil {
-		components["tei_query"] = checkURL(ctx, def.QueryURL)
-		components["embed_backend"] = checkEmbedModel(ctx, def)
-		components["embedding_model"] = def.ModelID
-		components["embed_provider"] = def.Provider
+	// No default row exists (2.0.2): probe EVERY registered model's query
+	// endpoint for tei_query; embed_backend/embedding_model report the first
+	// reachable model (deterministic: registration order) as the exemplar —
+	// with N models the pipeline page shows one catalog, not one default.
+	if models, err := s.deps.DB.ListEmbeddingModels(ctx); err == nil && len(models) > 0 {
+		allQueryOK := true
+		for _, m := range models {
+			if checkURL(ctx, m.QueryURL) != "ok" {
+				allQueryOK = false
+				break
+			}
+		}
+		if allQueryOK {
+			components["tei_query"] = "ok"
+		}
+		for _, m := range models {
+			if checkEmbedModel(ctx, m) == "ok" {
+				components["embed_backend"] = "ok"
+				components["embedding_model"] = m.ModelID
+				components["embed_provider"] = m.Provider
+				break
+			}
+		}
 	}
 
 	// -- queue lanes -------------------------------------------------------

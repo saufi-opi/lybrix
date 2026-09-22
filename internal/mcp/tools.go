@@ -32,17 +32,17 @@ const partialNote = "source document parsed with holes (completeness < 1.0); " +
 // handleSearch is the business logic behind the `search` tool —
 // unit-testable against DB fixtures (search_impl parity).
 func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, error) {
-	query, err := argString(args, "query")
-	if err != nil || strings.TrimSpace(query) == "" {
+	query, qerr := argString(args, "query")
+	if qerr != nil || strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("query is required")
 	}
 	topK := 8
 	if v, ok := argInt(args, "top_k"); ok {
 		topK = v
 	}
-	limit, err := clampTopK(deps.Settings, topK)
-	if err != nil {
-		return nil, err
+	limit, lerr := clampTopK(deps.Settings, topK)
+	if lerr != nil {
+		return nil, lerr
 	}
 	collection := argStringOrEmpty(args, "collection")
 
@@ -59,11 +59,50 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 	if len(key.Collections) > 0 {
 		scope = key.Collections
 	}
-	vec, model, err := deps.EmbedQuery(ctx, collection, query)
-	if err != nil {
-		return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
+	var (
+		hits []*store.SearchHit
+		err  error
+	)
+	if collection != "" {
+		// named collection → the exact single-model path
+		var vec []float32
+		var model *store.EmbeddingModel
+		vec, model, err = deps.EmbedQuery(ctx, collection, query)
+		if err != nil {
+			return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
+		}
+		hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, collection, scope, query, limit)
+	} else {
+		// No collection named → multi-collection grouped search across the
+		// key-accessible corpus: group by bound model, embed once per
+		// unique model, fuse dense+BM25 legs with RRF (WeKnora multi-KB).
+		targets := scope
+		if len(targets) == 0 {
+			cols, cerr := deps.DB.ListCollections(ctx)
+			if cerr != nil {
+				return nil, cerr
+			}
+			targets = make([]string, 0, len(cols))
+			for _, c := range cols {
+				targets = append(targets, c.ID)
+			}
+		}
+		if len(targets) == 1 {
+			// exactly one accessible collection — the single-model path
+			var vec []float32
+			var model *store.EmbeddingModel
+			vec, model, err = deps.EmbedQuery(ctx, targets[0], query)
+			if err != nil {
+				return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
+			}
+			hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, targets[0], scope, query, limit)
+		} else {
+			hits, err = deps.DB.MultiHybridSearch(ctx, query, targets, scope, limit,
+				func(m *store.EmbeddingModel) ([]float32, error) {
+					return deps.EmbedForModel(ctx, m, query)
+				})
+		}
 	}
-	hits, err := deps.DB.HybridSearch(ctx, vec, model.VectorDim, collection, scope, query, limit)
 	if err != nil {
 		return nil, err
 	}

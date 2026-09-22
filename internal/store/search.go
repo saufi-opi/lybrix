@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -130,6 +132,215 @@ func mapDimErr(err error) error {
 		return fmt.Errorf("%w: %s", ErrDimMismatch, err.Error())
 	}
 	return err
+}
+
+// MultiHybridSearch is the WeKnora multi-knowledge-base search (2.0.2): the
+// target collections are grouped by their bound embedding model, the query
+// is embedded once per unique model (embedderFn(model) → vector), each group
+// contributes a dense leg at its own dimension, one BM25 leg spans all
+// target collections, and every leg fuses with weighted RRF into a single
+// unified top-K (dense weight 1.0, BM25 weight 0.3, k=60 — same constants
+// as HybridSearch).
+//
+// collections == empty → all collections bind a model; scope is the key's
+// collection allowlist pushed into every leg's SQL filter (R-14 — never
+// post-filtered). embedderFn is called once per unique model, never per
+// collection.
+func (d *DB) MultiHybridSearch(ctx context.Context, query string, collections []string, scope []string, topK int, embedderFn func(m *EmbeddingModel) ([]float32, error)) ([]*SearchHit, error) {
+	// Resolve the target set: explicit ids, else every collection. The key
+	// scope is an allowlist — intersect BEFORE grouping so out-of-scope
+	// models are never embedded (a down backend the key can't see must not
+	// fail the search) and never reach a dense leg.
+	targets := collections
+	if len(targets) == 0 {
+		rows, err := d.Pool.Query(ctx, `SELECT id FROM collections ORDER BY created_at`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		targets = []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			targets = append(targets, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if len(scope) > 0 {
+		allowed := make(map[string]bool, len(scope))
+		for _, s := range scope {
+			allowed[s] = true
+		}
+		filtered := make([]string, 0, len(targets))
+		for _, t := range targets {
+			if allowed[t] {
+				filtered = append(filtered, t)
+			}
+		}
+		targets = filtered
+	}
+	modelsByCollection, err := d.GetModelsByCollectionIDs(ctx, targets)
+	if err != nil {
+		return nil, err
+	}
+
+	// Group target collections by model id, embedding the query once per
+	// unique model.
+	type group struct {
+		model *EmbeddingModel
+		cols  []string
+		vec   []float32
+	}
+	groups := map[string]*group{}
+	var order []string // deterministic fusion order
+	for _, cid := range targets {
+		m := modelsByCollection[cid]
+		if m == nil {
+			continue // unbound collection: BM25-only participation below
+		}
+		g, ok := groups[m.ID]
+		if !ok {
+			vec, err := embedderFn(m)
+			if err != nil {
+				return nil, err
+			}
+			g = &group{model: m, vec: vec}
+			groups[m.ID] = g
+			order = append(order, m.ID)
+		}
+		g.cols = append(g.cols, cid)
+	}
+
+	// One BM25 leg across ALL target collections (sparse needs no model).
+	bm25Hits, err := d.HybridBMSearch(ctx, targets, scope, query, topK)
+	if err != nil {
+		return nil, err
+	}
+
+	// Accumulate RRF: score = Σ weight / (k + rank), rank 1-based per leg.
+	scores := map[string]float64{}
+	best := map[string]*SearchHit{}
+	addLeg := func(hits []*SearchHit, weight float64) {
+		for i, h := range hits {
+			scores[h.ChunkID] += weight / (RRFK + float64(i+1))
+			if prev, ok := best[h.ChunkID]; !ok || len(h.Text) > len(prev.Text) {
+				best[h.ChunkID] = h
+			}
+		}
+	}
+	addLeg(bm25Hits, BM25Weight)
+	for _, id := range order {
+		g := groups[id]
+		denseHits, err := d.HybridDenseSearch(ctx, g.vec, g.model.VectorDim, g.cols, scope, topK)
+		if err != nil {
+			return nil, err
+		}
+		addLeg(denseHits, DenseWeight)
+	}
+
+	// Rank the fused scores, fill any missing metadata from another leg's
+	// copy of the hit, and truncate to topK.
+	type fused struct {
+		hit   *SearchHit
+		score float64
+	}
+	fusedList := make([]fused, 0, len(scores))
+	for cid, score := range scores {
+		fusedList = append(fusedList, fused{best[cid], score})
+	}
+	sort.Slice(fusedList, func(i, j int) bool { return fusedList[i].score > fusedList[j].score })
+	if len(fusedList) > topK {
+		fusedList = fusedList[:topK]
+	}
+	out := make([]*SearchHit, 0, len(fusedList))
+	for _, f := range fusedList {
+		h := f.hit
+		h.Score = f.score
+		if h.HeadingPath == nil {
+			h.HeadingPath = []string{}
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+// HybridDenseSearch runs one model group's dense leg: cosine top-K over the
+// group's dimension's partial HNSW, filtered to the group's collections and
+// the key scope. Only ids + ranking data are needed — fusion refetches
+// nothing (each hit carries its full row from the SQL select).
+func (d *DB) HybridDenseSearch(ctx context.Context, queryVec []float32, dim int, collections, scope []string, limit int) ([]*SearchHit, error) {
+	if dim < 1 || dim > 2000 {
+		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
+	}
+	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
+SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
+       p.text, c.text, doc.completeness
+FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
+             ROW_NUMBER() OVER (ORDER BY embedding::vector(%[1]d) <=> $3) AS dense_rank
+      FROM chunks
+      WHERE is_parent = FALSE
+        AND vector_dims(embedding) = %[1]d
+        AND collection_id = ANY($1)
+        AND ($2 = '{}'::text[] OR collection_id = ANY($2))
+      ORDER BY embedding::vector(%[1]d) <=> $3
+      LIMIT $4) c
+LEFT JOIN chunks p ON p.id = c.parent_id
+JOIN documents doc ON doc.id = c.doc_id
+ORDER BY c.dense_rank`,
+		dim), pqTextArray(collections), pqTextArray(scope), pgvector.NewVector(queryVec), limit)
+	if err != nil {
+		return nil, mapDimErr(err)
+	}
+	defer rows.Close()
+	return scanHits(rows)
+}
+
+// HybridBMSearch runs the sparse leg across all target collections: BM25
+// top-K over pg_search, filtered by collection set and key scope.
+func (d *DB) HybridBMSearch(ctx context.Context, collections, scope []string, bm25Query string, limit int) ([]*SearchHit, error) {
+	rows, err := d.Pool.Query(ctx, `
+SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
+       p.text, c.text, doc.completeness
+FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
+             ROW_NUMBER() OVER (ORDER BY paradedb.score(id) DESC) AS bm25_rank
+      FROM chunks
+      WHERE id @@@ paradedb.parse($1) AND is_parent = FALSE
+        AND ($2 = '{}'::text[] OR collection_id = ANY($2))
+        AND ($3 = '{}'::text[] OR collection_id = ANY($3))
+      ORDER BY paradedb.score(id) DESC
+      LIMIT $4) c
+LEFT JOIN chunks p ON p.id = c.parent_id
+JOIN documents doc ON doc.id = c.doc_id
+ORDER BY c.bm25_rank`,
+		bm25Query, pqTextArray(collections), pqTextArray(scope), limit)
+	if err != nil {
+		return nil, mapDimErr(err)
+	}
+	defer rows.Close()
+	return scanHits(rows)
+}
+
+// scanHits reads the shared (chunk, parent-text, doc) projection both legs
+// return.
+func scanHits(rows pgx.Rows) ([]*SearchHit, error) {
+	var out []*SearchHit
+	for rows.Next() {
+		var h SearchHit
+		if err := rows.Scan(&h.ChunkID, &h.DocID, &h.DocTitle, &h.PageStart,
+			&h.PageEnd, &h.HeadingPath, &h.ParentText, &h.Text,
+			&h.Completeness); err != nil {
+			return nil, mapDimErr(err)
+		}
+		if h.Completeness != nil && *h.Completeness < 1.0 {
+			h.Partial = true
+		}
+		out = append(out, &h)
+	}
+	return out, rows.Err()
 }
 
 // pqTextArray renders an empty-vs-populated text[] literal for the scope

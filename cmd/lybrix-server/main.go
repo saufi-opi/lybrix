@@ -122,12 +122,17 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 
 	apiDeps := api.Deps{
 		Settings: settings, DB: db, Redis: r, S3: s3c,
-		EmbedQuery: embedQueryFn(db),
+		EmbedQuery:    embedQueryFn(db),
+		HybridSearch:  db.HybridSearch,
+		EmbedForModel: embedForModelAdapter(),
+		MultiSearch:   db.MultiHybridSearch,
 	}
 	apiServer := api.New(apiDeps)
 
 	mcpDeps := mcp.Deps{
-		Settings: settings, DB: db, EmbedQuery: embedQueryFn(db),
+		Settings: settings, DB: db,
+		EmbedQuery:    embedQueryFn(db),
+		EmbedForModel: embedForModelAdapter(),
 	}
 
 	// janitor goroutine rides along in serve mode (2.0 consolidation)

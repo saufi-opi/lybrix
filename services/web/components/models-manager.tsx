@@ -67,7 +67,6 @@ interface FormState {
   batch_size: string;
   ctx_budget: string;
   truncate_chars: string;
-  is_default: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -82,7 +81,6 @@ const EMPTY_FORM: FormState = {
   batch_size: "48",
   ctx_budget: "1900",
   truncate_chars: "6000",
-  is_default: false,
 };
 
 const PROVIDER_CLASS: Record<string, string> = {
@@ -139,7 +137,6 @@ export function ModelsManager() {
       batch_size: String(m.batch_size),
       ctx_budget: String(m.ctx_budget),
       truncate_chars: String(m.truncate_chars),
-      is_default: m.is_default ?? false,
     });
     setFormOpen(true);
   }
@@ -159,7 +156,6 @@ export function ModelsManager() {
         batch_size: Number(form.batch_size),
         ctx_budget: Number(form.ctx_budget),
         truncate_chars: Number(form.truncate_chars),
-        is_default: form.is_default,
       };
       if (form.api_key) payload.api_key = form.api_key;
       if (editing) {
@@ -238,23 +234,6 @@ export function ModelsManager() {
     }
   }
 
-  async function setDefault(m: ModelOut) {
-    setBusy(true);
-    try {
-      await adminFetch<ModelOut>(`/api/admin/v1/models/${m.id}`, {
-        method: "POST",
-        body: JSON.stringify({ is_default: true }),
-      });
-      toast.success(`"${m.name}" is now the default model`);
-      await load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error("set default failed", { description: msg });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   if (models === null) return <p className="text-muted-foreground">Loading models…</p>;
 
   return (
@@ -268,8 +247,9 @@ export function ModelsManager() {
             </Button>
           </div>
           <CardDescription>
-            Every collection binds one of these models at creation. Dimensions are arbitrary
-            (1–2000); a partial HNSW index is provisioned per dimension on first use.
+            Every collection binds one of these models at creation; there is no default — search
+            groups collections by their bound model and fuses results with RRF. Dimensions are
+            arbitrary (1–2000); a partial HNSW index is provisioned per dimension on first use.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -315,11 +295,6 @@ export function ModelsManager() {
                   <TableRow key={m.id}>
                     <TableCell>
                       <span className="font-medium">{m.name}</span>
-                      {m.is_default && (
-                        <Badge className="ml-2 rounded bg-press-wash font-mono text-[0.65rem] text-press-deep">
-                          default
-                        </Badge>
-                      )}
                       {m.has_api_key && (
                         <Badge className="ml-1.5 rounded border-dashed bg-transparent font-mono text-[0.65rem] text-muted-foreground">
                           key
@@ -343,17 +318,6 @@ export function ModelsManager() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex items-center gap-1.5">
-                        {!m.is_default && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="xs"
-                            disabled={busy}
-                            onClick={() => setDefault(m)}
-                          >
-                            Set default
-                          </Button>
-                        )}
                         <Button
                           type="button"
                           variant="outline"
@@ -555,15 +519,6 @@ export function ModelsManager() {
                 />
               </div>
             </div>
-            <Label className="cursor-pointer gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={form.is_default}
-                onChange={(e) => setForm({ ...form, is_default: e.target.checked })}
-                className="size-[15px] cursor-pointer accent-[var(--press)]"
-              />
-              Default model (unbound collections resolve here)
-            </Label>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={testModel} disabled={busy}>
                 Test
@@ -591,7 +546,7 @@ export function ModelsManager() {
             <DialogTitle className="font-serif text-[17px] font-semibold">Delete model</DialogTitle>
             <DialogDescription>
               Delete <strong className="text-ink">{deleting?.name}</strong>? Collections bound to it
-              (or the default) block deletion with 409. This cannot be undone.
+              block deletion with 409. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

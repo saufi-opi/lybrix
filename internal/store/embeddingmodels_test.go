@@ -6,12 +6,13 @@ import (
 )
 
 // modelFixture returns a registry row with knobs overridden per test.
-func modelFixture(name, provider, modelID string, dim int, isDefault bool) *EmbeddingModel {
+// There is no is_default knob — the registry is a pure catalog (2.0.2).
+func modelFixture(name, provider, modelID string, dim int) *EmbeddingModel {
 	return &EmbeddingModel{
 		Name: name, Provider: provider, ModelID: modelID,
 		IngestURL: "http://127.0.0.1:8081", QueryURL: "http://127.0.0.1:8082",
 		VectorDim: dim, QueryPrefix: "search_query: ",
-		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000, IsDefault: isDefault,
+		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000,
 	}
 }
 
@@ -26,14 +27,15 @@ func TestSeedDefaultEmbeddingModelIdempotentWithIndex(t *testing.T) {
 	if err := db.SeedDefaultEmbeddingModel(ctx, seed); err != nil {
 		t.Fatalf("second seed must be a no-op: %v", err)
 	}
-	m, err := db.GetDefaultEmbeddingModel(ctx)
+	models, err := db.ListEmbeddingModels(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m == nil {
-		t.Fatal("seed row missing")
+	if len(models) != 1 {
+		t.Fatalf("seed must create exactly one row, got %d", len(models))
 	}
-	if !m.IsDefault || m.ModelID != "BAAI/bge-m3" || m.VectorDim != 1024 {
+	m := models[0]
+	if m.ModelID != "BAAI/bge-m3" || m.VectorDim != 1024 {
 		t.Fatalf("seed row drift: %+v", m)
 	}
 	if !indexExists(t, db, "ix_chunks_hnsw_1024") {
@@ -53,41 +55,37 @@ func TestSeedRespectsEMBEDDIM768(t *testing.T) {
 	}
 }
 
-func TestDefaultUniqueness(t *testing.T) {
+func TestNoDefaultColumn(t *testing.T) {
+	// 2.0.2: is_default and its uniqueness index must be gone from the
+	// catalog after bootstrap (the migration DO block drops both).
 	db := mustDB(t, "paradedb/paradedb:17")
-	ctx := context.Background()
-	m1, err := db.InsertEmbeddingModel(ctx, modelFixture("a", "tei", "a", 1024, true), nil)
-	if err != nil {
+	var n int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT count(*)
+		FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+		WHERE c.relname = 'embedding_models' AND a.attname = 'is_default'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	m2, err := db.InsertEmbeddingModel(ctx, modelFixture("b", "tei", "b", 768, true), nil)
-	if err != nil {
-		t.Fatal(err)
+	if n != 0 {
+		t.Fatal("is_default column must be dropped")
 	}
-	fresh1, _ := db.GetEmbeddingModel(ctx, m1.ID)
-	fresh2, _ := db.GetEmbeddingModel(ctx, m2.ID)
-	if fresh1.IsDefault || !fresh2.IsDefault {
-		t.Fatalf("default uniqueness broken: a=%v b=%v", fresh1.IsDefault, fresh2.IsDefault)
+	if indexExists(t, db, "uq_embedding_models_single_default") {
+		t.Fatal("uq_embedding_models_single_default must be dropped")
 	}
 }
 
 func TestDeleteModel409s(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
-	def, err := db.InsertEmbeddingModel(ctx, modelFixture("def", "tei", "d", 1024, true), nil)
+	free, err := db.InsertEmbeddingModel(ctx, modelFixture("free", "tei", "d", 1024), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound, err := db.InsertEmbeddingModel(ctx, modelFixture("bound", "tei", "b", 768, false), nil)
+	bound, err := db.InsertEmbeddingModel(ctx, modelFixture("bound", "tei", "b", 768), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.InsertCollection(ctx, "books", "Books", bound); err != nil {
 		t.Fatal(err)
-	}
-	// default → 409
-	if err := db.DeleteEmbeddingModel(ctx, def.ID); err != ErrModelDefault {
-		t.Fatalf("default delete must be ErrModelDefault, got %v", err)
 	}
 	// bound → 409
 	err = db.DeleteEmbeddingModel(ctx, bound.ID)
@@ -97,8 +95,9 @@ func TestDeleteModel409s(t *testing.T) {
 	if err != ErrModelInUse {
 		t.Fatalf("bound model delete must be ErrModelInUse, got %v", err)
 	}
-	// unbind then delete works
-	if _, err := db.BindCollectionModel(ctx, "books", def.ID); err != nil {
+	// unbind then delete works — ANY unbound model is deletable now that
+	// the default row no longer exists
+	if _, err := db.BindCollectionModel(ctx, "books", free.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.DeleteEmbeddingModel(ctx, bound.ID); err != nil {
@@ -106,54 +105,87 @@ func TestDeleteModel409s(t *testing.T) {
 	}
 }
 
-func TestResolveCollectionModelFallbacks(t *testing.T) {
+func TestResolveCollectionModelBindingOnly(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
-	def, err := db.InsertEmbeddingModel(ctx, modelFixture("def", "tei", "d", 1024, true), nil)
+	def, err := db.InsertEmbeddingModel(ctx, modelFixture("def", "tei", "d", 1024), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := db.InsertEmbeddingModel(ctx, modelFixture("other", "ollama", "o", 768, false), nil)
+	other, err := db.InsertEmbeddingModel(ctx, modelFixture("other", "ollama", "o", 768), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.InsertCollection(ctx, "legacy", "Legacy", def); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.InsertCollection(ctx, "bound", "Bound", other); err != nil {
-		t.Fatal(err)
-	}
-	// unbound (nonexistent) collection id → default row
+	// unknown collection → nil (no default fallback anymore)
 	m, err := db.ResolveCollectionModel(ctx, "no-such-collection")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m == nil || m.ID != def.ID {
-		t.Fatalf("unbound fallback must hit the default row: %+v", m)
+	if m != nil {
+		t.Fatalf("unbound collection must resolve nil, got %+v", m)
 	}
-	// legacy NULL binding → default row
-	legacy, err := db.GetCollection(ctx, "legacy")
-	if err != nil {
+	// explicit binding resolves its own row
+	if _, err := db.InsertCollection(ctx, "bound", "Bound", other); err != nil {
 		t.Fatal(err)
 	}
-	if legacy.EmbeddingModelID != nil {
-		t.Fatalf("legacy collection must read nil binding: %+v", legacy.EmbeddingModelID)
-	}
-	m, _ = db.ResolveCollectionModel(ctx, "legacy")
-	if m == nil || m.ID != def.ID {
-		t.Fatalf("legacy fallback must hit the default row: %+v", m)
-	}
-	// explicit binding wins
 	m, _ = db.ResolveCollectionModel(ctx, "bound")
 	if m == nil || m.ID != other.ID || m.VectorDim != 768 {
 		t.Fatalf("bound collection must resolve its own row: %+v", m)
+	}
+	_ = def
+}
+
+func TestGetModelsByCollectionIDs(t *testing.T) {
+	db := mustDB(t, "paradedb/paradedb:17")
+	ctx := context.Background()
+	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("m768", "tei", "seven", 768), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m1024, err := db.InsertEmbeddingModel(ctx, modelFixture("m1024", "tei", "ten", 1024), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertCollection(ctx, "col768", "c7", m768); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertCollection(ctx, "col1024", "c10", m1024); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertCollection(ctx, "orphan", "orph", m1024); err != nil {
+		t.Fatal(err)
+	}
+	// simulate a legacy unbound collection by nulling its binding
+	if _, err := db.Pool.Exec(ctx, `UPDATE collections SET embedding_model_id = NULL WHERE id = 'orphan'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetModelsByCollectionIDs(ctx, []string{"col768", "col1024", "orphan", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("only bound collections resolve: %d", len(got))
+	}
+	if got["col768"].ID != m768.ID || got["col1024"].ID != m1024.ID {
+		t.Fatalf("model resolution drift: %+v", got)
+	}
+	if _, ok := got["orphan"]; ok {
+		t.Fatal("unbound collection must not resolve a model")
+	}
+	if _, ok := got["missing"]; ok {
+		t.Fatal("unknown collection must not resolve a model")
+	}
+	// empty input → empty map, no query
+	empty, err := db.GetModelsByCollectionIDs(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty input drift: %v %v", empty, err)
 	}
 }
 
 func TestBindCollectionModelSyncsLegacyColumns(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
-	m, err := db.InsertEmbeddingModel(ctx, modelFixture("rebind-target", "tei", "rt", 768, false), nil)
+	m, err := db.InsertEmbeddingModel(ctx, modelFixture("rebind-target", "tei", "rt", 768), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +199,7 @@ func TestBindCollectionModelSyncsLegacyColumns(t *testing.T) {
 	if _, err := db.InsertCollection(ctx, "fresh-col", "Fresh", m); err != nil {
 		t.Fatal(err)
 	}
-	m2, err := db.InsertEmbeddingModel(ctx, modelFixture("rebind-target-2", "ollama", "rt2", 512, false), nil)
+	m2, err := db.InsertEmbeddingModel(ctx, modelFixture("rebind-target-2", "ollama", "rt2", 512), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +221,7 @@ func TestBindCollectionModelSyncsLegacyColumns(t *testing.T) {
 func TestApiKeyWriteOnly(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
-	m, err := db.InsertEmbeddingModel(ctx, modelFixture("openai-row", "openai", "text-embedding-3-small", 1536, false), strPtr("sk-secret"))
+	m, err := db.InsertEmbeddingModel(ctx, modelFixture("openai-row", "openai", "text-embedding-3-small", 1536), strPtr("sk-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +233,7 @@ func TestApiKeyWriteOnly(t *testing.T) {
 		t.Fatal("api_key leaked into the struct")
 	}
 	// update with nil api_key keeps it
-	m2, err := db.UpdateEmbeddingModel(ctx, m.ID, modelFixture("openai-row", "openai", "text-embedding-3-small", 1536, false), nil)
+	m2, err := db.UpdateEmbeddingModel(ctx, m.ID, modelFixture("openai-row", "openai", "text-embedding-3-small", 1536), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,11 +263,11 @@ func indexExists(t *testing.T, db *DB, name string) bool {
 func TestMultiDimRoundTrip(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
-	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("m768", "tei", "seven", 768, false), nil)
+	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("m768", "tei", "seven", 768), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m1024, err := db.InsertEmbeddingModel(ctx, modelFixture("m1024", "tei", "ten", 1024, true), nil)
+	m1024, err := db.InsertEmbeddingModel(ctx, modelFixture("m1024", "tei", "ten", 1024), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
