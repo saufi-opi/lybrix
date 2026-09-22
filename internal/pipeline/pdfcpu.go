@@ -46,18 +46,15 @@ func PageCountBytes(b []byte) (int, error) {
 }
 
 func countPDFPageObjects(b []byte) int {
-	// Search for `/Type /Page` or `/Type/Page`
 	n := 0
 	l := len(b)
 	for i := 0; i < l-10; i++ {
 		if b[i] == '/' && b[i+1] == 'T' && b[i+2] == 'y' && b[i+3] == 'p' && b[i+4] == 'e' {
 			j := i + 5
-			for j < l && (b[j] == ' ' || b[j] == '	' || b[j] == '' || b[j] == '
-') {
+			for j < l && (b[j] == ' ' || b[j] == 9 || b[j] == 10 || b[j] == 13) {
 				j++
 			}
 			if j+5 < l && b[j] == '/' && b[j+1] == 'P' && b[j+2] == 'a' && b[j+3] == 'g' && b[j+4] == 'e' {
-				// Ensure it's not `/Pages`
 				if b[j+5] != 's' {
 					n++
 					i = j + 5
