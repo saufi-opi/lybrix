@@ -60,15 +60,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		scope = key.Collections
 	}
 
-	vec, err := s.deps.EmbedQuery(r.Context(),
-		s.deps.Settings.EmbedQueryPrefix+body.Query)
+	vec, model, err := s.deps.EmbedQuery(r.Context(), collection, body.Query)
 	if err != nil {
-		// tei-query unavailable → 503 (search.py parity)
+		// query embed unavailable → 503 (search.py parity)
 		writeDetail(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	bm25 := body.Query
-	hits, err := s.deps.DB.HybridSearch(r.Context(), vec, collection, scope, bm25, topK)
+	hits, err := s.deps.DB.HybridSearch(r.Context(), vec, model.VectorDim, collection, scope, bm25, topK)
 	if err != nil {
 		writeDetail(w, http.StatusInternalServerError, err.Error())
 		return

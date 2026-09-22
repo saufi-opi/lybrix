@@ -6,52 +6,68 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// collectionCols covers the OpenAPI CollectionOut shape: the legacy
+// embedding_model / vector_dim columns (kept in sync FROM the bound
+// registry row) plus the binding id itself.
+const collectionCols = `id, name, embedding_model, vector_dim, embedding_model_id, created_at`
+
+func scanCollection(row pgx.Row) (*Collection, error) {
+	var c Collection
+	if err := row.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim,
+		&c.EmbeddingModelID, &c.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // ListCollections returns all collections.
 func (d *DB) ListCollections(ctx context.Context) ([]*Collection, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT id, name, embedding_model, vector_dim, created_at
-		FROM collections ORDER BY created_at`)
+	rows, err := d.Pool.Query(ctx,
+		`SELECT `+collectionCols+` FROM collections ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*Collection
 	for rows.Next() {
-		var c Collection
-		if err := rows.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim, &c.CreatedAt); err != nil {
+		c, err := scanCollection(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &c)
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
 // GetCollection fetches one collection by id; nil when absent.
 func (d *DB) GetCollection(ctx context.Context, id string) (*Collection, error) {
-	row := d.Pool.QueryRow(ctx, `SELECT id, name, embedding_model, vector_dim, created_at
-		FROM collections WHERE id = $1`, id)
-	var c Collection
-	err := row.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim, &c.CreatedAt)
+	row := d.Pool.QueryRow(ctx,
+		`SELECT `+collectionCols+` FROM collections WHERE id = $1`, id)
+	c, err := scanCollection(row)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
+	return c, err
+}
+
+// InsertCollection creates a collection bound to a registered model
+// (MANDATORY at creation since the registry). The legacy embedding_model /
+// vector_dim columns inherit from the bound row, and the dimension's HNSW
+// index is provisioned on demand.
+func (d *DB) InsertCollection(ctx context.Context, id, name string, m *EmbeddingModel) (*Collection, error) {
+	row := d.Pool.QueryRow(ctx, `INSERT INTO collections
+		(id, name, embedding_model, vector_dim, embedding_model_id)
+		VALUES ($1,$2,$3,$4,$5)
+		RETURNING `+collectionCols,
+		id, name, m.ModelID, m.VectorDim, m.ID)
+	c, err := scanCollection(row)
 	if err != nil {
 		return nil, err
 	}
-	return &c, nil
-}
-
-// InsertCollection creates a collection (embedding model and dimension are
-// set at creation and immutable — §8.1).
-func (d *DB) InsertCollection(ctx context.Context, id, name, embeddingModel string, vectorDim int) (*Collection, error) {
-	row := d.Pool.QueryRow(ctx, `INSERT INTO collections (id, name, embedding_model, vector_dim)
-		VALUES ($1,$2,$3,$4)
-		RETURNING id, name, embedding_model, vector_dim, created_at`,
-		id, name, embeddingModel, vectorDim)
-	var c Collection
-	if err := row.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim, &c.CreatedAt); err != nil {
+	if err := d.EnsureDimIndex(ctx, m.VectorDim); err != nil {
 		return nil, err
 	}
-	return &c, nil
+	return c, nil
 }
 
 // CollectionCounts returns (doc_count, chunk_count) for one collection —

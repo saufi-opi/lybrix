@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -51,7 +52,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Redis.Ping(r.Context()).Err(); err != nil {
 		redisStatus = "down"
 	}
-	tei := checkURL(r.Context(), s.deps.Settings.TEIQueryURL)
+	tei := "down"
+	if def, err := s.deps.DB.GetDefaultEmbeddingModel(r.Context()); err == nil && def != nil {
+		tei = checkURL(r.Context(), def.QueryURL)
+	}
 	status := "ok"
 	if pg != "ok" {
 		status = "degraded"
@@ -105,7 +109,6 @@ type laneOut struct {
 
 func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st := s.deps.Settings
 
 	// -- component health -------------------------------------------------
 	components := map[string]any{
@@ -118,9 +121,16 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Redis.Ping(ctx).Err(); err != nil {
 		components["redis"] = "down"
 	}
-	components["tei_query"] = checkURL(ctx, st.TEIQueryURL)
-	// embed backend: ollama (GPU offload) answers /api/tags, TEI answers /health
-	components["embed_backend"] = checkEmbedBackend(ctx, st.TEIIngestURL, st.EmbedBackend)
+	components["tei_query"] = "down"
+	components["embed_backend"] = "down"
+	components["embedding_model"] = ""
+	components["embed_provider"] = ""
+	if def, err := s.deps.DB.GetDefaultEmbeddingModel(ctx); err == nil && def != nil {
+		components["tei_query"] = checkURL(ctx, def.QueryURL)
+		components["embed_backend"] = checkEmbedModel(ctx, def)
+		components["embedding_model"] = def.ModelID
+		components["embed_provider"] = def.Provider
+	}
 
 	// -- queue lanes -------------------------------------------------------
 	lanes := map[string]any{}
@@ -228,15 +238,27 @@ type queueGroupInfo struct {
 	LastDelivered string
 }
 
-// checkEmbedBackend probes the ingest-plane embed service: ollama answers
-// /api/tags, TEI answers /health.
-func checkEmbedBackend(ctx context.Context, baseURL, backend string) string {
+// checkEmbedModel probes one registered model's ingest-plane endpoint:
+// ollama answers /api/tags, openai answers GET /v1/models, TEI /health.
+func checkEmbedModel(ctx context.Context, m *store.EmbeddingModel) string {
 	client := &http.Client{Timeout: 2 * time.Second}
 	path := "/health"
-	if backend == "ollama" {
+	switch m.Provider {
+	case "ollama":
 		path = "/api/tags"
+	case "openai":
+		path = "/v1/models"
 	}
-	resp, err := client.Get(baseURL + path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(m.IngestURL, "/")+path, nil)
+	if err != nil {
+		return "down"
+	}
+	if m.Provider == "openai" && m.HasAPIKey {
+		// probe without the key: presence is enough for a reachability check;
+		// the key itself must never transit logs/probe paths unnecessarily.
+		_ = m
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "down"
 	}

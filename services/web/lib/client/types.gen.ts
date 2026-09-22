@@ -17,13 +17,9 @@ export type CollectionCreate = {
      */
     name: string;
     /**
-     * Embedding Model
+     * Embedding Model Id
      */
-    embedding_model?: string;
-    /**
-     * Vector Dim
-     */
-    vector_dim?: number;
+    embedding_model_id: string;
 };
 
 /**
@@ -346,6 +342,388 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * ModelOut
+ */
+export type ModelOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Provider
+     */
+    provider: 'tei' | 'ollama' | 'openai';
+    /**
+     * Model Id
+     */
+    model_id: string;
+    /**
+     * Ingest Url
+     */
+    ingest_url: string;
+    /**
+     * Query Url
+     */
+    query_url: string;
+    /**
+     * Has Api Key
+     */
+    has_api_key?: boolean;
+    /**
+     * Vector Dim
+     */
+    vector_dim: number;
+    /**
+     * Query Prefix
+     */
+    query_prefix?: string;
+    /**
+     * Batch Size
+     */
+    batch_size?: number;
+    /**
+     * Ctx Budget
+     */
+    ctx_budget?: number;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number;
+    /**
+     * Is Default
+     */
+    is_default?: boolean;
+    /**
+     * Created At
+     */
+    created_at?: string;
+    /**
+     * Updated At
+     */
+    updated_at?: string;
+};
+
+/**
+ * ModelCreate
+ */
+export type ModelCreate = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Provider
+     */
+    provider: 'tei' | 'ollama' | 'openai';
+    /**
+     * Model Id
+     */
+    model_id: string;
+    /**
+     * Ingest Url
+     */
+    ingest_url: string;
+    /**
+     * Query Url
+     */
+    query_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+    /**
+     * Vector Dim
+     */
+    vector_dim: number;
+    /**
+     * Query Prefix
+     */
+    query_prefix?: string;
+    /**
+     * Batch Size
+     */
+    batch_size?: number;
+    /**
+     * Ctx Budget
+     */
+    ctx_budget?: number;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number;
+    /**
+     * Is Default
+     */
+    is_default?: boolean;
+};
+
+/**
+ * ModelUpdate
+ */
+export type ModelUpdate = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Provider
+     */
+    provider?: 'tei' | 'ollama' | 'openai' | null;
+    /**
+     * Model Id
+     */
+    model_id?: string | null;
+    /**
+     * Ingest Url
+     */
+    ingest_url?: string | null;
+    /**
+     * Query Url
+     */
+    query_url?: string | null;
+    /**
+     * Api Key
+     *
+     * null = unchanged
+     */
+    api_key?: string | null;
+    /**
+     * Vector Dim
+     */
+    vector_dim?: number | null;
+    /**
+     * Query Prefix
+     */
+    query_prefix?: string | null;
+    /**
+     * Batch Size
+     */
+    batch_size?: number | null;
+    /**
+     * Ctx Budget
+     */
+    ctx_budget?: number | null;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number | null;
+    /**
+     * Is Default
+     */
+    is_default?: boolean | null;
+};
+
+/**
+ * ModelTestResult
+ */
+export type ModelTestResult = {
+    /**
+     * Reachable
+     */
+    reachable: boolean;
+    /**
+     * Latency Ms
+     */
+    latency_ms?: number | null;
+    /**
+     * Detail
+     */
+    detail: string;
+    /**
+     * Vector Dim
+     */
+    vector_dim?: number | null;
+};
+
+/**
+ * FetchUrlRequest
+ */
+export type FetchUrlRequest = {
+    /**
+     * Collection Id
+     */
+    collection_id: string;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Title
+     */
+    title?: string | null;
+    /**
+     * Author
+     */
+    author?: string | null;
+    /**
+     * Metadata
+     */
+    metadata?: {
+        [key: string]: unknown;
+    };
+};
+
+/**
+ * OpdsAcqLink
+ */
+export type OpdsAcqLink = {
+    /**
+     * Href
+     */
+    href?: string;
+    /**
+     * Mime Type
+     */
+    mime_type?: string;
+};
+
+/**
+ * OpdsEntry
+ */
+export type OpdsEntry = {
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Authors
+     */
+    authors: Array<string>;
+    /**
+     * Summary
+     */
+    summary?: string;
+    /**
+     * Acquisition
+     */
+    acquisition: Array<OpdsAcqLink>;
+};
+
+/**
+ * OpdsBrowseRequest
+ */
+export type OpdsBrowseRequest = {
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: string;
+    /**
+     * Feed Url
+     */
+    feed_url?: string;
+};
+
+/**
+ * OpdsBrowseResult
+ */
+export type OpdsBrowseResult = {
+    /**
+     * Entries
+     */
+    entries: Array<OpdsEntry>;
+    /**
+     * Next Href
+     */
+    next_href?: string | null;
+};
+
+/**
+ * OpdsEntryRef
+ */
+export type OpdsEntryRef = {
+    /**
+     * Title
+     */
+    title?: string;
+    /**
+     * Href
+     */
+    href?: string;
+    /**
+     * Mime Type
+     */
+    mime_type?: string;
+};
+
+/**
+ * OpdsSyncRequest
+ */
+export type OpdsSyncRequest = {
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Username
+     */
+    username?: string;
+    /**
+     * Password
+     */
+    password?: string;
+    /**
+     * Collection Id
+     */
+    collection_id: string;
+    /**
+     * Selection
+     */
+    selection?: Array<OpdsEntryRef>;
+};
+
+/**
+ * OpdsItemResult
+ */
+export type OpdsItemResult = {
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Status
+     */
+    status: 'accepted' | 'duplicate' | 'rejected';
+    /**
+     * Doc Id
+     */
+    doc_id?: string | null;
+    /**
+     * Detail
+     */
+    detail?: string | null;
+};
+
+/**
+ * OpdsSyncResult
+ */
+export type OpdsSyncResult = {
+    /**
+     * Synced
+     */
+    synced: number;
+    /**
+     * Failed
+     */
+    failed: number;
+    /**
+     * Results
+     */
+    results: Array<OpdsItemResult>;
 };
 
 export type PresignV1DocumentsPresignPostData = {
@@ -914,3 +1292,320 @@ export type GetMetricsV1SystemMetricsGetResponses = {
      */
     200: unknown;
 };
+
+export type ListModelsV1ModelsGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/models';
+};
+
+export type ListModelsV1ModelsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListModelsV1ModelsGetError = ListModelsV1ModelsGetErrors[keyof ListModelsV1ModelsGetErrors];
+
+export type ListModelsV1ModelsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ModelOut;
+};
+
+export type ListModelsV1ModelsGetResponse = ListModelsV1ModelsGetResponses[keyof ListModelsV1ModelsGetResponses];
+
+export type CreateModelV1ModelsPostData = {
+    body: ModelCreate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/models';
+};
+
+export type CreateModelV1ModelsPostErrors = {
+    /**
+     * Duplicate name
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateModelV1ModelsPostError = CreateModelV1ModelsPostErrors[keyof CreateModelV1ModelsPostErrors];
+
+export type CreateModelV1ModelsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: ModelOut;
+};
+
+export type CreateModelV1ModelsPostResponse = CreateModelV1ModelsPostResponses[keyof CreateModelV1ModelsPostResponses];
+
+export type TestModelV1ModelsTestPostData = {
+    body: ModelCreate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/models/test';
+};
+
+export type TestModelV1ModelsTestPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TestModelV1ModelsTestPostError = TestModelV1ModelsTestPostErrors[keyof TestModelV1ModelsTestPostErrors];
+
+export type TestModelV1ModelsTestPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ModelTestResult;
+};
+
+export type TestModelV1ModelsTestPostResponse = TestModelV1ModelsTestPostResponses[keyof TestModelV1ModelsTestPostResponses];
+
+export type DeleteModelV1ModelsModelIdDeleteData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/models/{model_id}';
+};
+
+export type DeleteModelV1ModelsModelIdDeleteErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Bound or default
+     */
+    409: unknown;
+};
+
+export type DeleteModelV1ModelsModelIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteModelV1ModelsModelIdDeleteResponse = DeleteModelV1ModelsModelIdDeleteResponses[keyof DeleteModelV1ModelsModelIdDeleteResponses];
+
+export type UpdateModelV1ModelsModelIdPostData = {
+    body: ModelUpdate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/models/{model_id}';
+};
+
+export type UpdateModelV1ModelsModelIdPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Name clash
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateModelV1ModelsModelIdPostError = UpdateModelV1ModelsModelIdPostErrors[keyof UpdateModelV1ModelsModelIdPostErrors];
+
+export type UpdateModelV1ModelsModelIdPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ModelOut;
+};
+
+export type UpdateModelV1ModelsModelIdPostResponse = UpdateModelV1ModelsModelIdPostResponses[keyof UpdateModelV1ModelsModelIdPostResponses];
+
+export type BindCollectionModelV1CollectionsCollectionIdModelPostData = {
+    body: ModelCreate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/collections/{collection_id}/model';
+};
+
+export type BindCollectionModelV1CollectionsCollectionIdModelPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type BindCollectionModelV1CollectionsCollectionIdModelPostError = BindCollectionModelV1CollectionsCollectionIdModelPostErrors[keyof BindCollectionModelV1CollectionsCollectionIdModelPostErrors];
+
+export type BindCollectionModelV1CollectionsCollectionIdModelPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type FetchUrlV1DocumentsFetchUrlPostData = {
+    body: FetchUrlRequest;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/documents/fetch-url';
+};
+
+export type FetchUrlV1DocumentsFetchUrlPostErrors = {
+    /**
+     * Fetch/verify failure
+     */
+    400: unknown;
+    /**
+     * Duplicate
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Backlog
+     */
+    429: unknown;
+};
+
+export type FetchUrlV1DocumentsFetchUrlPostError = FetchUrlV1DocumentsFetchUrlPostErrors[keyof FetchUrlV1DocumentsFetchUrlPostErrors];
+
+export type FetchUrlV1DocumentsFetchUrlPostResponses = {
+    /**
+     * Accepted
+     */
+    202: unknown;
+};
+
+export type OpdsBrowseV1ConnectorsOpdsBrowsePostData = {
+    body: OpdsBrowseRequest;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/connectors/opds/browse';
+};
+
+export type OpdsBrowseV1ConnectorsOpdsBrowsePostErrors = {
+    /**
+     * Bad credentials or not Atom
+     */
+    400: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OpdsBrowseV1ConnectorsOpdsBrowsePostError = OpdsBrowseV1ConnectorsOpdsBrowsePostErrors[keyof OpdsBrowseV1ConnectorsOpdsBrowsePostErrors];
+
+export type OpdsBrowseV1ConnectorsOpdsBrowsePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: OpdsBrowseResult;
+};
+
+export type OpdsBrowseV1ConnectorsOpdsBrowsePostResponse = OpdsBrowseV1ConnectorsOpdsBrowsePostResponses[keyof OpdsBrowseV1ConnectorsOpdsBrowsePostResponses];
+
+export type OpdsSyncV1ConnectorsOpdsSyncPostData = {
+    body: OpdsSyncRequest;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/connectors/opds/sync';
+};
+
+export type OpdsSyncV1ConnectorsOpdsSyncPostErrors = {
+    /**
+     * Bad credentials
+     */
+    400: unknown;
+    /**
+     * Collection not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type OpdsSyncV1ConnectorsOpdsSyncPostError = OpdsSyncV1ConnectorsOpdsSyncPostErrors[keyof OpdsSyncV1ConnectorsOpdsSyncPostErrors];
+
+export type OpdsSyncV1ConnectorsOpdsSyncPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: OpdsSyncResult;
+};
+
+export type OpdsSyncV1ConnectorsOpdsSyncPostResponse = OpdsSyncV1ConnectorsOpdsSyncPostResponses[keyof OpdsSyncV1ConnectorsOpdsSyncPostResponses];

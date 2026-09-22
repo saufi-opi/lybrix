@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CollectionStatsV1CollectionsCollectionIdStatsGetData, CollectionStatsV1CollectionsCollectionIdStatsGetErrors, CollectionStatsV1CollectionsCollectionIdStatsGetResponses, CommitV1DocumentsDocIdCommitPostData, CommitV1DocumentsDocIdCommitPostErrors, CommitV1DocumentsDocIdCommitPostResponses, CreateCollectionV1CollectionsPostData, CreateCollectionV1CollectionsPostErrors, CreateCollectionV1CollectionsPostResponses, CreateKeyV1KeysPostData, CreateKeyV1KeysPostErrors, CreateKeyV1KeysPostResponses, EventStreamV1EventsStreamGetData, EventStreamV1EventsStreamGetErrors, EventStreamV1EventsStreamGetResponses, GetDocumentV1DocumentsDocIdGetData, GetDocumentV1DocumentsDocIdGetErrors, GetDocumentV1DocumentsDocIdGetResponses, GetMetricsV1SystemMetricsGetData, GetMetricsV1SystemMetricsGetResponses, GetShardsV1DocumentsDocIdShardsGetData, GetShardsV1DocumentsDocIdShardsGetErrors, GetShardsV1DocumentsDocIdShardsGetResponses, HealthV1SystemHealthGetData, HealthV1SystemHealthGetResponses, ListCollectionsV1CollectionsGetData, ListCollectionsV1CollectionsGetResponses, ListDocumentsV1DocumentsGetData, ListDocumentsV1DocumentsGetErrors, ListDocumentsV1DocumentsGetResponses, ListEventsV1EventsGetData, ListEventsV1EventsGetErrors, ListEventsV1EventsGetResponses, ListKeysV1KeysGetData, ListKeysV1KeysGetErrors, ListKeysV1KeysGetResponses, PipelineV1SystemPipelineGetData, PipelineV1SystemPipelineGetResponses, PresignV1DocumentsPresignPostData, PresignV1DocumentsPresignPostErrors, PresignV1DocumentsPresignPostResponses, QueuesV1SystemQueuesGetData, QueuesV1SystemQueuesGetResponses, RetryV1DocumentsDocIdRetryPostData, RetryV1DocumentsDocIdRetryPostErrors, RetryV1DocumentsDocIdRetryPostResponses, RevokeKeyV1KeysKeyIdRevokePostData, RevokeKeyV1KeysKeyIdRevokePostErrors, RevokeKeyV1KeysKeyIdRevokePostResponses, SearchV1SearchPostData, SearchV1SearchPostErrors, SearchV1SearchPostResponses, UsageSummaryV1UsageSummaryGetData, UsageSummaryV1UsageSummaryGetErrors, UsageSummaryV1UsageSummaryGetResponses } from './types.gen';
+import type { BindCollectionModelV1CollectionsCollectionIdModelPostData, BindCollectionModelV1CollectionsCollectionIdModelPostErrors, BindCollectionModelV1CollectionsCollectionIdModelPostResponses, CollectionStatsV1CollectionsCollectionIdStatsGetData, CollectionStatsV1CollectionsCollectionIdStatsGetErrors, CollectionStatsV1CollectionsCollectionIdStatsGetResponses, CommitV1DocumentsDocIdCommitPostData, CommitV1DocumentsDocIdCommitPostErrors, CommitV1DocumentsDocIdCommitPostResponses, CreateCollectionV1CollectionsPostData, CreateCollectionV1CollectionsPostErrors, CreateCollectionV1CollectionsPostResponses, CreateKeyV1KeysPostData, CreateKeyV1KeysPostErrors, CreateKeyV1KeysPostResponses, CreateModelV1ModelsPostData, CreateModelV1ModelsPostErrors, CreateModelV1ModelsPostResponses, DeleteModelV1ModelsModelIdDeleteData, DeleteModelV1ModelsModelIdDeleteErrors, DeleteModelV1ModelsModelIdDeleteResponses, EventStreamV1EventsStreamGetData, EventStreamV1EventsStreamGetErrors, EventStreamV1EventsStreamGetResponses, FetchUrlV1DocumentsFetchUrlPostData, FetchUrlV1DocumentsFetchUrlPostErrors, FetchUrlV1DocumentsFetchUrlPostResponses, GetDocumentV1DocumentsDocIdGetData, GetDocumentV1DocumentsDocIdGetErrors, GetDocumentV1DocumentsDocIdGetResponses, GetMetricsV1SystemMetricsGetData, GetMetricsV1SystemMetricsGetResponses, GetShardsV1DocumentsDocIdShardsGetData, GetShardsV1DocumentsDocIdShardsGetErrors, GetShardsV1DocumentsDocIdShardsGetResponses, HealthV1SystemHealthGetData, HealthV1SystemHealthGetResponses, ListCollectionsV1CollectionsGetData, ListCollectionsV1CollectionsGetResponses, ListDocumentsV1DocumentsGetData, ListDocumentsV1DocumentsGetErrors, ListDocumentsV1DocumentsGetResponses, ListEventsV1EventsGetData, ListEventsV1EventsGetErrors, ListEventsV1EventsGetResponses, ListKeysV1KeysGetData, ListKeysV1KeysGetErrors, ListKeysV1KeysGetResponses, ListModelsV1ModelsGetData, ListModelsV1ModelsGetErrors, ListModelsV1ModelsGetResponses, OpdsBrowseV1ConnectorsOpdsBrowsePostData, OpdsBrowseV1ConnectorsOpdsBrowsePostErrors, OpdsBrowseV1ConnectorsOpdsBrowsePostResponses, OpdsSyncV1ConnectorsOpdsSyncPostData, OpdsSyncV1ConnectorsOpdsSyncPostErrors, OpdsSyncV1ConnectorsOpdsSyncPostResponses, PipelineV1SystemPipelineGetData, PipelineV1SystemPipelineGetResponses, PresignV1DocumentsPresignPostData, PresignV1DocumentsPresignPostErrors, PresignV1DocumentsPresignPostResponses, QueuesV1SystemQueuesGetData, QueuesV1SystemQueuesGetResponses, RetryV1DocumentsDocIdRetryPostData, RetryV1DocumentsDocIdRetryPostErrors, RetryV1DocumentsDocIdRetryPostResponses, RevokeKeyV1KeysKeyIdRevokePostData, RevokeKeyV1KeysKeyIdRevokePostErrors, RevokeKeyV1KeysKeyIdRevokePostResponses, SearchV1SearchPostData, SearchV1SearchPostErrors, SearchV1SearchPostResponses, TestModelV1ModelsTestPostData, TestModelV1ModelsTestPostErrors, TestModelV1ModelsTestPostResponses, UpdateModelV1ModelsModelIdPostData, UpdateModelV1ModelsModelIdPostErrors, UpdateModelV1ModelsModelIdPostResponses, UsageSummaryV1UsageSummaryGetData, UsageSummaryV1UsageSummaryGetErrors, UsageSummaryV1UsageSummaryGetResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -195,3 +195,97 @@ export const pipelineV1SystemPipelineGet = <ThrowOnError extends boolean = false
  * JSON counters, Prometheus-convertible shape (§10.4).
  */
 export const getMetricsV1SystemMetricsGet = <ThrowOnError extends boolean = false>(options?: Options<GetMetricsV1SystemMetricsGetData, ThrowOnError>): RequestResult<GetMetricsV1SystemMetricsGetResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetMetricsV1SystemMetricsGetResponses, unknown, ThrowOnError>({ url: '/v1/system/metrics', ...options });
+
+/**
+ * List Models
+ */
+export const listModelsV1ModelsGet = <ThrowOnError extends boolean = false>(options?: Options<ListModelsV1ModelsGetData, ThrowOnError>): RequestResult<ListModelsV1ModelsGetResponses, ListModelsV1ModelsGetErrors, ThrowOnError> => (options?.client ?? client).get<ListModelsV1ModelsGetResponses, ListModelsV1ModelsGetErrors, ThrowOnError>({ url: '/v1/models', ...options });
+
+/**
+ * Create Model
+ */
+export const createModelV1ModelsPost = <ThrowOnError extends boolean = false>(options: Options<CreateModelV1ModelsPostData, ThrowOnError>): RequestResult<CreateModelV1ModelsPostResponses, CreateModelV1ModelsPostErrors, ThrowOnError> => (options.client ?? client).post<CreateModelV1ModelsPostResponses, CreateModelV1ModelsPostErrors, ThrowOnError>({
+    url: '/v1/models',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Test Model
+ */
+export const testModelV1ModelsTestPost = <ThrowOnError extends boolean = false>(options: Options<TestModelV1ModelsTestPostData, ThrowOnError>): RequestResult<TestModelV1ModelsTestPostResponses, TestModelV1ModelsTestPostErrors, ThrowOnError> => (options.client ?? client).post<TestModelV1ModelsTestPostResponses, TestModelV1ModelsTestPostErrors, ThrowOnError>({
+    url: '/v1/models/test',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete Model
+ */
+export const deleteModelV1ModelsModelIdDelete = <ThrowOnError extends boolean = false>(options?: Options<DeleteModelV1ModelsModelIdDeleteData, ThrowOnError>): RequestResult<DeleteModelV1ModelsModelIdDeleteResponses, DeleteModelV1ModelsModelIdDeleteErrors, ThrowOnError> => (options?.client ?? client).delete<DeleteModelV1ModelsModelIdDeleteResponses, DeleteModelV1ModelsModelIdDeleteErrors, ThrowOnError>({ url: '/v1/models/{model_id}', ...options });
+
+/**
+ * Update Model
+ */
+export const updateModelV1ModelsModelIdPost = <ThrowOnError extends boolean = false>(options: Options<UpdateModelV1ModelsModelIdPostData, ThrowOnError>): RequestResult<UpdateModelV1ModelsModelIdPostResponses, UpdateModelV1ModelsModelIdPostErrors, ThrowOnError> => (options.client ?? client).post<UpdateModelV1ModelsModelIdPostResponses, UpdateModelV1ModelsModelIdPostErrors, ThrowOnError>({
+    url: '/v1/models/{model_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Bind Collection Model
+ */
+export const bindCollectionModelV1CollectionsCollectionIdModelPost = <ThrowOnError extends boolean = false>(options: Options<BindCollectionModelV1CollectionsCollectionIdModelPostData, ThrowOnError>): RequestResult<BindCollectionModelV1CollectionsCollectionIdModelPostResponses, BindCollectionModelV1CollectionsCollectionIdModelPostErrors, ThrowOnError> => (options.client ?? client).post<BindCollectionModelV1CollectionsCollectionIdModelPostResponses, BindCollectionModelV1CollectionsCollectionIdModelPostErrors, ThrowOnError>({
+    url: '/v1/collections/{collection_id}/model',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Fetch Url
+ */
+export const fetchUrlV1DocumentsFetchUrlPost = <ThrowOnError extends boolean = false>(options: Options<FetchUrlV1DocumentsFetchUrlPostData, ThrowOnError>): RequestResult<FetchUrlV1DocumentsFetchUrlPostResponses, FetchUrlV1DocumentsFetchUrlPostErrors, ThrowOnError> => (options.client ?? client).post<FetchUrlV1DocumentsFetchUrlPostResponses, FetchUrlV1DocumentsFetchUrlPostErrors, ThrowOnError>({
+    url: '/v1/documents/fetch-url',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Opds Browse
+ */
+export const opdsBrowseV1ConnectorsOpdsBrowsePost = <ThrowOnError extends boolean = false>(options: Options<OpdsBrowseV1ConnectorsOpdsBrowsePostData, ThrowOnError>): RequestResult<OpdsBrowseV1ConnectorsOpdsBrowsePostResponses, OpdsBrowseV1ConnectorsOpdsBrowsePostErrors, ThrowOnError> => (options.client ?? client).post<OpdsBrowseV1ConnectorsOpdsBrowsePostResponses, OpdsBrowseV1ConnectorsOpdsBrowsePostErrors, ThrowOnError>({
+    url: '/v1/connectors/opds/browse',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Opds Sync
+ */
+export const opdsSyncV1ConnectorsOpdsSyncPost = <ThrowOnError extends boolean = false>(options: Options<OpdsSyncV1ConnectorsOpdsSyncPostData, ThrowOnError>): RequestResult<OpdsSyncV1ConnectorsOpdsSyncPostResponses, OpdsSyncV1ConnectorsOpdsSyncPostErrors, ThrowOnError> => (options.client ?? client).post<OpdsSyncV1ConnectorsOpdsSyncPostResponses, OpdsSyncV1ConnectorsOpdsSyncPostErrors, ThrowOnError>({
+    url: '/v1/connectors/opds/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});

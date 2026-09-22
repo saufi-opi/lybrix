@@ -968,6 +968,515 @@
           }
         }
       }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": ["models"],
+        "summary": "List Models",
+        "operationId": "list_models_v1_models_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["models"],
+        "summary": "Create Model",
+        "operationId": "create_model_v1_models_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate name",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models/test": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Test Model",
+        "operationId": "test_model_v1_models_test_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelTestResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models/{model_id}": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Update Model",
+        "operationId": "update_model_v1_models__model_id__post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {}
+          },
+          "409": {
+            "description": "Name clash",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["models"],
+        "summary": "Delete Model",
+        "operationId": "delete_model_v1_models__model_id__delete",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response",
+            "content": {}
+          },
+          "404": {
+            "description": "Not found",
+            "content": {}
+          },
+          "409": {
+            "description": "Bound or default",
+            "content": {}
+          }
+        }
+      }
+    },
+    "/v1/collections/{collection_id}/model": {
+      "post": {
+        "tags": ["models"],
+        "summary": "Bind Collection Model",
+        "operationId": "bind_collection_model_v1_collections__collection_id__model_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {}
+          },
+          "404": {
+            "description": "Not found",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/fetch-url": {
+      "post": {
+        "tags": ["documents"],
+        "summary": "Fetch Url",
+        "operationId": "fetch_url_v1_documents_fetch_url_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FetchUrlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {}
+          },
+          "400": {
+            "description": "Fetch/verify failure",
+            "content": {}
+          },
+          "409": {
+            "description": "Duplicate",
+            "content": {}
+          },
+          "429": {
+            "description": "Backlog",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/connectors/opds/browse": {
+      "post": {
+        "tags": ["connectors"],
+        "summary": "Opds Browse",
+        "operationId": "opds_browse_v1_connectors_opds_browse_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpdsBrowseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpdsBrowseResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad credentials or not Atom",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/connectors/opds/sync": {
+      "post": {
+        "tags": ["connectors"],
+        "summary": "Opds Sync",
+        "operationId": "opds_sync_v1_connectors_opds_sync_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpdsSyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpdsSyncResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad credentials",
+            "content": {}
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -984,19 +1493,13 @@
             "type": "string",
             "title": "Name"
           },
-          "embedding_model": {
+          "embedding_model_id": {
             "type": "string",
-            "title": "Embedding Model",
-            "default": "BAAI/bge-m3"
-          },
-          "vector_dim": {
-            "type": "integer",
-            "title": "Vector Dim",
-            "default": 1024
+            "title": "Embedding Model Id"
           }
         },
         "type": "object",
-        "required": ["id", "name"],
+        "required": ["id", "name", "embedding_model_id"],
         "title": "CollectionCreate"
       },
       "CommitRequest": {
@@ -1624,6 +2127,604 @@
         "type": "object",
         "required": ["loc", "msg", "type"],
         "title": "ValidationError"
+      },
+      "ModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["tei", "ollama", "openai"],
+            "title": "Provider"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "ingest_url": {
+            "type": "string",
+            "title": "Ingest Url"
+          },
+          "query_url": {
+            "type": "string",
+            "title": "Query Url"
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "title": "Has Api Key"
+          },
+          "vector_dim": {
+            "type": "integer",
+            "maximum": 2000,
+            "minimum": 1,
+            "title": "Vector Dim"
+          },
+          "query_prefix": {
+            "type": "string",
+            "title": "Query Prefix",
+            "default": "search_query: "
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "title": "Batch Size",
+            "default": 48
+          },
+          "ctx_budget": {
+            "type": "integer",
+            "minimum": 1,
+            "title": "Ctx Budget",
+            "default": 1900
+          },
+          "truncate_chars": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Truncate Chars",
+            "default": 6000
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": ["id", "name", "provider", "model_id", "ingest_url", "query_url", "vector_dim"],
+        "title": "ModelOut"
+      },
+      "ModelCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["tei", "ollama", "openai"],
+            "title": "Provider"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "ingest_url": {
+            "type": "string",
+            "title": "Ingest Url"
+          },
+          "query_url": {
+            "type": "string",
+            "title": "Query Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "vector_dim": {
+            "type": "integer",
+            "maximum": 2000,
+            "minimum": 1,
+            "title": "Vector Dim"
+          },
+          "query_prefix": {
+            "type": "string",
+            "title": "Query Prefix",
+            "default": "search_query: "
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "title": "Batch Size",
+            "default": 48
+          },
+          "ctx_budget": {
+            "type": "integer",
+            "minimum": 1,
+            "title": "Ctx Budget",
+            "default": 1900
+          },
+          "truncate_chars": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Truncate Chars",
+            "default": 6000
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": ["name", "provider", "model_id", "ingest_url", "query_url", "vector_dim"],
+        "title": "ModelCreate"
+      },
+      "ModelUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1,
+                "title": "Name"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["tei", "ollama", "openai"],
+                "title": "Provider"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "title": "Model Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "ingest_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "title": "Ingest Url"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingest Url"
+          },
+          "query_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "title": "Query Url"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "null = unchanged"
+          },
+          "vector_dim": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000,
+                "minimum": 1,
+                "title": "Vector Dim"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Dim"
+          },
+          "query_prefix": {
+            "anyOf": [
+              {
+                "type": "string",
+                "title": "Query Prefix",
+                "default": "search_query: "
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Prefix"
+          },
+          "batch_size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "title": "Batch Size",
+                "default": 48
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Size"
+          },
+          "ctx_budget": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "title": "Ctx Budget",
+                "default": 1900
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ctx Budget"
+          },
+          "truncate_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "title": "Truncate Chars",
+                "default": 6000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncate Chars"
+          },
+          "is_default": {
+            "anyOf": [
+              {
+                "type": "boolean",
+                "title": "Is Default",
+                "default": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "title": "ModelUpdate"
+      },
+      "ModelTestResult": {
+        "properties": {
+          "reachable": {
+            "type": "boolean",
+            "title": "Reachable"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "vector_dim": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Dim"
+          }
+        },
+        "type": "object",
+        "required": ["reachable", "detail"],
+        "title": "ModelTestResult"
+      },
+      "FetchUrlRequest": {
+        "properties": {
+          "collection_id": {
+            "type": "string",
+            "title": "Collection Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": ["collection_id", "url"],
+        "title": "FetchUrlRequest"
+      },
+      "OpdsAcqLink": {
+        "properties": {
+          "href": {
+            "type": "string",
+            "title": "Href"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type"
+          }
+        },
+        "type": "object",
+        "title": "OpdsAcqLink"
+      },
+      "OpdsEntry": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "acquisition": {
+            "items": {
+              "$ref": "#/components/schemas/OpdsAcqLink"
+            },
+            "type": "array",
+            "title": "Acquisition"
+          }
+        },
+        "type": "object",
+        "required": ["title", "authors", "acquisition"],
+        "title": "OpdsEntry"
+      },
+      "OpdsBrowseRequest": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "feed_url": {
+            "type": "string",
+            "title": "Feed Url"
+          }
+        },
+        "type": "object",
+        "required": ["url"],
+        "title": "OpdsBrowseRequest"
+      },
+      "OpdsBrowseResult": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/OpdsEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "next_href": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Href"
+          }
+        },
+        "type": "object",
+        "required": ["entries"],
+        "title": "OpdsBrowseResult"
+      },
+      "OpdsEntryRef": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "href": {
+            "type": "string",
+            "title": "Href"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type"
+          }
+        },
+        "type": "object",
+        "title": "OpdsEntryRef"
+      },
+      "OpdsSyncRequest": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "collection_id": {
+            "type": "string",
+            "title": "Collection Id"
+          },
+          "selection": {
+            "items": {
+              "$ref": "#/components/schemas/OpdsEntryRef"
+            },
+            "type": "array",
+            "title": "Selection",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": ["url", "collection_id"],
+        "title": "OpdsSyncRequest"
+      },
+      "OpdsItemResult": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["accepted", "duplicate", "rejected"],
+            "title": "Status"
+          },
+          "doc_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Id"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": ["title", "status"],
+        "title": "OpdsItemResult"
+      },
+      "OpdsSyncResult": {
+        "properties": {
+          "synced": {
+            "type": "integer",
+            "title": "Synced"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/OpdsItemResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": ["synced", "failed", "results"],
+        "title": "OpdsSyncResult"
       }
     }
   }

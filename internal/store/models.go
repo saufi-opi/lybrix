@@ -100,11 +100,33 @@ type Chunk struct {
 
 // Collection mirrors one `collections` row.
 type Collection struct {
-	ID             string
-	Name           string
-	EmbeddingModel string
-	VectorDim      int
-	CreatedAt      time.Time
+	ID               string
+	Name             string
+	EmbeddingModel   string
+	VectorDim        int
+	EmbeddingModelID *string
+	CreatedAt        time.Time
+}
+
+// EmbeddingModel mirrors one `embedding_models` row (the model registry).
+// The api_key column is deliberately NOT a field — it is write-only, never
+// serialized out; HasAPIKey carries its presence for the UI.
+type EmbeddingModel struct {
+	ID            string
+	Name          string
+	Provider      string // tei | ollama | openai
+	ModelID       string
+	IngestURL     string
+	QueryURL      string
+	HasAPIKey     bool
+	VectorDim     int
+	QueryPrefix   string
+	BatchSize     int
+	CtxBudget     int
+	TruncateChars int
+	IsDefault     bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // ApiKey mirrors one `api_keys` row. Validity rule: revoked_at set, or

@@ -119,8 +119,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // Table copied from the 1.0 router decorators (deps.require_scope calls).
 func routeScope(method, path string) string {
 	switch {
-	// documents: presign/commit ingest; list/get/shards search; retry admin
+	// documents: presign/commit/fetch-url ingest; list/get/shards search;
+	// retry admin. NOTE: fetch-url must stay ABOVE the matchDocSub(path, "")
+	// → "search" case, which would otherwise swallow it (the scope-table
+	// test fails loudly if the ordering drifts).
 	case method == http.MethodPost && path == "/v1/documents/presign":
+		return "ingest"
+	case path == "/v1/documents/fetch-url" && method == http.MethodPost:
 		return "ingest"
 	case matchDocSub(path, "/commit"):
 		return "ingest"
@@ -131,11 +136,23 @@ func routeScope(method, path string) string {
 		path == "/v1/documents":
 		return "search"
 
+	// connectors (OPDS) — ingest scope: they ingest books into collections
+	case path == "/v1/connectors/opds/browse" && method == http.MethodPost,
+		path == "/v1/connectors/opds/sync" && method == http.MethodPost:
+		return "ingest"
+
 	// collections
 	case path == "/v1/collections" && method == http.MethodGet,
 		strings.HasPrefix(path, "/v1/collections/") && strings.HasSuffix(path, "/stats"):
 		return "search"
-	case path == "/v1/collections" && method == http.MethodPost:
+	case path == "/v1/collections" && method == http.MethodPost,
+		matchCollectionModelBind(path):
+		return "admin"
+
+	// model registry — admin scope, all six operations
+	case path == "/v1/models" && (method == http.MethodGet || method == http.MethodPost),
+		path == "/v1/models/test" && method == http.MethodPost,
+		matchModelID(path):
 		return "admin"
 
 	// search
@@ -157,6 +174,25 @@ func routeScope(method, path string) string {
 		// proxies upstream hit these; no bearer requirement at this layer.
 		return ""
 	}
+}
+
+// matchModelID matches /v1/models/{id} (update + delete).
+func matchModelID(path string) bool {
+	const prefix = "/v1/models/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	rest := path[len(prefix):]
+	return rest != "" && rest != "test" && !strings.Contains(rest, "/")
+}
+
+// matchCollectionModelBind matches /v1/collections/{id}/model.
+func matchCollectionModelBind(path string) bool {
+	const suffix = "/model"
+	if !strings.HasPrefix(path, "/v1/collections/") {
+		return false
+	}
+	return strings.HasSuffix(path, suffix) && len(path) > len("/v1/collections/")+len(suffix)
 }
 
 // matchDocSub matches /v1/documents/{id}[/suffix] paths.

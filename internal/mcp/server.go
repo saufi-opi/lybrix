@@ -30,8 +30,10 @@ import (
 type Deps struct {
 	Settings *config.Settings
 	DB       *store.DB
-	// EmbedQuery produces a query-plane embedding (tei-query).
-	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
+	// EmbedQuery produces a query-plane embedding for one collection
+	// (resolves the bound model via the registry) and returns the model
+	// alongside the vector so tools forward its dim into HybridSearch.
+	EmbedQuery func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error)
 }
 
 type ctxKey string

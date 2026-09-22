@@ -86,18 +86,24 @@ CREATE TABLE IF NOT EXISTS chunks (
     header_breadcrumb TEXT,
     text TEXT NOT NULL,
     token_count INT NOT NULL,
-    embedding vector(1024),
+    embedding vector,
     embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_chunk_hash UNIQUE (doc_id, chunk_hash)
 );
 
 -- pgvector HNSW for dense retrieval — children only (parents carry no
--- vector). The partial index requires the column to exist at index time,
--- hence the same-file ordering after CREATE EXTENSION vector.
-CREATE INDEX IF NOT EXISTS ix_chunks_hnsw ON chunks
-    USING hnsw (embedding vector_cosine_ops) WHERE is_parent = FALSE;
+-- vector). The column is UNTYPED (no typmod): dimensions are fully
+-- arbitrary per registered model, so there is no bare index here — a bare
+-- HNSW cannot even be built on a dimension-less column. One partial
+-- expression HNSW exists per distinct dimension (seed dim 1024 below;
+-- others created on demand by store.EnsureDimIndex). The predicate stops
+-- maintenance of other-dimension rows; a bare cast would ERROR mismatched
+-- inserts instead of excluding them.
 CREATE INDEX IF NOT EXISTS ix_chunks_doc_seq ON chunks (doc_id, seq);
+CREATE INDEX IF NOT EXISTS ix_chunks_hnsw_1024 ON chunks
+    USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+    WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
 
 -- ParadeDB BM25 (pg_search) index. pg_search is assertion-based: wrap in a
 -- DO block that checks whether the index's backing table already exists, so
@@ -181,3 +187,55 @@ CREATE TABLE IF NOT EXISTS metrics_rollup (
     search_p95_ms INT,
     search_count INT
 );
+
+-- Model registry (2.0.1 — dynamic model providers). One row per usable
+-- embedding model; collections bind to a row at creation. api_key is the
+-- openai provider's secret — write-only, never serialized out.
+CREATE TABLE IF NOT EXISTS embedding_models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL UNIQUE,              -- display name, e.g. "bge-m3 @ ingest host"
+    provider TEXT NOT NULL CHECK (provider IN ('tei','ollama','openai')),
+    model_id TEXT NOT NULL,                 -- 'BAAI/bge-m3', 'nomic-embed-text', 'text-embedding-3-small'
+    ingest_url TEXT NOT NULL,               -- ingest-plane endpoint (two-plane rule)
+    query_url TEXT NOT NULL,                -- query-plane endpoint
+    api_key TEXT,                           -- openai provider only; write-only
+    vector_dim INT NOT NULL CHECK (vector_dim > 0 AND vector_dim <= 2000),  -- 2000 = pgvector HNSW cap
+    query_prefix TEXT NOT NULL DEFAULT 'search_query: ',
+    batch_size INT NOT NULL DEFAULT 48 CHECK (batch_size >= 1),
+    ctx_budget INT NOT NULL DEFAULT 1900 CHECK (ctx_budget >= 1),
+    truncate_chars INT NOT NULL DEFAULT 6000 CHECK (truncate_chars >= 0),
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_embedding_models_single_default
+    ON embedding_models ((is_default)) WHERE is_default;
+
+-- Collections binding. MANDATORY at creation from now on; the column stays
+-- nullable so pre-registry collections keep resolving via the seeded
+-- default row (read path only — see the resolution rules in PLAN.md §5).
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFERENCES embedding_models(id);
+-- Legacy embedding_model / vector_dim columns remain (OpenAPI CollectionOut
+-- compat) and are kept in sync FROM the bound row on create/bind.
+
+-- One-time migration from the typed column: strip the typmod when present,
+-- and drop the legacy bare index whenever it exists — including on
+-- databases whose column already converged but which still carry
+-- ix_chunks_hnsw (it cannot survive the untyped column and would reject
+-- non-1024 inserts on mixed-dim data). Catalog views pg_attribute/pg_class
+-- are used because information_schema.columns lacks atttypid/atttypmod.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        WHERE c.relname = 'chunks' AND a.attname = 'embedding'
+          AND format_type(a.atttypid, a.atttypmod) LIKE 'vector(%)'
+    ) THEN
+        ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
+        DROP INDEX ix_chunks_hnsw;
+    END IF;
+END $$;

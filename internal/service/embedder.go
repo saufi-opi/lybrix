@@ -90,10 +90,23 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 
-	// Embed children against tei-ingest in moderate batches; TEI's dynamic
-	// batcher packs them — our job is a steady stream of moderate requests
-	// (§6.4).
-	tei, err := pipeline.NewTeiClient(s.TEIIngestURL, s.EmbedBackend, s.EmbedModel, s.EmbedTruncateChars)
+	// Embed children against the collection's bound model on the ingest
+	// plane in moderate batches; the backend's dynamic batcher packs them —
+	// our job is a steady stream of moderate requests (§6.4).
+	m, err := deps.DB.ResolveCollectionModel(ctx, docCollection(doc))
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return errors.NewPlatformError(errors.CodeEmbedDimMismatch, "no embedding model configured")
+	}
+	client, err := pipeline.NewEmbedClient(pipeline.EmbedSpec{
+		Provider:      m.Provider,
+		ModelID:       m.ModelID,
+		IngestURL:     m.IngestURL,
+		QueryURL:      m.QueryURL,
+		TruncateChars: m.TruncateChars,
+	}, "ingest")
 	if err != nil {
 		return err
 	}
@@ -108,7 +121,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 			texts = append(texts, c.Text)
 		}
 	}
-	batches, _ := pipeline.PlanBatches(texts, pipeline.WhitespaceTokenizer{}, s.EmbedCtxBudget, s.EmbedBatchSize)
+	batches, _ := pipeline.PlanBatches(texts, pipeline.WhitespaceTokenizer{}, m.CtxBudget, m.BatchSize)
 	chunkIDs := make([]string, len(children))
 	// child ids must line up with texts: ids are deterministic UUIDv5 from
 	// (doc_id, chunk_hash) — the same derivation InsertChunks used, so the
@@ -118,7 +131,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	}
 	embedIdx := 0
 	for _, batch := range batches {
-		vectors, err := tei.Embed(ctx, batch)
+		vectors, err := client.Embed(ctx, batch, m.VectorDim)
 		if err != nil {
 			return capped(ctx, deps, tx, docID, err)
 		}

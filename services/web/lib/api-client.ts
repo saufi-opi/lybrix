@@ -17,11 +17,12 @@ import {
   listCollectionsV1CollectionsGet,
   listDocumentsV1DocumentsGet,
   listEventsV1EventsGet,
+  listModelsV1ModelsGet,
   pipelineV1SystemPipelineGet,
   queuesV1SystemQueuesGet,
   retryV1DocumentsDocIdRetryPost,
 } from "@/lib/client/sdk.gen";
-import type { DocumentOut, ShardOut } from "@/lib/client/types.gen";
+import type { DocumentOut, ModelOut, ShardOut } from "@/lib/client/types.gen";
 
 /** Re-exported so existing imports of the hand-written types keep working. */
 export type DocumentRow = DocumentOut;
@@ -88,6 +89,10 @@ export const apiClient = {
   collections: () =>
     viaAdminProxy((baseUrl) => listCollectionsV1CollectionsGet({ ...THROW, baseUrl })).then(
       (r) => r.data as Record<string, unknown>[],
+    ),
+  models: () =>
+    viaAdminProxy((baseUrl) => listModelsV1ModelsGet({ ...THROW, baseUrl })).then(
+      (r) => r.data as unknown as ModelOut[],
     ),
   retry: (id: string, scope: string) =>
     retryV1DocumentsDocIdRetryPost({

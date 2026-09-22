@@ -17,6 +17,13 @@ type ParseRequest struct {
 	TextOnly bool
 	// NeedOCR (gate verdict): skip the born-digital fast path.
 	NeedOCR bool
+	// SkipAnyDoc forces the docling tier (EPUB: anydoc cannot open a zip
+	// container; docling parses EPUB natively).
+	SkipAnyDoc bool
+	// IsEpub marks the shard as an EPUB-derived single synthetic shard:
+	// docling returns the whole book as one markdown unit and the page
+	// map treats it as page 1..1.
+	IsEpub bool
 }
 
 // ParseResult is one parsed shard.

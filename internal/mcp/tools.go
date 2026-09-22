@@ -59,11 +59,11 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 	if len(key.Collections) > 0 {
 		scope = key.Collections
 	}
-	vec, err := deps.EmbedQuery(ctx, deps.Settings.EmbedQueryPrefix+query)
+	vec, model, err := deps.EmbedQuery(ctx, collection, query)
 	if err != nil {
 		return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
 	}
-	hits, err := deps.DB.HybridSearch(ctx, vec, collection, scope, query, limit)
+	hits, err := deps.DB.HybridSearch(ctx, vec, model.VectorDim, collection, scope, query, limit)
 	if err != nil {
 		return nil, err
 	}

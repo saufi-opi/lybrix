@@ -141,3 +141,21 @@ func (b *byteReader) Read(p []byte) (int, error) {
 	b.i += n
 	return n, nil
 }
+
+// UploadFile streams a local file into an object — manager.Uploader takes
+// the multipart path automatically past its part threshold (>32 MiB), so
+// the API never buffers a whole large body in RAM.
+func (c *Client) UploadFile(ctx context.Context, bucket, key, contentType, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = c.uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        f,
+		ContentType: aws.String(contentType),
+	})
+	return err
+}

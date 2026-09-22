@@ -25,10 +25,12 @@ type Deps struct {
 	DB       *store.DB
 	Redis    redis.Cmdable
 	S3       *objectstore.Client
-	// EmbedQuery produces a query-plane embedding (tei-query, NEVER
-	// tei-ingest — an 8-token query queued behind a 65k-token ingest batch
-	// destroys p99).
-	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
+	// EmbedQuery produces a query-plane embedding for one collection
+	// (resolves the bound model via the registry; the query plane NEVER
+	// shares the ingest embed server — an 8-token query queued behind a
+	// 65k-token ingest batch destroys p99). Returns the vector plus the
+	// resolved model so handlers forward its dim into HybridSearch.
+	EmbedQuery func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error)
 }
 
 // Server is the assembled REST API.
@@ -51,15 +53,28 @@ func (s *Server) Router() http.Handler {
 	// Documents
 	r.Post("/v1/documents/presign", s.handlePresign)
 	r.Post("/v1/documents/{doc_id}/commit", s.handleCommit)
+	r.Post("/v1/documents/fetch-url", s.handleFetchURL)
 	r.Get("/v1/documents", s.handleListDocuments)
 	r.Get("/v1/documents/{doc_id}", s.handleGetDocument)
 	r.Get("/v1/documents/{doc_id}/shards", s.handleGetShards)
 	r.Post("/v1/documents/{doc_id}/retry", s.handleRetry)
 
+	// Connectors (OPDS)
+	r.Post("/v1/connectors/opds/browse", s.handleOpdsBrowse)
+	r.Post("/v1/connectors/opds/sync", s.handleOpdsSync)
+
 	// Collections
 	r.Get("/v1/collections", s.handleListCollections)
 	r.Post("/v1/collections", s.handleCreateCollection)
 	r.Get("/v1/collections/{collection_id}/stats", s.handleCollectionStats)
+	r.Post("/v1/collections/{collection_id}/model", s.handleBindCollectionModel)
+
+	// Model registry
+	r.Get("/v1/models", s.handleListModels)
+	r.Post("/v1/models", s.handleCreateModel)
+	r.Post("/v1/models/test", s.handleTestModel) // dry-run probe, no persist
+	r.Post("/v1/models/{model_id}", s.handleUpdateModel)
+	r.Delete("/v1/models/{model_id}", s.handleDeleteModel)
 
 	// Search
 	r.Post("/v1/search", s.handleSearch)

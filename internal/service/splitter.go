@@ -75,6 +75,15 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
 	}
 
+	// EPUB branch (PLAN.md item 19): pdfcpu would raise PDF_CORRUPT on a
+	// zip container, so the EPUB path skips PageCount/ExtractBookmarks
+	// entirely and emits exactly ONE synthetic shard (idx=0, pages 1-1) —
+	// the parser routes it straight to docling-serve, which parses EPUB
+	// natively, and treats the whole book as one "page".
+	if doc.MimeType != nil && *doc.MimeType == "application/epub+zip" {
+		return splitEpubSingleShard(ctx, deps, tx, doc, tmpDir)
+	}
+
 	pageCount, err := pipeline.PageCount(localPath)
 	if err != nil {
 		if code := pipeline.ClassifyPDFError(err); code == "PDF_ENCRYPTED" {
@@ -118,6 +127,47 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		}
 	}
 	slog.Info("split complete", "doc", docID, "pages", pageCount, "shards", totalShards)
+	return nil
+}
+
+// splitEpubSingleShard is the EPUB splitter tail: advance UPLOADED →
+// PARSING, write one synthetic shard (idx=0, page_start=1, page_end=1),
+// enqueue its ParseJob — identical to the PDF path's tail but with the
+// pdfcpu/bookmark steps skipped.
+func splitEpubSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Document, tmpDir string) error {
+	docID := doc.ID
+	// Idempotency mirrors the PDF path's GetShard probe above.
+	already, err := deps.DB.GetShard(ctx, docID, 0)
+	if err != nil {
+		return err
+	}
+	if already != nil {
+		if doc.State == store.StateUploaded {
+			return deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil)
+		}
+		return nil
+	}
+	if err := deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil); err != nil {
+		return err
+	}
+	if err := updateSplitMeta(ctx, tx, docID, 1, 1); err != nil {
+		return err
+	}
+	if _, err := deps.DB.InsertShards(ctx, tx, docID, [][2]int{{1, 1}}, 0); err != nil {
+		return err
+	}
+	job := queue.ParseJob{
+		SchemaVersion: queue.SchemaVersion,
+		DocID:         docID,
+		Idx:           0,
+		PageStart:     1,
+		PageEnd:       1,
+		SourceURI:     doc.SourceURI,
+	}
+	if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
+		return err
+	}
+	slog.Info("split complete (epub, single shard)", "doc", docID)
 	return nil
 }
 
