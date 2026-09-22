@@ -18,29 +18,54 @@ import (
 // PDF_ENCRYPTED / PDF_CORRUPT classification lives with the caller via
 // ClassifyPDFError.
 func PageCount(path string) (int, error) {
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
-	conf := model.NewDefaultConfiguration()
-	conf.ValidationMode = model.ValidationRelaxed
-	ctx, err := api.ReadContext(f, conf)
-	if err != nil {
-		return 0, err
-	}
-	return ctx.PageCount, nil
+	return PageCountBytes(b)
 }
 
 // PageCountBytes is PageCount over in-memory bytes (commit verify path).
 func PageCountBytes(b []byte) (int, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
-	ctx, err := api.ReadContext(bytes.NewReader(b), conf)
+	ctx, err := api.ReadAndValidate(bytes.NewReader(b), conf)
+	if err == nil && ctx.PageCount > 0 {
+		return ctx.PageCount, nil
+	}
+	// Fallback for real-world PDFs with damaged/shifted xref tables:
+	// Count /Type /Page (excluding /Pages) objects in PDF byte stream.
+	count := countPDFPageObjects(b)
+	if count > 0 {
+		return count, nil
+	}
 	if err != nil {
 		return 0, err
 	}
-	return ctx.PageCount, nil
+	return 1, nil
+}
+
+func countPDFPageObjects(b []byte) int {
+	// Search for `/Type /Page` or `/Type/Page`
+	n := 0
+	l := len(b)
+	for i := 0; i < l-10; i++ {
+		if b[i] == '/' && b[i+1] == 'T' && b[i+2] == 'y' && b[i+3] == 'p' && b[i+4] == 'e' {
+			j := i + 5
+			for j < l && (b[j] == ' ' || b[j] == '	' || b[j] == '' || b[j] == '
+') {
+				j++
+			}
+			if j+5 < l && b[j] == '/' && b[j+1] == 'P' && b[j+2] == 'a' && b[j+3] == 'g' && b[j+4] == 'e' {
+				// Ensure it's not `/Pages`
+				if b[j+5] != 's' {
+					n++
+					i = j + 5
+				}
+			}
+		}
+	}
+	return n
 }
 
 // PageTextChars returns per-page text-layer character counts for a 1-based
