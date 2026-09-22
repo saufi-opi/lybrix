@@ -34,6 +34,10 @@ const modelCols = `id, name, provider, model_id, ingest_url, query_url,
 	(api_key IS NOT NULL) AS has_api_key, vector_dim, query_prefix,
 	batch_size, ctx_budget, truncate_chars, created_at, updated_at`
 
+const qualifiedModelCols = `m.id, m.name, m.provider, m.model_id, m.ingest_url, m.query_url,
+	(m.api_key IS NOT NULL) AS has_api_key, m.vector_dim, m.query_prefix,
+	m.batch_size, m.ctx_budget, m.truncate_chars, m.created_at, m.updated_at`
+
 func scanModel(row pgx.Row) (*EmbeddingModel, error) {
 	var m EmbeddingModel
 	err := row.Scan(&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.IngestURL,
@@ -247,7 +251,7 @@ func (d *DB) EnsureDimIndex(ctx context.Context, dim int) error {
 // 2.0.2): the collection's bound row, or nil when unbound/unknown (callers
 // raise EMBED_DIM_MISMATCH).
 func (d *DB) ResolveCollectionModel(ctx context.Context, collectionID string) (*EmbeddingModel, error) {
-	row := d.Pool.QueryRow(ctx, `SELECT `+modelCols+`
+	row := d.Pool.QueryRow(ctx, `SELECT `+qualifiedModelCols+`
 		FROM embedding_models m
 		JOIN collections c ON c.embedding_model_id = m.id
 		WHERE c.id = $1
@@ -267,7 +271,7 @@ func (d *DB) GetModelsByCollectionIDs(ctx context.Context, collectionIDs []strin
 	if len(collectionIDs) == 0 {
 		return out, nil
 	}
-	rows, err := d.Pool.Query(ctx, `SELECT `+modelCols+`, c.id
+	rows, err := d.Pool.Query(ctx, `SELECT `+qualifiedModelCols+`, c.id
 		FROM embedding_models m
 		JOIN collections c ON c.embedding_model_id = m.id
 		WHERE c.id = ANY($1)`, collectionIDs)

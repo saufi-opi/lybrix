@@ -44,6 +44,9 @@ type RerankModel struct {
 const rerankModelCols = `id, name, provider, model_id, query_url,
 	(api_key IS NOT NULL) AS has_api_key, truncate_chars, created_at, updated_at`
 
+const qualifiedRerankModelCols = `m.id, m.name, m.provider, m.model_id, m.query_url,
+	(m.api_key IS NOT NULL) AS has_api_key, m.truncate_chars, m.created_at, m.updated_at`
+
 func scanRerankModel(row pgx.Row) (*RerankModel, error) {
 	var m RerankModel
 	err := row.Scan(&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.QueryURL,
@@ -187,7 +190,7 @@ func (d *DB) SeedDefaultRerankModel(ctx context.Context, seed RerankSeed) error 
 // ResolveCollectionReranker resolves the collection's bound reranker row,
 // or nil when unbound/unknown (single-collection search's default source).
 func (d *DB) ResolveCollectionReranker(ctx context.Context, collectionID string) (*RerankModel, error) {
-	row := d.Pool.QueryRow(ctx, `SELECT `+rerankModelCols+`
+	row := d.Pool.QueryRow(ctx, `SELECT `+qualifiedRerankModelCols+`
 		FROM rerank_models m
 		JOIN collections c ON c.rerank_model_id = m.id
 		WHERE c.id = $1
