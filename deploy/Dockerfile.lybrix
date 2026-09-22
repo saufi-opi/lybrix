@@ -4,7 +4,7 @@
 # CGO-free). -tags anydoc links the real Rust lib when
 # third_party/anydoc-go/lib/linux_amd64_gnu/libanydoc_go.a exists (ingest
 # host builds; see third_party/anydoc-go/README.md).
-FROM golang:1.23-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
