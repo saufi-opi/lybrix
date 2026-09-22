@@ -10,35 +10,43 @@ Document ingestion & retrieval platform: self-hosted ingestion of large PDFs (30
 
 Central design constraint driving everything: **a book is never a unit of work — a 16–24 page shard is.** Every scaling, retry, progress, and memory decision follows from that.
 
+## 2.0 — Go rewrite (branch `feat/lybrix-2.0-revamp`)
+
+The 1.0 Python stack (FastAPI api, FastMCP mcp, four-entrypoint workers image, six shared libs, Qdrant) was replaced **in place** by a 100% Go backend per `LYBRIX_2.0_EVOLUTION_PLAN.md` + `PLAN.md`:
+
+- **One binary** (`cmd/lybrix-server`): `serve` (REST :8000 + MCP :8430 + janitor goroutine), `splitter`, `parser`, `embedder`, `janitor`, `keys bootstrap`, `migrate`. Plus `cmd/lybrix-eval` (golden-set harness; same `scripts/eval/datasets/seed.jsonl`, same rank metrics).
+- **ParadeDB replaces Qdrant**: PostgreSQL 17 + pgvector (HNSW, cosine, children only) + pg_search BM25, fused by weighted RRF in native SQL (`internal/store/search.go`; dense 1.0 / bm25 0.3, key-scope filter pushed into BOTH CTEs — never post-filter). `deploy/schema.sql` is embedded in the binary and applied idempotently at boot (advisory-lock guarded); the alembic chain is gone.
+- **Two-tier parsing**: `third_party/anydoc-go` CGO fast path (`-tags anydoc`, `LockOSThread` around every call, shard-level units only) with a clean `!anydoc` stub for CI; `docling-serve` HTTP fallback for scanned shards or yield < 50 chars/page. Retry ladder preserved: attempt 2 quarter-split, 3 single-page, ≥4 text-only.
+- **Hierarchical parent–child chunking** replaces flat 512-token windows: 384-token children (64-token stride) under 2048–4096-token parents, breadcrumb-prefixed at embed time only (stored text and chunk hashes stay stable), per-window page ranges (R-13).
+- **Next.js web console unchanged** — the Go server satisfies the checked-in OpenAPI snapshot at `services/web/openapi.json` (18 paths) and serves it byte-identical at `/openapi.json`. Error envelope is FastAPI-style `{"detail": …}`.
+
 ## Commands
 
 ```bash
-# One-time / after pulling: sync the uv workspace (root is a non-packaged shell;
-# --all-packages is required or workspace members won't be in the venv)
-uv sync --locked --group dev --all-packages
+go build ./...        # or: make build
+make test             # go test ./... (~all packages; store lane is testcontainers and skips without docker)
+make lint             # golangci-lint run (line-length 100)
+make vet              # go vet ./...
 
-make test        # pytest tests/ — root suite only
-uv run pytest services/workers/tests/ -q   # workers suite is NOT in make test
-uv run pytest tests/ services/workers/tests/ -q   # everything (~269 tests)
-uv run pytest tests/test_chunking.py -q    # single file
-uv run pytest tests/test_chunking.py -k name_of_test   # single test
+# eval (golden set, unchanged from 1.0):
+go build -o bin/lybrix-eval ./cmd/lybrix-eval
+LYBRIX_MCP_URL=... LYBRIX_MCP_TOKEN=... bin/lybrix-eval run \
+  --dataset scripts/eval/datasets/seed.jsonl --top-k 8 --label baseline
+bin/lybrix-eval compare scripts/eval/results/baseline-*.json scripts/eval/results/candidate-*.json
 
-make lint        # uvx ruff check . (line-length 100, py312 target)
+# anydoc fast path (ingest host, after scripts/build-anydoc-lib.sh):
+go build -tags anydoc ./cmd/lybrix-server
 
-make up          # docker compose up (both profiles) — first boot runs migrate
-make up-core     # profile core only (postgres/redis/minio/qdrant/api/mcp/web)
-make up-ingest   # parsers run as discrete replicas (worker-parser..worker-parser-4)
-make down-ingest # docker compose down on the ingest profile — stops consumers immediately
-make logs-core / logs-ingest / ps-core / ps-ingest
+make up-core          # paradedb + redis + lybrix-server serve + web
+make up-ingest        # lybrix-splitter/parser×4/embedder/janitor + docling-serve + tei planes
+make down-ingest      # stops consumers immediately
 ```
 
-Python is pinned to 3.12 (`.python-version` + `requires-python = ">=3.12"` in every pyproject) — matching CI and the `python:3.12-slim-bookworm` Dockerfiles. If commands fail with "No such file or directory" after a repo copy/rename (stale `.venv` shebangs), re-run the sync command above.
+Go is pinned to 1.23 (`go.mod`). Config lives in `.env` (copy from `deploy/.env.example`); every value is read by `internal/config` and nothing else touches the environment. Store tests boot `paradedb/paradedb:17` via testcontainers and **skip cleanly when no docker socket exists** — the CI lane is DB-free. Queue tests run on miniredis.
 
-Config lives in `.env` (copy from `.env.example`). Tests are DB-free: fixtures use a `Settings` factory with `_env_file=None` so they never read a developer's `.env` or touch live services.
+Web UI (Next.js 15 App Router + Tailwind v4 + shadcn/ui, Biome lint — theme is "paper & press", dark-only, tokens in `app/globals.css`) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint`, and `npm run generate-client` — regenerate the typed API client (`lib/client/`, generated code, never hand-edit) from `openapi.json` after changing the API contract: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`. Server components call the api directly via `API_URL`; browser calls ride the same-origin rewrite (`next.config.mjs`, baked at build time). Mutating browser calls go through session-gated proxies that hold bearer keys server-side: `/api/admin/*` (admin key) and `/api/playground` (MCP playground → real MCP server via `lib/mcp-proxy.ts`). See `docs/adr/0003-web-stack.md` for why api and web stay separate services.
 
-Web UI (Next.js 15 App Router + Tailwind v4 + shadcn/ui, Biome lint — theme is "paper & press", dark-only, tokens in `app/globals.css`) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint`, and `npm run generate-client` — regenerate the typed API client (`lib/client/`, generated code, never hand-edit) from `openapi.json` (checked-in snapshot of the api's OpenAPI schema) after changing `services/api` routes: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`. Server components call the api directly via `API_URL`; browser calls ride the same-origin rewrite (`next.config.mjs`, baked at build time). Mutating browser calls go through session-gated proxies that hold bearer keys server-side: `/api/admin/*` (admin key) and `/api/playground` (MCP playground → real MCP server via `lib/mcp-proxy.ts`). See `docs/adr/0003-web-stack.md` for why api and web stay separate services.
-
-CI (`.github/workflows/ci.yml`) runs test + ruff + pip-audit + per-service docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
+CI (`.github/workflows/ci.yml`) runs `go test ./...` (non-CGO stub lane), golangci-lint, govulncheck, and per-image docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
 
 ## Architecture
 
@@ -46,31 +54,30 @@ CI (`.github/workflows/ci.yml`) runs test + ruff + pip-audit + per-service docke
 upload → doc.split → doc.parse (×N shards) → doc.embed → ready
 ```
 
-- Each arrow is a **Redis Stream consumer group**; **Postgres is the state of record, Redis is dispatch only.** If Redis is wiped, the janitor re-enqueues everything not in a terminal state. This is what makes the system resumable (crash loses ≤ 1 shard).
-- **Two planes that never share an embedding server:** ingest plane (`worker-*` + `tei-ingest`, throughput-optimised) and query plane (`mcp` + `tei-query`, latency-optimised). TEI batches by total token count, so a shared TEI container lets a 65k-token ingest batch destroy query p99 — never collapse them into one.
-- Retry/ack semantics live in **exactly one place**: `services/workers/src/workers/runner.py`. Every worker uses this generic consumer loop. Handlers raise `PlatformError` (taxonomy in `libs/core/src/core/errors.py`); retryability comes from the error class, never string matching. A failing job is never ACKed or retried in the loop — it stays in the Redis PEL, and the janitor reclaim enforces the delivery cap (quarantine → DLQ events row → XACK/XDEL). The PEL's `times_delivered` is the single attempt counter.
+- Each arrow is a **Redis Stream consumer group** (`rag-workers`); **ParadeDB/Postgres is the state of record, Redis is dispatch only.** If Redis is wiped, the janitor re-enqueues everything not in a terminal state. This is what makes the system resumable (crash loses ≤ 1 shard).
+- **Two planes that never share an embedding server:** ingest plane (`lybrix-*` workers + `tei-ingest`, throughput-optimised) and query plane (MCP tools + `tei-query`, latency-optimised). TEI batches by total token count, so a shared TEI container lets a 65k-token ingest batch destroy query p99 — never collapse them into one.
+- Retry/ack semantics live in **exactly one place**: `internal/worker/runner.go`. Every worker uses this generic consumer loop. Handlers raise taxonomy errors (`internal/errors`); retryability comes from the error table, never string matching. A failing job is never ACKed or retried in the loop — it stays in the Redis PEL, and the janitor's XAUTOCLAIM reclaim enforces the delivery cap (`max(5, max_shard_attempts+1)`, quarantine → DLQ events row → XACK/XDEL). The PEL's `times_delivered` is the single attempt counter.
+- **Janitor** (`internal/worker/janitor.go`): 7-step pass — lease reaper, escalate ≥max attempts, split requeue with pending-doc dedup (no blind re-add on scan failure), XAUTOCLAIM reclaim + quarantine, settled-book embed rescue, stuck-doc warning, minute-bucket metrics rollup (`metrics_rollup`, one row per minute bucket windowed over `shards.done_at`).
 
 ### Repo layout
 
 ```
-libs/       shared, service-agnostic packages (uv workspace members):
-            core (config/db/queue/streams/keys/events/observability),
-            parsing (splitter/stitch/converter/ocr_gate/memory),
-            chunking, embedding, retrieval (qdrant/bm25/rerank/search)
-services/   api (FastAPI control plane), workers (ONE image, four entrypoints:
-            splitter/parser/embedder/janitor via python -m workers.<name>),
-            mcp (six tools, FastMCP streamable HTTP at :8430/mcp),
-            web (Next.js admin UI + MCP Playground)
-migrations/ alembic
-deploy/     docker-compose base + dev/gpu overlays, Caddy, MinIO init
-scripts/    backfill, reembed, reindex, ops_backfill_sparse, eval harness
-            (scripts/eval — golden-set retrieval eval against the live MCP
-            endpoint; must run from repo root; see scripts/eval/README.md)
-docs/       prd.md (source of truth), BACKLOG.md (incident ledger), adr/
+cmd/             lybrix-server (serve/splitter/parser/embedder/janitor/keys/migrate),
+                 lybrix-eval (run/compare over the golden set)
+internal/        config, errors, logging, queue (Redis Streams), objectstore (MinIO),
+                 store (pgx pool + schema + queries + RRF search), api (chi REST),
+                 mcp (mcp-go, six tools), pipeline (splitter/gate/anydoc/docling/
+                 chunker/stitch/tei/embedder), service (worker handlers),
+                 worker (runner + janitor)
+third_party/     anydoc-go — extern-C binding to the Firecrawl anydoc Rust crate
+                 (staticlib via scripts/build-anydoc-lib.sh; stub build for CI)
+deploy/          docker-compose (paradedb/redis/lybrix-server/web + ingest plane),
+                 schema.sql, Dockerfile.lybrix, .env.example
+scripts/         build-anydoc-lib.sh, eval/ (seed.jsonl + results)
+services/web/    Next.js admin UI + MCP Playground (unchanged from 1.0)
+docs/            prd.md (source of truth), BACKLOG.md (incident ledger), adr/
 ```
-
-Workers deploy as one image with four commands (`python -m workers.splitter|parser|embedder|janitor`); adding a fifth worker means adding a module, not an image.
 
 ### Status / milestone awareness
 
-Per PRD §15: M1 spine, the M2 durability work (reaper, leases, DLQ quarantine, PARSER_RECYCLE_AFTER), the phase-2 rerank stage (`RERANK_ENABLED` gate, `services/mcp/src/mcp_server/server.py`), retry-ladder sub-sharding (parser.py: attempt 2 quarter-splits, 3 single-pages, ≥4 text-only), and the janitor's metrics-rollup writer (`write_metrics_rollup` in services/workers/src/workers/janitor.py, one row per minute bucket windowed over `shards.done_at`, migration 0004) are all implemented. Still stubbed: the integration testcontainers lane (CI runs only the DB-free suites). The SSE event stream (`/v1/events/stream`, events.py) is implemented — check code + `docs/BACKLOG.md` before assuming a feature is real or missing. Parser memory is bounded by sharding **plus** `PARSER_RECYCLE_AFTER` (clean process exit on a job boundary so docker's restart policy revives it with fresh memory).
+2.0 implementation status: the full Go rewrite is in place — REST API (18 paths, OpenAPI golden-tested), MCP server (6 tools, bearer auth, per-method usage rows), splitter/parser (two-tier + retry ladder + PDF cache)/embedder (hierarchical chunking + TEI batches), runner + janitor (7 steps incl. DLQ quarantine and metrics rollup), ParadeDB schema with HNSW + pg_search BM25, and the Go eval harness. The anydoc `-tags anydoc` lane compiles; linking it requires the Rust static archive built on the ingest host. Remaining known gaps: the testcontainers store lane requires a docker socket (skips elsewhere); live E2E + resilience drills (kill-parser, Redis wipe, poison-job → DLQ) run per PLAN.md §4.3 after `make up-core && make up-ingest`. Check code + `docs/BACKLOG.md` before assuming a feature is real or missing.

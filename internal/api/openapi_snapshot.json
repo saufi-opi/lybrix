@@ -1,0 +1,1630 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "lybrix control plane",
+    "description": "Document Ingestion & Retrieval Platform \u2014 PRD docs/prd.md",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/documents/presign": {
+      "post": {
+        "tags": ["documents"],
+        "summary": "Presign",
+        "description": "Step 1: client asks for a presigned URL, then PUTs bytes to MinIO.",
+        "operationId": "presign_v1_documents_presign_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/{doc_id}/commit": {
+      "post": {
+        "tags": ["documents"],
+        "summary": "Commit",
+        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (\u00a76.1 backpressure).",
+        "operationId": "commit_v1_documents__doc_id__commit_post",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents": {
+      "get": {
+        "tags": ["documents"],
+        "summary": "List Documents",
+        "operationId": "list_documents_v1_documents_get",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/DocState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentOut"
+                  },
+                  "title": "Response List Documents V1 Documents Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/{doc_id}": {
+      "get": {
+        "tags": ["documents"],
+        "summary": "Get Document",
+        "operationId": "get_document_v1_documents__doc_id__get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/{doc_id}/shards": {
+      "get": {
+        "tags": ["documents"],
+        "summary": "Get Shards",
+        "description": "Shard rows for the admin UI's shard grid (\u00a78.1).",
+        "operationId": "get_shards_v1_documents__doc_id__shards_get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ShardOut"
+                  },
+                  "title": "Response Get Shards V1 Documents  Doc Id  Shards Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/{doc_id}/retry": {
+      "post": {
+        "tags": ["documents"],
+        "summary": "Retry",
+        "description": "Three retry scopes cost very different amounts (\u00a78.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
+        "operationId": "retry_v1_documents__doc_id__retry_post",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "List Collections",
+        "operationId": "list_collections_v1_collections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["collections"],
+        "summary": "Create Collection",
+        "operationId": "create_collection_v1_collections_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{collection_id}/stats": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "Collection Stats",
+        "description": "Per-collection: doc count, chunk count (\u00a78.1 Collections).",
+        "operationId": "collection_stats_v1_collections__collection_id__stats_get",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Collection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/search": {
+      "post": {
+        "tags": ["search"],
+        "summary": "Search",
+        "operationId": "search_v1_search_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/keys": {
+      "post": {
+        "tags": ["keys"],
+        "summary": "Create Key",
+        "operationId": "create_key_v1_keys_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["keys"],
+        "summary": "List Keys",
+        "operationId": "list_keys_v1_keys_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KeyOut"
+                  },
+                  "title": "Response List Keys V1 Keys Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/keys/{key_id}/revoke": {
+      "post": {
+        "tags": ["keys"],
+        "summary": "Revoke Key",
+        "operationId": "revoke_key_v1_keys__key_id__revoke_post",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/usage/summary": {
+      "get": {
+        "tags": ["usage"],
+        "summary": "Usage Summary",
+        "description": "{period, total, by_key: [{key_id, name, calls, last_used_at}]}, calls desc.",
+        "operationId": "usage_summary_v1_usage_summary_get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": ["today", "24h", "7d", "30d"],
+              "type": "string",
+              "default": "24h",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "tags": ["events"],
+        "summary": "List Events",
+        "operationId": "list_events_v1_events_get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/events/stream": {
+      "get": {
+        "tags": ["events"],
+        "summary": "Event Stream",
+        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5\u201350 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
+        "operationId": "event_stream_v1_events_stream_get",
+        "parameters": [
+          {
+            "name": "poll_s",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 2.0,
+              "title": "Poll S"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/system/health": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Health",
+        "operationId": "health_v1_system_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/system/queues": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Queues",
+        "description": "Depth + consumer lag per stream (PRD \u00a710.1).\n\nundelivered comes from streams.undelivered_count() \u2014 NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
+        "operationId": "queues_v1_system_queues_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/system/pipeline": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Pipeline",
+        "description": "Aggregate snapshot for the pipeline live view (web /pipeline page).\n\nOne call answers: is every component up, how deep is each queue lane,\nwho is holding in-flight work, and how fast are shards settling.",
+        "operationId": "pipeline_v1_system_pipeline_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/system/metrics": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Get Metrics",
+        "description": "JSON counters, Prometheus-convertible shape (\u00a710.4).",
+        "operationId": "get_metrics_v1_system_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CollectionCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "embedding_model": {
+            "type": "string",
+            "title": "Embedding Model",
+            "default": "BAAI/bge-m3"
+          },
+          "vector_dim": {
+            "type": "integer",
+            "title": "Vector Dim",
+            "default": 1024
+          }
+        },
+        "type": "object",
+        "required": ["id", "name"],
+        "title": "CollectionCreate"
+      },
+      "CommitRequest": {
+        "properties": {
+          "collection_id": {
+            "type": "string",
+            "title": "Collection Id"
+          },
+          "content_sha256": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Content Sha256"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": ["collection_id", "content_sha256"],
+        "title": "CommitRequest"
+      },
+      "DocState": {
+        "type": "string",
+        "enum": [
+          "uploaded",
+          "splitting",
+          "parsing",
+          "embedding",
+          "indexing",
+          "ready",
+          "failed",
+          "partial",
+          "archived"
+        ],
+        "title": "DocState"
+      },
+      "DocumentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "byte_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byte Size"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DocState"
+          },
+          "total_shards": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Shards"
+          },
+          "shards_done": {
+            "type": "integer",
+            "title": "Shards Done"
+          },
+          "shards_failed": {
+            "type": "integer",
+            "title": "Shards Failed"
+          },
+          "completeness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completeness"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "collection_id",
+          "title",
+          "author",
+          "page_count",
+          "byte_size",
+          "state",
+          "total_shards",
+          "shards_done",
+          "shards_failed",
+          "completeness",
+          "error_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentOut"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "KeyCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "expires_in": {
+            "type": "string",
+            "enum": ["1d", "7d", "30d", "90d", "never"],
+            "title": "Expires In",
+            "default": "never"
+          }
+        },
+        "type": "object",
+        "required": ["name", "scopes"],
+        "title": "KeyCreate"
+      },
+      "KeyCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "raw_key": {
+            "type": "string",
+            "title": "Raw Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "scopes",
+          "collections",
+          "last_used_at",
+          "expires_at",
+          "revoked_at",
+          "raw_key"
+        ],
+        "title": "KeyCreated"
+      },
+      "KeyOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "scopes",
+          "collections",
+          "last_used_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "title": "KeyOut"
+      },
+      "PresignRequest": {
+        "properties": {
+          "collection_id": {
+            "type": "string",
+            "title": "Collection Id"
+          },
+          "byte_size": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Byte Size"
+          }
+        },
+        "type": "object",
+        "required": ["collection_id", "byte_size"],
+        "title": "PresignRequest"
+      },
+      "PresignResponse": {
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Doc Id"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url"
+          }
+        },
+        "type": "object",
+        "required": ["doc_id", "upload_url"],
+        "title": "PresignResponse"
+      },
+      "RetryRequest": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "pattern": "^(shards|embed|full)$",
+            "title": "Scope"
+          }
+        },
+        "type": "object",
+        "required": ["scope"],
+        "title": "RetryRequest"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Query"
+          },
+          "collection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection"
+          },
+          "top_k": {
+            "type": "integer",
+            "maximum": 25.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "default": 8
+          }
+        },
+        "type": "object",
+        "required": ["query"],
+        "title": "SearchRequest"
+      },
+      "ShardOut": {
+        "properties": {
+          "idx": {
+            "type": "integer",
+            "title": "Idx"
+          },
+          "page_start": {
+            "type": "integer",
+            "title": "Page Start"
+          },
+          "page_end": {
+            "type": "integer",
+            "title": "Page End"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "needs_ocr": {
+            "type": "boolean",
+            "title": "Needs Ocr"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "peak_rss_mb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Rss Mb"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "idx",
+          "page_start",
+          "page_end",
+          "state",
+          "attempts",
+          "needs_ocr",
+          "duration_ms",
+          "peak_rss_mb",
+          "error_code"
+        ],
+        "title": "ShardOut"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": ["loc", "msg", "type"],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

@@ -27,3 +27,39 @@ incidents land here before any code change.
 | R-19 | P3 | fixed 2026-09-21 (c3893cc) | eval JSON reports `hit_at_{top_k}` carrying the hit@8 value; undercounts for top_k > 8 | run.py conflates judge's fixed hit@8 with run top_k | c3893cc |
 | R-20 | P3 | fixed 2026-09-21 (c3893cc) | `/pipeline` shows a dead Redis as empty lanes while `/queues` propagates | lanes loop `except Exception: pass` | c3893cc |
 | R-21 | P2 | fixed 2026-09-21 (94c4484) | non-PDF / over-cap PDFs are discovered inside a parser instead of rejected at commit | no magic-byte / page-count validation (PRD §11) | 94c4484 |
+
+## 2.0 rewrite disposition (2026-09-21)
+
+The 1.0 Python stack was replaced in place by the Go rewrite (hard cut —
+corpus re-ingested, no dual run). Every R-1..R-21 fix above was 1.0-code
+specific; the Go port re-implements the *behavior* each fix established,
+and the fix must be re-validated against the Go code rather than assumed:
+
+- **Re-implemented in the Go port (behavior carried):** R-1 embed-sweep
+  dedup (`PendingJobDocIDs`, `internal/worker/janitor.go`); R-2 embed
+  terminal cap (`embedMaxAttempts`, `internal/service/embedder.go`); R-3
+  lag fallback (`scanUndeliveredTail`, `internal/queue/streams.go`); R-4
+  XDEL-on-ack (`queue.Ack`); R-5/R-20 full-count aggregates + lane error
+  propagation (`internal/api/system.go`); R-6 split requeue dedup +
+  no-blind-re-add (`janitor.requeueSweep`); R-7 recycle-after on a job
+  boundary (`RunConsumer` recycleAfter); R-8 delivery-cap quarantine,
+  fail-open (`janitor.reclaim`); R-9 parallel S3 prefetch
+  (`pipeline.Prefetch`); R-10 per-line page map
+  (`pipeline.Stitch`/`AttachChildPages`); R-11 retry scope=shards requeues
+  ParseJobs + unwinds shards_failed
+  (`store.RequeueFailedShards` + api retry handler); R-12 deterministic
+  chunk ids keyed by (doc_id, chunk_hash) (`store.DeterministicChunkID`);
+  R-13 per-window page ranges (children carry their own line numbers); R-14
+  key scope pushed into both RRF CTEs (`store.HybridSearch`); R-15/R-21
+  server-side sha256 + `%PDF-` magic + page-cap verify at commit
+  (`api.verifyRawObject`); R-16 token budget from settings
+  (`PlanBatches`); R-17 batched vector writes (`UpdateEmbeddingTx` per
+  batch); R-18 `embedded_at` stamped on vector write; R-19 `hit_at_top_k`
+  (`cmd/lybrix-eval/run.go`).
+- **Superseded by design:** Qdrant-related rows (R-2's Qdrant timeout
+  surface, R-12's Qdrant overwrite shape, R-17's Qdrant upsert) — the
+  vector store is ParadeDB now; the *loop shapes* those fixes encoded
+  (terminal caps, composite-key identity, batched writes) are the carried
+  part.
+- **Still open:** none carried as open rows; new incidents land as fresh
+  rows per the ledger contract.

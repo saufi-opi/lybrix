@@ -1,736 +1,356 @@
-# lybrix — Review Validation (2026-09-20 Hermes review) + Fix Plan
+# Lybrix 2.0 — Go Rewrite Implementation Plan
 
-## Context
-
-A full-code review (pasted in the planning brief) was produced from a clone at 2026-09-20 ~21:20 UTC+8. HEAD has since moved only by web/eval commits (`431d1ad`, `f606e39`, `7b38e6d`, `d6cc76d`, `937b9a1`) — none touch the libs/api/workers code the review cites, so every finding was validated against effectively the same backend code. This document (1) classifies every finding REAL / HALLUCINATION / ALREADY-FIXED / PARTIAL with file:line evidence read at HEAD (`937b9a1`), and (2) plans fixes for the validated findings in the review's §6 order.
+**Role:** planner · **Branch:** `feat/lybrix-2.0-revamp` · **Date:** 2026-09-21
+**Blueprint:** `LYBRIX_2.0_EVOLUTION_PLAN.md` (approved) · **Constraints from user:** Keep MinIO · port eval to Go · **immediate hard cut** (no parallel run — legacy Python stack is replaced in place, corpus re-ingested after cutover).
+**First implementation step:** replace the obsolete `PLAN.md` at repo root (old review-fix plan, all its work landed per `PLAN_REVIEW.md`) with this document. No git commit/push — implementer and verifier commit separately.
 
 ---
 
-# PART 1 — VALIDATION VERDICTS
+## 0. Context
 
-## §2 Priority defects
+Lybrix 1.0 is a Python microservice stack (FastAPI api, FastMCP mcp, four-entrypoint workers image, six shared libs) over Qdrant + Postgres + MinIO + Redis Streams, with a Next.js 15 admin UI. The approved blueprint replaces the entire Python backend with one Go binary (`lybrix-server`) and eliminates Qdrant in favor of ParadeDB (PostgreSQL 17 + pgvector + pg_search BM25), while preserving:
 
-### 2.1 Retry scope `shards` never re-parses the retried shards — **REAL**
-- `services/api/src/api/routers/documents.py:161-167`: `scope=="shards"` resets failed shards to `pending`/clears error cols, then XADDs **`contracts.EmbedJob(doc_id=doc_id)`** — no `ParseJob` is ever sent.
-- `services/workers/src/workers/embedder.py:100-108`: embedder selects `Shard.state == "done"` only — a `pending` shard is invisible to it.
-- `services/workers/src/workers/janitor.py:240-247`: settled-book sweep requires `doc.state == DocState.PARSING`; a doc left in `partial`/`ready` with a stranded pending shard is never revisited. Reverified: nothing else re-enqueues parse work for that shard. The "Retry failed shards" button (PRD §8.3) is a silent no-op re parse.
+- the **16–24 page shard** unit-of-work over Redis Streams (split → parse → embed, janitor-recovered),
+- the **Next.js web console unchanged** (it must satisfy the checked-in OpenAPI snapshot at `services/web/openapi.json` — 18 paths),
+- the **6-tool MCP surface** at `:8430/mcp` with bearer-key auth,
+- the **error taxonomy / retry ladder / lease / DLQ** semantics that the incident ledger (`docs/BACKLOG.md`) was built from.
 
-### 2.2 Qdrant point-id collision across documents — **REAL**
-- `libs/retrieval/src/retrieval/qdrant.py:107-110`: `point_id_for` = `uuid.uuid5(uuid.NAMESPACE_URL, f"chunk:{chunk_hash}")` — **chunk_hash alone** (the literal `chunk:` prefix differs trivially from the review's quote; immaterial).
-- `libs/core/src/core/db/models.py:151`: `UniqueConstraint("doc_id", "chunk_hash")` — uniqueness is composite only. Identical normalized text in two docs → same chunk_hash → same Qdrant point id → `upsert_chunks` (qdrant.py:126,139) silently overwrites the first doc's point.
-- `libs/retrieval/src/retrieval/search.py:122-127`: `hydrate()` keys rows by `chunk_hash` from `Chunk.chunk_hash.in_(hashes)` with **no doc_id filter** — wrong-document attribution is real. Same defect propagates to `scripts/ops_backfill_sparse.py:139` (also calls `point_id_for(chunk_hash)`).
+Everything below is verified against the actual repo at HEAD `fe67823`.
 
-### 2.3 Window-level page citations are coarse — **REAL**
-- `libs/chunking/src/chunking/hybrid.py:68,74-83,104-105`: `_emit` is called with the **section's** `start_line`/`end_line` and every window in the section gets `page_start = pages[start_line]`, `page_end = pages[end_line]`. `libs/parsing/src/parsing/stitch.py:83-88` builds the per-line page map. A long section ⇒ every window cites the whole section's page span. PRD §7.2 (prd.md:462-466, citation triple) degraded to section granularity.
+### 0.1 The contract surface the Go rewrite must reproduce (verified)
 
-### 2.4 API search post-filters scope after top_k truncation — **REAL**
-- `services/api/src/api/routers/search.py:52-54`: `body.collection` **is** pushed down via `hybrid_search(collection_id=...)`; but lines 58-60 post-filter `hits` by the **key's** `collections` **after** `rs.hybrid_search` already truncated to `top_k` (Qdrant `limit=top_k`, retrieval/search.py:109). A key scoped to collection A gets < top_k (or zero) when B-chunks occupy slots.
-- `services/mcp/src/mcp_server/server.py:61-71,272`: MCP passes `collection` into `build_filter` (pushed down) and *raises* on out-of-scope keys (`assert_collection_allowed`) — surfaces have drifted. Core claim verified.
+**REST routes (`services/web/openapi.json`, 18 paths)** — auth = `Authorization: Bearer ragk_…`, sha256-hashed against `api_keys.key_hash`, scope check ∈ {search, ingest, admin}, 401/403 semantics per `services/api/src/api/deps.py:56-81`:
 
-### 2.5 Commit trusts a client-supplied content hash — **REAL**
-- `services/api/src/api/routers/documents.py:71,80`: `body.content_sha256` (schemas.py:24, plain 64-char field) is used for dedupe (`repo.find_duplicate`) and stored on the document row. `libs/core/src/core/storage/s3.py` never reads the object back. PRD §6.1 step 4 (prd.md:257): "API computes sha256 (streaming, from MinIO)". Spoofable dedupe key; raw-copy provenance not verified server-side. No contradicting code exists.
-
-### 2.6 Embedder hardcodes model-specific token budget — **REAL**
-- `services/workers/src/workers/embedder.py:174-176`: `AutoTokenizer.from_pretrained("BAAI/bge-m3")` inside `handle_embed` (reloaded from disk every job); line 185: `ctx_budget = 1900` hardcoded. `libs/core/src/core/config.py:5` states nothing hardcodes a model name; `s.embed_model`/`s.embed_backend` exist (config.py:44-45, default backend `tei`). All as described.
-
-### 2.7 Whole-book Qdrant upsert in a single `wait=True` call — **REAL**
-- `libs/retrieval/src/retrieval/qdrant.py:139`: `client.upsert(collection_name=name, points=qpoints, wait=True)` with **all** points of the book in one blocking call, invoked from `services/workers/src/workers/embedder.py:219-230`. The 2026-09-11 Qdrant-upsert-timeout incident is real (embedder.py docstring lines 8-13; docs/BACKLOG.md R-2).
-
-## §3 PRD-promised capabilities
-
-| Row | Verdict | Evidence |
+| Route | Scope | Notes |
 |---|---|---|
-| Retry-ladder sub-sharding | **REAL (stubbed)** | `services/workers/src/workers/parser.py:12-14` — steps 2-4 marked `TODO M2`; prd.md:343-349 promises the ladder |
-| `metrics_rollup` writer | **REAL (absent)** | Table created in `migrations/versions/0001_initial.py:128-143`; **no** `MetricsRollup` model in `libs/core/src/core/db/models.py`, no writer anywhere (repo-wide grep: only migration + PRD hits); janitor (`janitor.py`) never touches it |
-| SSE `/v1/events/stream` | **HALLUCINATION** | `services/api/src/api/routers/events.py:34-79` implements `GET /v1/events/stream` returning `StreamingResponse(..., media_type="text/event-stream")`; registered in `services/api/src/api/main.py:25`; `services/api/pyproject.toml:7` even advertises "SSE" |
-| Integration test lane (testcontainers) | **REAL (absent)** | No `tests/integration/` dir; zero testcontainers references repo-wide; `.github/workflows/ci.yml:38` runs only `uv run pytest tests/ -q` (root DB-free suite; `services/workers/tests/` is not even in CI) |
+| POST `/v1/documents/presign` | ingest | → `{doc_id, upload_url}` (MinIO presigned PUT) |
+| POST `/v1/documents/{doc_id}/commit` | ingest | 202; 409 duplicate; 429 backlog w/ `Retry-After`; server-side sha256+`%PDF-`+page-cap verify |
+| GET `/v1/documents` | search | filters `state,collection,q`, `limit≤200`, ordered by `updated_at desc` |
+| GET `/v1/documents/{doc_id}` | search | `DocumentOut` shape (schemas.py:30-44) |
+| GET `/v1/documents/{doc_id}/shards` | search | `ShardOut` list (schemas.py:51-60) |
+| POST `/v1/documents/{doc_id}/retry` | admin | body `{scope: shards|embed|full}` → `{id, retried}` |
+| GET/POST `/v1/collections` | search/admin | 201 create, 409 dup id |
+| GET `/v1/collections/{id}/stats` | search | `{id,name,embedding_model,doc_count,chunk_count}` |
+| POST `/v1/search` | search | `{query, collection?, top_k≤25}` → hit array w/ `chunk_id,doc_id,doc_title,page_start,page_end,heading_path,text,score,partial` |
+| GET/POST `/v1/keys`, POST `/v1/keys/{id}/revoke` | admin | raw key shown once at create; 422 unknown scopes |
+| GET `/v1/usage/summary?period=today|24h|7d|30d` | admin | `{period,total,by_key[]}` |
+| GET `/v1/events`, GET `/v1/events/stream` (SSE) | — (session-gated proxies upstream) | SSE = PG-poll loop, `data: {json}\n\n` per event |
+| GET `/v1/system/health`, `/queues`, `/pipeline`, `/metrics` | — | health checks PG/Redis/tei-query (+embed backend); `/pipeline` lane semantics per system.py:107-280 |
 
-## §4 Minor findings
+Error envelope is FastAPI-style: `{"detail": "…"}` — the Go server must emit the same shape (web SDK runs `throwOnError` and surfaces `detail`).
 
-1. **README drift (`make scale`/`make drain`) — REAL.** README.md:56-57 promises both; `Makefile` (full read) has neither; `deploy/docker-compose.yml:228,254,276,298` uses discrete `worker-parser`/`-2`/`-3`/`-4` services.
-2. **Unauthenticated read endpoints — REAL.** `documents.py:91-99` (list), `:110-113` (get), `:120-123` (shards) and `collections.py:22` (list_collections) take only `get_session` — no `require_scope`. (Mitigated by internal binding, as the review notes.)
-3. **`chunks.embedded_at` never set — REAL.** Column exists (`models.py:166-168`, migration 0001:97); repo-wide grep shows **no writer**.
-4. **Upload validation missing — REAL.** `commit` (documents.py:51-88) performs backlog/dedupe only; no magic-byte or page-count check. PRD §11 (prd.md:630) requires "magic-byte validation, size cap, filename sanitisation, and page-count cap".
-5. **`search_query:` prefix — REAL (observation).** Both surfaces prefix: `search.py:40` and `server.py:54`. E5 convention applied to bge-m3; A/B-able via `scripts/eval/run.py`.
-6. **Eval JSON key bug — REAL.** `scripts/eval/run.py:214`: key `f"hit_at_{args.top_k}"` carries `summary.overall.hit_at_8`. For `top_k > 8` the judge counts only ranks ≤ 8 (`scripts/eval/judge.py:149-150`), so the labelled metric undercounts; for `top_k < 8` the label misnames a correct value. Console print (run.py:239) repeats the conflation.
-7. **`/pipeline` swallows exceptions — REAL.** `services/api/src/api/routers/system.py:161` `except Exception: pass` in the lanes loop — a dead Redis reads as `waiting: None` lanes, while `/queues` (system.py:84-100) documents and implements "errors propagate". Also line 128 swallows for `embed_backend` (acceptable, has explicit `"down"` fallback). Core claim verified for the lanes loop.
+**MCP (6 tools, `services/mcp/src/mcp_server/server.py`):** `search`, `get_chunk_context`, `read_pages`, `list_documents`, `get_document`, `list_collections`. Bounded (`READ_PAGES_MAX=30`, `SEARCH_MAX_TOP_K=25`), citation triple on every result, `partial:true` + note when doc completeness < 1.0, per-key collection scoping (`assert_collection_allowed` — 403 on out-of-scope), usage rows per method (`tools/call:<name>`), `/health` unauthenticated.
 
-**No finding was ALREADY-FIXED** — HEAD's post-clone commits touch only web UI, eval results, and docs.
+**Worker pipeline (`services/workers/src/workers/`):** streams `doc.split`/`doc.parse`/`doc.embed`, group `rag-workers`, payload `{"job": "<json>"}` with `schema_version:1` (contracts.py). Runner semantics (runner.py): handler runs in one DB tx → ACK only after commit; failure leaves the entry in the PEL; janitor's XAUTOCLAIM reclaim enforces the delivery cap (`max(5, max_shard_attempts+1)`), quarantining (DLQ `events` row + XACK/XDEL) beyond it; PARSER_RECYCLE_AFTER = clean exit on job boundary. Parser: claim_shard (atomic `UPDATE…WHERE state IN (pending,failed) RETURNING`, attempts++), retry ladder (2: quarter-split, 3: single-page, ≥4: text-only/table-structure-off), PDF cache dir, OCR gate (mean chars/page < 20), mark done → book_settled → enqueue embed. Embedder: stitch (boundary-heading dedupe, per-line page map) → chunk (512 tokens, heading paths, neighbour dedupe) → ON CONFLICT DO NOTHING insert (unique `(doc_id, chunk_hash)`) → token-budgeted TEI/Ollama batches (ctx budget 1900, batch 48, truncate 6000 chars, jittered backoff, circuit breaker) → doc ready/partial + completeness. Janitor: 7-step pass (lease reaper, escalate ≥max attempts, split requeue w/ dedup, XAUTOCLAIM reclaim + quarantine, settled-book embed rescue, stuck-doc warning, minute-bucket metrics rollup). Stream hygiene details that must survive the rewrite: `socket_timeout > block`, XDEL-on-ACK (trim-on-ack), lag=None fallback scan, "no blind re-add on scan failure".
 
-**Summary: 7/7 defects REAL (one with a trivial quote nit), 3/4 §3 rows REAL / 1 HALLUCINATION (SSE), 7/7 minors REAL.**
+### 0.2 Deliberate deltas from 1.0 (approved by blueprint + user answers)
 
----
-
-# PART 2 — PLAN (validated findings only, review §6 order)
-
-**Excluded:** SSE stream (HALLUCINATION — endpoint exists; no work planned). Integration-test lane is REAL but is **not** in the review's §6 fix order — out of scope per brief. Minor #5 (prefix A/B) is planned as an experiment toggle only.
-
-## Phase 0 — BACKLOG rows (CLAUDE.md: ledger before code)
-
-Add to `docs/BACKLOG.md` (continue R-numbering), one row each, `status: open` → flipped to `fixed <commit>` as each lands:
-
-- **R-11** (P1) retry `scope=shards` resets shards to pending but enqueues an embed job the embedder ignores → failed shards never re-parsed; doc flips ready/partial with a stranded pending shard | no ParseJob enqueued; embedder selects `state=="done"` only | this fix
-- **R-12** (P0) second document's chunks overwrite first document's Qdrant points; citations can attribute the wrong book | point id derived from chunk_hash alone; UNIQUE(doc_id, chunk_hash) is composite; hydrate keys rows by chunk_hash only | this fix
-- **R-13** (P3) all windows of a long section cite the section's full page span | `_emit` indexes the page map with the section's line bounds, not the window's | this fix
-- **R-14** (P2) API key scoped to collection A returns < top_k when B-chunks fill slots | key-level collection scope post-filters after Qdrant top_k truncation (MCP path pushes down) | this fix
-- **R-15** (P2) dedupe key and stored hash are client-controlled | commit stores `body.content_sha256` without reading the object (PRD §6.1 says API computes it) | this fix
-- **R-16** (P3) TEI embed path batches at a budget pinned to ollama's 2048 ceiling; tokenizer reloaded per job | `ctx_budget = 1900` + `from_pretrained("BAAI/bge-m3")` hardcoded in handle_embed | this fix
-- **R-17** (P2) one ~12MB blocking upsert per book re-creates the 2026-09-11 timeout-loop shape | `upsert_chunks` sends all points in a single `wait=True` request | this fix
-- **R-18** (P3) `chunks.embedded_at` never stamped; re-embed tooling cannot identify stale vectors | embedder insert omits the column | this fix
-- **R-19** (P3) eval JSON reports `hit_at_{top_k}` carrying the hit@8 value; undercounts for top_k > 8 | run.py conflates judge's fixed hit@8 with run top_k | this fix
-- **R-20** (P3) `/pipeline` shows a dead Redis as empty lanes while `/queues` propagates | lanes loop `except Exception: pass` | this fix
-- **R-21** (P2) non-PDF / over-cap PDFs are discovered inside a parser instead of rejected at commit | no magic-byte / page-count validation (PRD §11) | this fix
-
-*(README drift, read-endpoint auth, and the prefix A/B are docs/hardening/experiment — not defects; no ledger rows.)*
+| Area | 1.0 | 2.0 |
+|---|---|---|
+| Storage engine | Qdrant (dense+sparse) + Postgres | **ParadeDB only** — native SQL RRF over pgvector cosine + pg_search BM25 |
+| Runtime | 3 Python services + libs | 1 Go binary, 4 subcommands |
+| Parsing | in-process Docling (Python) | **anydoc CGO fast path** + docling-serve HTTP fallback |
+| Chunking | flat 512-token windows | **hierarchical parent–child** (384-token children → 2048–4096-token parents, breadcrumb-prefixed) |
+| BM25 | client-encoded Qdrant sparse | pg_search index, server-side |
+| Eval harness | Python `scripts/eval` | Go `cmd/lybrix-eval` (same golden set JSONL, same metrics) |
+| Deploy | api/mcp/workers images + qdrant | one `lybrix-server` image + `paradedb/paradedb` + `docling-serve`; **Qdrant removed** |
+| Raw PDFs | MinIO | **MinIO (kept per user decision)** — blueprint's `filename/file_size` columns are additive, `source_uri` stays |
+| Cutover | — | **hard cut** per user: swap stack, re-ingest corpus fresh; no dual-run window |
 
 ---
 
-## Phase 1 — R-11 (retry shards) + R-12 (point-id collision) — silent data-integrity
+## 1. Phase 1 — Foundation (ParadeDB, schema, store, scaffolding)
 
-### 1a. R-11: `scope=shards` re-parses the retried shards
+### 1.1 Repo scaffolding
 
-**Objective:** After resetting failed shards to `pending`, set the doc back to `PARSING`, enqueue one `ParseJob` per requeued shard, and keep the `shards_failed` counter consistent so the existing last-shard-settled logic re-enqueues embed.
+Create:
+- `go.mod` — module `github.com/saufi-opi/lybrix`, Go 1.23. Deps: `github.com/jackc/pgx/v5` (+`pgxpool`, `pgtype`), `github.com/redis/go-redis/v9`, `github.com/go-chi/chi/v5`, `github.com/mark3labs/mcp-go`, `github.com/pdfcpu/pdfcpu`, `github.com/aws/aws-sdk-go-v2` (+`feature/s3/manager`, creds `config`), `github.com/testcontainers/testcontainers-go` (test-only), `github.com/stretchr/testify` (test-only). CGO enabled only for the anydoc build tag.
+- `Makefile` — replace `test`/`lint` targets: `go test ./...`, `go vet ./...`, `golangci-lint run`; drop `uv` targets; compose targets unchanged.
+- `.golangci.yml` — errcheck, govet, staticcheck, revive (line-length 100).
+- `deploy/Dockerfile.lybrix` — multi-stage: `golang:1.23-bookworm` builder (CGO when the anydoc lib is present; plain build otherwise) → `debian:bookworm-slim` runtime with `ca-certificates`. Two image variants is **not** needed: default build compiles the anydoc package with a stub fallback; `-tags anydoc` links the real lib (see 3.3). CI builds the default variant; the GPU/ingest overlay may use `-tags anydoc`.
+- `.github/workflows/ci.yml` — rewrite: `go test ./...` (non-CGO lane), `golangci-lint`, `govulncheck`, docker build for `lybrix-server` + `web`; drop pip-audit/pytest/ruff/uv steps.
 
-**Edit `services/api/src/api/routers/documents.py`** — replace the `else` branch (lines 161-167):
+### 1.2 Compose changes
 
-```python
-    else:  # shards: requeue failed shards only
-        failed_shards = (
-            session.execute(
-                select(Shard).where(Shard.doc_id == doc_id, Shard.state == "failed").order_by(Shard.idx)
-            )
-            .scalars()
-            .all()
-        )
-        if not failed_shards:
-            raise HTTPException(status_code=409, detail="no failed shards to retry")
-        session.execute(
-            Shard.__table__.update()
-            .where(Shard.doc_id == doc_id, Shard.state == "failed")
-            .values(state="pending", error_code=None, error_detail=None)
-        )
-        # Counter hygiene: mark_shard_failed bumped shards_failed per failure;
-        # requeueing undoes those failures. Without this the embedder would
-        # compute a wrong completeness and book_settled could double-count.
-        session.execute(
-            Document.__table__.update()
-            .where(Document.id == doc_id)
-            .values(shards_failed=Document.shards_failed - len(failed_shards))
-        )
-        # Back to PARSING so the janitor's settled-book sweep and stuck-doc
-        # warnings see this book again (a stranded pending shard in a
-        # terminal-state doc is invisible to every recovery path — R-11).
-        repo.set_doc_state(session, doc_id, DocState.PARSING)
-        for shard in failed_shards:
-            streams.xadd_job(
-                r,
-                streams.STREAM_PARSE,
-                contracts.ParseJob(
-                    doc_id=doc_id,
-                    idx=shard.idx,
-                    page_start=shard.page_start,
-                    page_end=shard.page_end,
-                    source_uri=doc.source_uri,
-                ),
-            )
+Modify `deploy/docker-compose.yml`:
+- **Remove:** `qdrant`, `api`, `mcp`, `worker-janitor`, `migrate` (alembic), all `worker-*` Python services, `tei-rerank` stays (still useful later) — actually keep `tei-rerank` as-is.
+- **Add `paradedb`:** image `paradedb/paradedb:17` (PG17 + pgvector + pg_search), same ports/env/healthcheck pattern as the old `postgres`, volume `paradedbdata`.
+- **Add `docling-serve`:** image `quay.io/docling-project/docling-serve:latest`, port `:5001`, on the **ingest** profile, `mem_limit` 8g.
+- **Add `lybrix-server`:** one image, profile `core`, runs `serve` (REST :8000 + MCP :8430 + janitor goroutine). Profile `ingest` runs `lybrix-server splitter|parser|embedder` replicas (replacing `worker-splitter`, `worker-parser{,-2..4}`, `worker-embedder` — same env/mem/`PARSER_RECYCLE_AFTER`/pdf-cache volume layout).
+- Env blocks (`x-core-store-env` / `x-ingest-env`): drop `QDRANT_URL/QDRANT_API_KEY`; `DATABASE_URL` becomes a plain pgx DSN `postgres://rag:$PW@paradedb:5432/rag`; add `DOCLING_URL=http://docling-serve:5001`; keep everything else verbatim (Redis, MinIO, TEI, MCP_API_KEY, web env, traefik labels, Caddy).
+- `deploy/.env.example` (new; current `.env.example` stays until cutover): drop `QDRANT_API_KEY`; add `DOCLING_URL`, `ANYDOC_ENABLED=true`.
+- `deploy/minio/` init job unchanged.
+- **MinIO profile placement unchanged from 1.0:** MinIO stays on the **ingest** profile (it runs on the ingest host next to the parsers that download full source PDFs per shard; the api/web/ui reach it over tailscale via `S3_PUBLIC_ENDPOINT`). Consequence for every acceptance step below that needs object storage: use `make up-core && make up-ingest`, not `make up-core` alone.
+
+### 1.3 SQL schema — `deploy/schema.sql` (embedded in the Go binary, applied idempotently at boot)
+
+Single file, executed by `lybrix-server` before serving (replaces the alembic `migrations/` chain; hard cut = fresh DB, no data migration). It is the blueprint §3 schema **extended with every column the OpenAPI contract reads**:
+
+- Extensions: `vector`, `pg_search`.
+- `collections(id TEXT PK, name TEXT, embedding_model TEXT DEFAULT 'BAAI/bge-m3', vector_dim INT DEFAULT 1024, created_at)` — the blueprint omits it; the UI's `/v1/collections` needs it.
+- `documents(id UUID PK, collection_id TEXT REFERENCES collections(id), title TEXT, author TEXT, filename TEXT, byte_size BIGINT, source_uri TEXT NOT NULL, content_sha256 CHAR(64) NOT NULL, page_count INT, mime_type TEXT DEFAULT 'application/pdf', state TEXT CHECK IN ('uploaded','splitting','parsing','embedding','indexing','ready','failed','partial','archived') DEFAULT 'uploaded', error_code TEXT, error_detail TEXT, total_shards INT, shards_done INT DEFAULT 0, shards_failed INT DEFAULT 0, chunk_count INT, completeness NUMERIC(5,4), metadata JSONB DEFAULT '{}', uploaded_by TEXT, created_at, updated_at, ready_at, UNIQUE(collection_id, content_sha256), INDEX(state), INDEX(updated_at))`.
+  - **Column is `byte_size`, not the blueprint's `file_size`** — it must match the 1.0 schema and the `DocumentOut.byte_size` field in the OpenAPI contract (services/api/src/api/schemas.py:38); `author` likewise maps 1:1 to `DocumentOut.author` — no rename, no remap in the web client.
+- `shards(doc_id UUID REF documents ON DELETE CASCADE, idx INT, page_start INT, page_end INT, state TEXT CHECK IN ('pending','running','done','failed','skipped') DEFAULT 'pending', attempts INT DEFAULT 0, needs_ocr BOOL DEFAULT false, mean_chars_per_page REAL, parsed_uri TEXT, worker_id TEXT, lease_until TIMESTAMPTZ, duration_ms INT, peak_rss_mb INT, done_at TIMESTAMPTZ (indexed), error_code, error_detail, created_at, PK(doc_id, idx))`.
+- `chunks(id UUID PK, doc_id UUID REF CASCADE, collection_id TEXT NOT NULL, chunk_hash CHAR(64) NOT NULL, parent_id UUID REF chunks(id), is_parent BOOL NOT NULL DEFAULT false, seq INT NOT NULL, page_start INT, page_end INT, heading_path TEXT[], header_breadcrumb TEXT, text TEXT NOT NULL, token_count INT NOT NULL, embedded_at TIMESTAMPTZ, created_at, UNIQUE(doc_id, chunk_hash))`.
+  - Indexes: `hnsw (embedding vector_cosine_ops) WHERE is_parent = false` — **HNSW requires the column to exist at index time**, so `embedding vector(1024)` lives on `chunks` (NULL for parents) exactly as the blueprint writes it; the partial index is created after `CREATE EXTENSION vector`.
+  - `CALL paradedb.create_bm25(index_name => 'chunks_bm25_idx', table_name => 'chunks', key_field => 'id', text_fields => '{"text": {}, "header_breadcrumb": {}}')` — applied in a `schema.sql` step guarded to run once (pg_search is assertion-based; wrap in DO block checking `paradedb.schema_version()`/pg_class, or issue and swallow "already exists").
+- `events(id BIGSERIAL PK, doc_id UUID, shard_idx INT, level TEXT(8), stage TEXT(16), code TEXT, message TEXT, context JSONB DEFAULT '{}', worker_id TEXT, created_at, INDEX(doc_id, created_at), INDEX(level, created_at))`.
+- `api_keys(id UUID PK, name TEXT, key_hash CHAR(64) UNIQUE, scopes TEXT[] DEFAULT '{search}', collections TEXT[] DEFAULT NULL, expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at)` — note 2.0 keeps **both** `revoked_at` (1.0 semantics) and `expires_at`; the blueprint's boolean `revoked` is replaced by the timestamp (contract `KeyOut` exposes `revoked_at`).
+- `key_usage(id BIGSERIAL PK, api_key_id UUID REF CASCADE, surface TEXT ('mcp'|'api'), action TEXT, created_at, INDEX(api_key_id, created_at))` — 1.0 shape (surface+action), not the blueprint's `endpoint/status_code`; the UI's usage summary groups by key.
+- `metrics_rollup(bucket TIMESTAMPTZ PK, pages_parsed, shards_done, shards_failed, chunks_embedded, parse_p50_ms, parse_p95_ms, peak_rss_p95_mb, queue_depth JSONB, search_p95_ms, search_count)`.
+- Bootstrap note in `.env.example`: create the first admin key via `lybrix-server keys bootstrap` subcommand (new; replaces the Python one-liner).
+
+### 1.4 Go packages to create in Phase 1
+
+```
+internal/config/config.go        env parsing (envconfig-style via std flag/env), mirrors libs/core config.py:
+                                 DATABASE_URL, REDIS_URL, S3_ENDPOINT/ACCESS_KEY/SECRET_KEY, S3_BUCKET_RAW/PARSED,
+                                 TEI_INGEST_URL/TEI_QUERY_URL, EMBED_BACKEND(tei|ollama), EMBED_MODEL, EMBED_DIM=1024,
+                                 EMBED_BATCH_SIZE=48 (code default, matching config.py:47; the compose ingest env overrides
+                                 it to 16 — keep that override on the lybrix-server ingest services), EMBED_CTX_BUDGET=1900,
+                                 EMBED_TRUNCATE_CHARS=6000, EMBED_QUERY_PREFIX,
+                                 SHARD_PAGES=20, OCR_MIN_CHARS_PER_PAGE=20, PARSER_RECYCLE_AFTER, PARSER_SOFT_RSS_MB→(kept: Go GC
+                                 needs no soft budget; retained only for compose parity, documented as a no-op),
+                                 SHARD_LEASE_SECONDS=600, PARSER_PDF_CACHE_DIR, MAX_PARSE_BACKLOG=2000 (code default, matching
+                                 config.py:116; the compose api service overrides it to 20000 — keep that override on the
+                                 lybrix-server core service), MAX_DOCUMENT_PAGES=800,
+                                 JANITOR_INTERVAL_S=30, STUCK_MINUTES=60, MAX_SHARD_ATTEMPTS=4, SEARCH_DEFAULT_TOP_K=8,
+                                 SEARCH_MAX_TOP_K=25, READ_PAGES_MAX=30, RERANK_ENABLED/TEI_RERANK_URL/RERANK_CANDIDATES=30/
+                                 RERANK_TIMEOUT_S=5, DOCLING_URL, LOG_LEVEL, HTTP API/MCP bind addrs.
+internal/errors/errors.go        ErrorCode enum (10 codes, exact string values from libs/core/errors.py), retryable map,
+                                 Error struct {Code, Detail, Retryable} implementing error.
+internal/store/                  pgxpool wrapper + query layer:
+    db.go          NewPool(ctx, dsn), schema bootstrap (embed schema.sql, advisory-lock guarded), Tx helper.
+    models.go      Document, Shard, Chunk, Collection, ApiKey, Event, KeyUsage, MetricsRollup + DocState/ShardState enums.
+    documents.go   GetDocument, FindDuplicate, SetDocState, InsertShards, NextShardIdx, SkipShard, ClaimShard (atomic
+                   UPDATE…WHERE state IN (pending,failed) RETURNING, attempts++ + lease_until), MarkShardDone (done +
+                   shards_done bump in one tx), MarkShardFailed, BookSettled, RequeueExpiredLeases, ListDocuments
+                   (state/collection/q ilike/limit/offset), GetShards, DeleteDocument(+chunks cascade).
+    chunks.go      InsertChunks (COPY + ON CONFLICT (doc_id,chunk_hash) DO NOTHING), CountChunks, ReadPageChunks,
+                   ChunkNeighbours (±window by seq), InsertParent/Child variants for the hierarchical chunker.
+    keys.go        CreateKey, ListKeys, RevokeKey, AuthenticateKey (by sha256 hash, revoked/expired checks),
+                   RecordUsage, UsageSummary(period cutoff SQL), TouchLastUsed.
+    events.go      WriteEvent, ListEvents, EventFeed (poll loop source for SSE).
+    search.go      HybridSearch (the blueprint §5 RRF SQL verbatim + key-scope `collection_id = ANY($6)` filter
+                   pushed into BOTH CTEs — never post-filter, R-14), DeleteDocChunks, MetricsSnapshot.
+    janitor.go     RequeueExpiredLeases, EscalateStuckShards, SettledUnenqueuedDocs, MetricsRollupUpsert.
+internal/queue/streams.go        Redis Streams: stream names doc.split/doc.parse/doc.embed, group "rag-workers",
+                                 EnsureStreams, XAddJob ({"job": json, schema_version:1}), ReadJobs (XREADGROUP ">",
+                                 unparseable → ACK+XDEL), Ack (ACK + best-effort XDEL — trim-on-ack), XAutoClaim,
+                                 UndeliveredCount (lag + None-fallback XRANGE scan), QueueDepth, Quarantine,
+                                 PendingJobDocIDs (undelivered tail + PEL scan), consumer naming.
+internal/queue/contracts.go      SplitJob{DocID, SourceURI}, ParseJob{DocID, Idx, PageStart, PageEnd, SourceURI},
+                                 EmbedJob{DocID}, SchemaVersion=1, JSON tags identical to 1.0.
+internal/objectstore/s3.go       MinIO client, presign_put, get/put/download helpers, raw_key/parsed_key —
+                                 key layout copied exactly from libs/core/src/core/storage/s3.py:31-38 (verified):
+                                 raw key = `{doc_id}.pdf` in bucket `raw`; parsed key = `{doc_id}/{shard_idx}.md`
+                                 in bucket `parsed` — the bucket name carries the raw/parsed split, there is NO
+                                 `raw/` or `parsed/` path prefix on the keys.
+internal/logging/logging.go      slog setup honoring LOG_LEVEL; slog is the 1:1 replacement for std logging.
 ```
 
-(`ParseJob` requires `source_uri` per `libs/core/src/core/queue/contracts.py:32-39`; shard rows carry `page_start`/`page_end` per `models.py:125-126`. `select`, `Document` already imported. When the re-parsed shards settle, `parser.py:142-149`'s `book_settled` check re-enqueues embed — recommendation (c) satisfied with zero parser changes.)
+### 1.5 Phase 1 tests (`go test ./internal/...`) and acceptance
 
-**New test `tests/test_retry_router.py`** (root suite; direct-call pattern of `tests/test_keys_router.py` — no TestClient, no DB): a fake session returning two canned `Shard` rows for the `select(Shard)` and recording update statements; monkeypatch `streams.xadd_job` to record calls. Assert: (1) one `ParseJob` XADD per failed shard with the shard's `idx/page_start/page_end` and `source_uri`; (2) doc state update to `parsing` recorded; (3) `shards_failed` decremented by 2; (4) zero failed shards → `HTTPException 409`; (5) no `EmbedJob` XADD.
-
-**Suite:** root (`tests/`) — api is importable there (`test_keys_router.py` already imports `api.routers.keys`).
-
-### 1b. R-12: doc-scoped Qdrant point ids + doc-scoped hydration
-
-**Objective:** Point id = `uuid5(..., f"chunk:{doc_id}:{chunk_hash}")`; hydration keyed by `(doc_id, chunk_hash)`.
-
-**Edit `libs/retrieval/src/retrieval/qdrant.py:107-110`:**
-
-```python
-def point_id_for(doc_id: str, chunk_hash: str) -> str:
-    """Qdrant accepts UUIDs or unsigned ints as point ids; derive a stable
-    UUID5 from doc_id AND chunk_hash so re-embedding upserts, never
-    duplicates — and two documents sharing identical normalized text
-    (boilerplate, standard clauses) never collide on one point (R-12:
-    chunk_hash is unique only per (doc_id, chunk_hash))."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"chunk:{doc_id}:{chunk_hash}"))
-```
-
-**Edit `qdrant.py:126`** (in `upsert_chunks`): `id=point_id_for(str(p["doc_id"]), p["chunk_hash"]),`
-
-**Edit `libs/retrieval/src/retrieval/search.py:122-132`** (`hydrate`):
-
-```python
-    hashes = list({p.payload.get("chunk_hash") for p in fused_points if p.payload})
-    doc_ids = list({p.payload.get("doc_id") for p in fused_points if p.payload and p.payload.get("doc_id")})
-    rows: dict[tuple[str, str], Chunk] = {}
-    if hashes:
-        stmt = select(Chunk).where(
-            Chunk.chunk_hash.in_(hashes),
-            Chunk.doc_id.in_([uuid.UUID(d) for d in doc_ids]),
-        )
-        for c in session.execute(stmt).scalars():
-            rows[(str(c.doc_id), c.chunk_hash)] = c
-    ...
-        chunk = rows.get((str(payload.get("doc_id")), payload.get("chunk_hash")))
-```
-
-**Edit `scripts/ops_backfill_sparse.py:105,139`:** select `(Chunk.doc_id, Chunk.chunk_hash, Chunk.text)`; call `point_id_for(str(doc_id), chunk_hash)`; batch-resume cursor becomes `(doc_id, chunk_hash)`-aware (order by `Chunk.doc_id, Chunk.chunk_hash`; `resume_after` compares the tuple). Tests `tests/test_ops_backfill_sparse.py:94-95,118,132` update to the 2-arg call with row doc_ids.
-
-**Tests:** extend `tests/test_retrieval_bm25.py` — (1) `point_id_for("d1", h) != point_id_for("d2", h)` for the same hash, stable per pair (replaces `test_point_id_for_stable` at :242-244); (2) new `hydrate` test with a fake session holding two Chunks sharing one `chunk_hash` under different doc_ids → each fused point resolves to its own doc's chunk (page numbers/title from the right row). Update `tests/test_ops_backfill_sparse.py` assertions.
-
-**Suite:** root (`tests/`).
-
-**Operational note (implementer):** existing points keep old ids → after deploy, run `uv run python -m scripts.reindex` once (Qdrant is a cache per PRD §13.5; Postgres rows are untouched). Old orphaned points can be removed by deleting all points before reindex or by `delete_doc_points` per doc; state this in the deploy note.
+- `internal/config/config_test.go` — defaults, validation (top_k ordering, batch≥1).
+- `internal/errors/errors_test.go` — codes string-match 1.0 values; retryable map matches `ERROR_SPECS`.
+- `internal/queue/streams_test.go` — miniredis or live-Redis unit tests: XADD/read/ack/XDEL, undelivered-count fallback, quarantine writes DLQ event.
+- `internal/store/*_test.go` — testcontainers-go with `paradedb/paradedb:17`: schema bootstrap idempotent (run twice), ClaimShard atomicity (two concurrent claims → one winner), BookSettled, dedupe unique constraint, hybrid-search SQL shape (fixture rows → expected RRF ordering), key auth (revoked/expired/missing-scope → typed errors).
+- **Acceptance:** `go test ./internal/config/... ./internal/errors/... ./internal/queue/... ./internal/store/...` green; `make up-core && make up-ingest` boots paradedb+redis (core) and minio (ingest profile, per §1.2) and a `lybrix-server serve` that answers `/v1/system/health` with `{"status":"ok"}` (postgres+redis ok, tei fields per probe).
 
 ---
 
-## Phase 2 — R-14 (search scope push-down) + R-17 (paged upsert) — correctness under load
+## 2. Phase 2 — Core server: REST API + MCP (Go)
 
-### 2a. R-14: push key-level collection scope into the Qdrant query
+### 2.1 `internal/api/` (chi router, port 8000)
 
-**Objective:** Key scope becomes a `MatchAny` filter inside the Qdrant query; API stops post-filtering truncated hits.
-
-**Edit `libs/retrieval/src/retrieval/search.py:46-57`** (`build_filter`):
-
-```python
-def build_filter(
-    collection_id: str | None = None,
-    doc_id: str | None = None,
-    collection_ids: list[str] | None = None,
-) -> qm.Filter | None:
-    must = []
-    if collection_id:
-        must.append(
-            qm.FieldCondition(key="collection_id", match=qm.MatchValue(value=collection_id))
-        )
-    if collection_ids:
-        # Key-level scope (api keys carry a collections array): MatchAny
-        # pushes the scope INTO the Qdrant query so top_k slots are filled
-        # from allowed collections only — post-filtering after truncation
-        # silently returned fewer than top_k (R-14).
-        must.append(qm.FieldCondition(key="collection_id", match=qm.MatchAny(any=collection_ids)))
-    if doc_id:
-        must.append(qm.FieldCondition(key="doc_id", match=qm.MatchValue(value=doc_id)))
-    return qm.Filter(must=must) if must else None
+```
+internal/api/server.go       chi router assembly, middleware chain, graceful shutdown.
+internal/api/middleware.go   BearerAuth(scope) → ApiKey in ctx; logs `{"detail"}` error envelope (401/403/404/409/
+                             429/422 parity with deps.py); request-logging + panic-recovery; usage recording
+                             (last_used_at + key_usage row, best-effort, never fails the request).
+internal/api/documents.go    presign/commit/list/get/shards/retry — commit reproduces the streaming verify:
+                             MinIO GET → `%PDF-` magic → sha256 → page-count probe (pdfcpu) → 400s; backlog gate
+                             (QueueDepth > MAX_PARSE_BACKLOG → 429 + Retry-After: 60); dedupe 409; XADD split job.
+internal/api/collections.go  list/create/stats.
+internal/api/search.go       POST /v1/search — tei-query embed (with EMBED_QUERY_PREFIX), store.HybridSearch with
+                             key-scope collection filter, response mapping incl. `partial`.
+internal/api/keys.go         create (raw shown once, "ragk_"+32-byte urlsafe), list, revoke; 422 unknown scopes;
+                             audit events rows (created/revoked) exactly like keys.py.
+internal/api/usage.go        summary with today|24h|7d|30d cutoff semantics.
+internal/api/events.go       GET /v1/events (+filters); GET /v1/events/stream — SSE via http.Flusher, PG-poll
+                             loop (`poll_s` query param, default 2s), payload key-for-key with events.py:66-75.
+internal/api/system.go       /health (pg, redis, tei-query probes → status ok|degraded), /queues, /pipeline
+                             (lane semantics: waiting = undelivered+PEL, stale>15min, consumers idle<5min;
+                             counts incl. docs_awaiting_embed/docs_parsing_active; in-flight shards; NO
+                             qdrant_points — replaced by `chunks_total` count from ParadeDB), /metrics
+                             (JSON counters snapshot; in-process atomic counters + janitor rollup read).
+internal/api/openapi.go      serve the checked-in contract: embed services/web/openapi.json at /openapi.json
+                             (byte-identical snapshot keeps `npm run generate-client` deterministic).
 ```
 
-**Edit `hybrid_search` (search.py:158-173):** add `collection_ids: list[str] | None = None` param; pass through to `build_filter(collection_id=collection_id, doc_id=doc_id, collection_ids=collection_ids)`.
+**Contract discipline:** every handler is written against `services/web/openapi.json` (18 paths, request/response field names, status codes). A golden test (`internal/api/openapi_test.go`) walks the snapshot's paths and asserts each route exists with matching methods; response structs get JSON-field golden tests against the snapshot's schema examples.
 
-**Edit `services/api/src/api/routers/search.py:44-60`:**
+### 2.2 `internal/mcp/` (mcp-go, port 8430)
 
-```python
-    qdrant = QdrantClient(url=s.qdrant_url, api_key=s.qdrant_api_key, timeout=5)
-    key_scope = list(getattr(key, "collections", None) or [])
-    try:
-        hits = rs.hybrid_search(
-            qdrant,
-            COLLECTION_NAME,
-            session,
-            dense_query=dense,
-            sparse_query=_bm25_stub(body.query),
-            top_k=min(body.top_k, s.search_max_top_k),
-            collection_id=body.collection,
-            collection_ids=key_scope or None,
-        )
-    finally:
-        qdrant.close()
-    # key-level scope is pushed into the Qdrant filter (R-14) — no
-    # post-filter here: filtering after top_k truncation returned fewer
-    # than top_k results for scoped keys.
+```
+internal/mcp/server.go       mcp-go server, StreamableHTTP at /mcp; bearer middleware (same store.AuthenticateKey)
+                             returning real HTTP 401 for non-/health paths (parity with McpAuthMiddleware);
+                             ContextVar equivalent = ctx value carrying ApiKey; per-method key_usage rows
+                             (action = method, "tools/call:<name>" refinement); /health unauthenticated.
+internal/mcp/tools_search.go     search — clamp top_k, embed via tei-query, hybrid_search, citation triple,
+                                 partial flag + note, collection-scope assert (403-equivalent MCP error).
+internal/mcp/tools_reading.go    get_chunk_context (±window by seq), read_pages (cap READ_PAGES_MAX, joined markdown,
+                                 truncated_to).
+internal/mcp/tools_docs.go       list_documents (limit≤200, filters), get_document (metadata+chunk_count),
+                                 list_collections (doc_count).
 ```
 
-(Delete the lines 58-60 post-filter block and `_doc_collection`; body.collection outside key scope still yields zero rows — both conditions are `must`s, preserving prior semantics without the truncation bug.)
+Tool descriptions copy the 1.0 strings verbatim (they are part of the agent-facing contract; the Playground UI renders them).
 
-**Tests** (`tests/test_retrieval_bm25.py`, root suite): (1) `build_filter(collection_ids=["a","b"])` serializes to a `MatchAny` condition on `collection_id`; (2) combined with `collection_id`, both conditions present; (3) `hybrid_search(..., collection_ids=[...])` forwarding — assert the captured `query_points` kwargs carry the `MatchAny` filter in both prefetches.
+### 2.3 `cmd/lybrix-server/main.go`
 
-### 2b. R-17: page the Qdrant upsert
+Subcommands: `serve` (API + MCP + janitor goroutine in one process), `splitter`, `parser`, `embedder` (worker loops for the ingest profile), `janitor` (standalone, compose parity), `keys bootstrap`, `migrate` (schema.sql apply, for the compose `migrate`-style one-shot if preferred over boot-time apply). `--tags anydoc` linkage is compile-time, not runtime.
 
-**Edit `libs/retrieval/src/retrieval/qdrant.py:113-140`** (`upsert_chunks` body, after building `qpoints`):
+### 2.4 Phase 2 tests & acceptance
 
-```python
-    # Page the upsert (R-17): one ~12MB wait=True request for a whole book
-    # is the most timeout-prone shape available (the 2026-09-11 incident was
-    # exactly a Qdrant upsert timeout loop). 500-point pages keep each
-    # request small; the runner's retry/cap path then re-sends one page on a
-    # transient failure, not the whole book.
-    upsert_page = 500
-    for i in range(0, len(qpoints), upsert_page):
-        client.upsert(collection_name=name, points=qpoints[i : i + upsert_page], wait=True)
-    return len(qpoints)
-```
-
-**Test** (new `tests/test_qdrant_upsert.py` or extend `test_retrieval_bm25.py`, root suite): fake Qdrant recording `upsert` calls; 1,201 points → 3 calls of sizes [500, 500, 201]; empty list → 0 calls, returns 0; ids in each page are doc-scoped (Phase 1b).
-
-**Suite:** root (`tests/`).
+- `internal/api/*_test.go` — httptest against the router with a testcontainer ParadeDB + miniredis: full route parity (status codes, envelopes, 401/403/409/422/429), commit verify path with a fixture PDF served from a fake S3 (testcontainers MinIO), retry scopes' XADD behavior (shards→ParseJobs per failed shard + shards_failed counter unwind — the R-11 semantics from documents.py:220-258 must be preserved exactly).
+- `internal/mcp/*_test.go` — tool impls against fakes + DB fixtures: clamps, caps, scoping, partial flag, usage rows.
+- **Acceptance:** `go test ./internal/api/... ./internal/mcp/...` green; `make up-core && make up-ingest` with the new image → `curl /v1/system/health` ok; the existing web UI (`npm run dev` with `API_URL` pointed at the Go server) renders dashboard/documents/collections/pipeline/keys/usage/logs pages against live data; MCP playground round-trips `tools/list` + `search`.
 
 ---
 
-## Phase 3 — R-15 (server-side sha256) + R-21 (upload validation) + R-16 (token budget)
+## 3. Phase 3 — Pipeline & parsers (Go)
 
-### 3a. R-15 + R-21: one streaming pass at commit — hash + magic bytes + page cap
+### 3.1 `internal/pipeline/splitter.go` — pdfcpu shard splitter
 
-**Objective:** At commit, stream the raw object from MinIO once: verify the client hash, check the `%PDF-` magic, and enforce the PRD §11 page-count cap. (One download serves all three; raw copy in `raw/` becomes a verified original.)
+`Split(ctx, srcPath) (Bounds, error)`: page count via pdfcpu; outline extraction via pdfcpu bookmarks (7-bit + UTF-16 title decode; tolerant — any error → `[]`, fixed bounds fallback, per splitter.py:99-118). `FixedBounds(pageCount, shardPages, overlap=1)` and `ChapterAlignedBounds(outline, pageCount, shardPages)` are line-by-line ports of `libs/parsing/src/parsing/splitter.py` (the anti-loop guard at :44-45 and the degenerate-outline fallback at :94-95 are mandatory — they were both bugfixes). Writes shard rows + fans out `doc.parse` jobs; idempotency probe on `(doc_id, 0)` per splitter.py:32-40.
 
-**Edit `services/api/pyproject.toml`:** add `"pypdfium2>=4.30"` to dependencies.
+### 3.2 `internal/pipeline/gate.go` — OCR/text-density gate
 
-**Edit `libs/core/src/core/config.py`:** add near the ingest settings:
+Port of `ocr_gate.py`: per-page text-layer char counts (pdfcpu `ExtractText` per page over the shard's page range — C-go pdfium binding `github.com/gen2brain/go-fzumabin`/`pdfium` is **not** needed; pdfcpu text extraction is pure Go and sufficient for a mean-chars threshold), `mean < OCR_MIN_CHARS_PER_PAGE(20) → needs_ocr`, persist `mean_chars_per_page` on the shard row (new column, already in schema 1.3).
 
-```python
-    max_document_pages: int = Field(default=800, description="PRD §11 page-count cap; reject over-cap PDFs at commit")
+### 3.3 `third_party/anydoc-go/` + `internal/pipeline/anydoc.go` — CGO fast path
+
+```
+third_party/anydoc-go/
+  include/anydoc.h          extern "C" API: anydoc_convert(buf*, len, format, out_buf**, out_len, err_buf)
+  lib/linux_amd64_gnu/libanydoc_go.a   built by scripts/build-anydoc-lib.sh (cargo build --release → cbindgen
+                            header → ar). The Rust crate is vendored/cloned here (Firecrawl anydoc), NOT reimplemented.
+  README.md                 build + vendoring instructions, thread-safety notes.
+scripts/build-anydoc-lib.sh Cargo → staticlib → copy .a into lib/<target_triple>/; cbindgen → include/.
 ```
 
-**Edit `services/api/src/api/routers/documents.py`** — add helper and wire into `commit` (before the dedupe check, after the backlog gate):
+`internal/pipeline/anydoc.go`:
+```go
+//go:build anydoc
+// #cgo CFLAGS: -I${SRCDIR}/../../third_party/anydoc-go/include
+// #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../third_party/anydoc-go/lib/linux_amd64_gnu -lanydoc_go -lm -lstdc++
+// #include "anydoc.h"
+import "C"
 
-```python
-import hashlib
-import tempfile
-from pathlib import Path
+type AnyDocParser struct{}
+func (AnyDocParser) Parse(ctx context.Context, req ParseRequest) (ParseResult, error) {
+    runtime.LockOSThread(); defer runtime.UnlockOSThread()   // thread-local error registers (blueprint §4.1)
+    …C.anydoc_convert… → markdown bytes
+}
+```
+A `//go:build !anydoc` twin (`anydoc_stub.go`) returns `ErrAnyDocUnavailable` so the default CI build compiles and the fast path is simply never selected (gate falls through to docling). Selection lives in the parser service wiring, not the call site.
 
-def _verify_raw_object(s3c, bucket: str, key: str, client_sha: str, max_pages: int) -> None:
-    """Stream the raw object once: sha256 + magic bytes + page cap (R-15/R-21).
+### 3.4 `internal/pipeline/docling_client.go` — docling-serve fallback
 
-    PRD §6.1: the API — not the client — owns the dedupe key; §11: reject
-    non-PDFs and over-cap books at the door rather than inside a parser.
-    Raises HTTPException; the temp file lives only for the pdfium probe."""
-    import pypdfium2 as pdfium
+HTTP client for `POST {DOCLING_URL}/v1/convert/file` (multipart: file + `body` JSON options `{"to_formats":["md"],"do_ocr":true,"do_table_structure":…}`), response `{"document":{"md_content": …}}`. Resilience identical to `libs/embedding/client.py`: jittered exponential backoff on 429/503/transport, circuit breaker after 5 consecutive failures → typed retryable `OCR_FAILED`/`EMBED_UNAVAILABLE`-class error, non-retryable 4xx fail-fast. Timeout per shard: 15–20s expected → client timeout 120s, context-cancellable.
 
-    digest = hashlib.sha256()
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
-        obj = s3c.get_object(Bucket=bucket, Key=key)
-        stream = obj["Body"]
-        head = stream.read(5)
-        digest.update(head)
-        if head != b"%PDF-":
-            raise HTTPException(status_code=400, detail="uploaded object is not a PDF")
-        tmp.write(head)
-        for chunk in stream.iter_chunks():
-            digest.update(chunk)
-            tmp.write(chunk)
-        tmp.flush()
-        if digest.hexdigest() != client_sha:
-            raise HTTPException(status_code=400, detail="content_sha256 mismatch")
-        try:
-            page_count = len(pdfium.PdfDocument(tmp.name))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"unreadable PDF: {exc}") from exc
-        if page_count > max_pages:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{page_count} pages over cap {max_pages}",
-            )
+### 3.5 `internal/pipeline/parser.go` — the two-tier flow + retry ladder
+
+```
+ParseRequest{PDFBytes|Path, PageStart, PageEnd, Attempt, ShardPages}
+ParseResult{Markdown string, NeedsOCR bool, MeanCharsPerPage float64, DurationMS, PeakRSSMB, Engine ("anydoc"|"docling")}
+```
+Flow (blueprint §4.2): OCR-gate first (cheap) → born-digital → anydoc in-process (shard-level, never per-page) → yield check `len(md)/pages ≥ 50` chars → accept; else scanned/complex → docling-serve whole-shard multipart POST. Retry ladder ported exactly from parser.py:44-53 + `_split_and_requeue` (:56-98): attempt 2 → quarter-split (`overlap=0`, disjoint tiling — mandatory comment), 3 → single-page, ≥4 → text-only (docling with `do_table_structure=false`); parent shard → `skipped`, sub-shard idx continues after parent (NextShardIdx), `total_shards` grows, `SHARD_RESPLIT` event. PDF cache (`PARSER_PDF_CACHE_DIR`, atomic os.replace store, copy-not-link) ported. Parser consumer: prefetch=1, recycle_after=PARSER_RECYCLE_AFTER (clean exit on job boundary), claim→ladder→parse→upload markdown→MarkShardDone→book_settled→enqueue embed. `SHARD_OOM`/`SHARD_TIMEOUT` taxonomy preserved; Go GC makes SoftOOM moot but the RSS recording stays (peak via `runtime.MemStats`/cgroup read).
+
+### 3.6 `internal/pipeline/chunker.go` — hierarchical parent–child
+
+New algorithm (replaces flat 512-window `chunking/hybrid.py`):
+```
+type ChildChunk {Text, Seq, ChunkHash, TokenCount, ParentSeq, PageStart, PageEnd, HeadingPath []string, Breadcrumb string}
+type ParentChunk {Text, Seq, ChunkHash, TokenCount, PageStart, PageEnd, HeadingPath []string}
+ChunkHierarchical(markdown string, linePageMap []int, tok Tokenizer) (parents []ParentChunk, children []ChildChunk)
+type Tokenizer interface{ Count(string) int }   // impls: WhitespaceTokenizer (default), optional HF-backed later
+```
+- Sections from markdown ATX headings (fence-aware `_sections` port of hybrid.py:117-163 — same heading-path stack semantics).
+- **Parent** = one section's text snapped to headings, capped at 2048 tokens: an over-budget section is split at sub-heading boundaries, else hard-cut at 4096; `is_parent=true`, no embedding, carries `heading_path` + full text.
+- **Child** = sliding window inside its parent: 384 tokens, 64-token stride overlap; each child stores `parent_id` (set post-insert by parent seq), `header_breadcrumb = "Doc Title > Chapter > Section"` (rendered from heading stack + doc title), `heading_path[]`, per-window page range (R-13 per-line page map ported from hybrid.py:59-84 — windows must carry their own line numbers, not the section's span).
+- Child text passed to the embedder is **breadcrumb-prefixed** (`"[Doc > Chapter > Section] " + text`) per blueprint §5; stored text stays unprefixed, prefix applied at embed time (keeps read_pages/get_chunk_context output clean and chunk_hash stable across prefix changes).
+- `drop_duplicate_neighbours` ported (dedupe adjacent identical hashes from shard overlap).
+- Hash: sha256 of whitespace-normalized text, as 1.0.
+
+### 3.7 `internal/pipeline/embedder.go` — TEI/Ollama batch embedder
+
+Port of `libs/embedding/client.py` + `embedder.py`: TeiClient (backend tei|ollama, `/embed` vs `/api/embed` shape normalization, truncate_chars, jittered backoff 0.5→30s cap, breaker threshold 5 → retryable `EMBED_UNAVAILABLE`), token-budgeted batching (`PlanBatches` port of embedder.py:60-86, budget EMBED_CTX_BUDGET=1900, batch size 48; estimated token count = whitespace-token count — document that 1.0 used the HF tokenizer and 2.0 uses the whitespace heuristic that the chunker already standardized on; the budget exists to protect the backend, and the 6000-char truncate is the hard backstop). Embed flow: load done shards (page_start order) → parallel S3 prefetch (8 workers) → stitch (boundary-heading dedupe + per-line page map, stitch.py port) → `ChunkHierarchical` → insert parents + children (`ON CONFLICT DO NOTHING`) → embed children in batches → `UPDATE chunks SET embedding = $vec` batched by COPY into a temp table → doc ready/partial + completeness + chunk_count. Embed failure cap (Redis counter `embed:retries:{doc_id}`, 6h expiry, EMBED_MAX_ATTEMPTS=5 → FAILED terminal) ported verbatim.
+
+### 3.8 `internal/worker/` — runner + janitor
+
+```
+internal/worker/runner.go    runConsumer(stream, consumer, handler, prefetch, blockMs, recycleAfter): XREADGROUP →
+                             handler in one PG tx → ACK+XDEL on commit; error → on_error hook (events row w/ taxonomy
+                             code), entry stays in PEL; loop never dies on transient blips (5s backoff). This is the
+                             single place retry/ack semantics live, mirroring runner.py's contract comment-for-comment.
+internal/worker/janitor.go   janitorPass 7 steps ported 1:1 from janitor.py (reaper → escalate → split requeue w/
+                             pending_job_doc_ids dedup + no-blind-add-on-scan-failure → XAUTOCLAIM reclaim w/ delivery
+                             cap max(5, MAX_SHARD_ATTEMPTS+1) + quarantine → settled-book embed rescue → stuck-doc
+                             warning → minute-bucket metrics rollup w/ pct() from shards.done_at). Interval JANITOR_INTERVAL_S.
 ```
 
-In `commit`, after the backlog check:
+### 3.9 Phase 3 tests & acceptance
 
-```python
-    raw_key_str = s3.raw_key(doc_id)
-    _verify_raw_object(
-        s3.make_s3(), get_settings().s3_bucket_raw, raw_key_str, body.content_sha256,
-        get_settings().max_document_pages,
-    )
-```
-
-…and use the **verified** hash (`body.content_sha256`) for dedupe + the row as today (it now equals the server-computed value or the request 400s). Wrap `s3c.get_object` `ClientError` → 400 "object not uploaded" so a skipped PUT reads as a client error, not a 500.
-
-**Tests `tests/test_commit_router.py`** (root suite): fake s3 whose `get_object` returns a body with `read`/`iter_chunks` yielding canned bytes; monkeypatch `pypdfium2.PdfDocument` to return a sized fake. Assert: (1) matching hash + `%PDF-` magic + pages ≤ cap → commit proceeds, SplitJob XADDed; (2) hash mismatch → 400, no XADD, no DB row; (3) wrong magic → 400; (4) pages over `max_document_pages` → 400; (5) MinIO ClientError → 400.
-
-**Suite:** root (`tests/`).
-
-### 3b. R-16: config-plumb the token budget + cache the tokenizer
-
-**Edit `libs/core/src/core/config.py`:** add beside `embed_batch_size` (config.py:47):
-
-```python
-    embed_ctx_budget: int = Field(
-        default=1900,
-        description="Max tokenizer tokens per embed request. Pin per backend: "
-        "ollama rejects >2048 of its own tokens (empirically pinned 2026-09-14); "
-        "TEI's bge-m3 ctx is 8192, so TEI deployments can raise this ~4x.",
-    )
-```
-
-**Edit `services/workers/src/workers/embedder.py`:**
-
-Module level (after `PREFETCH_WORKERS`):
-
-```python
-_TOKENIZER_CACHE: dict[str, object] = {}
-
-
-def _get_tokenizer(model: str):
-    """Load once per process (R-16): handle_embed used to re-read the
-    tokenizer from disk on every job."""
-    tok = _TOKENIZER_CACHE.get(model)
-    if tok is None:
-        from transformers import AutoTokenizer
-
-        tok = AutoTokenizer.from_pretrained(model)
-        _TOKENIZER_CACHE[model] = tok
-    return tok
-
-
-def plan_batches(chunks, tok, ctx_budget: int, batch_size: int) -> list[list]:
-    """Greedy token-budgeted batching, extracted from handle_embed so the
-    budget semantics are unit-testable without transformers or TEI."""
-    batches: list[list] = []
-    cur: list = []
-    cur_tokens = 0
-    for c in chunks:
-        t = len(tok(c.text, add_special_tokens=False)["input_ids"])
-        if t > ctx_budget:
-            # pathological single chunk: hard-cut to the token budget
-            import dataclasses
-
-            ids = tok(c.text, truncation=True, max_length=ctx_budget,
-                      add_special_tokens=False)["input_ids"]
-            c = dataclasses.replace(c, text=tok.decode(ids))
-        if cur and cur_tokens + t > ctx_budget or len(cur) >= batch_size:
-            batches.append(cur)
-            cur, cur_tokens = [], 0
-        cur.append(c)
-        cur_tokens += t
-    if cur:
-        batches.append(cur)
-    return batches
-```
-
-In `handle_embed`, replace lines 168-204 with:
-
-```python
-        tok = _get_tokenizer(s.embed_model)  # never a hardcoded model name (R-16)
-        # Budget comes from Settings — the 1900 default is the ollama pin;
-        # TEI's 8192 ctx means the TEI path should raise EMBED_CTX_BUDGET.
-        batches = plan_batches(chunks, tok, s.embed_ctx_budget, s.embed_batch_size)
-```
-
-(Keep the existing comment block explaining the pin, moved next to the Settings field; the per-request loop `for group in batches:` below is unchanged.)
-
-**Tests:**
-- `services/workers/tests/test_embedder_batches.py` (workers suite): `plan_batches` with a fake tokenizer (word-count × 2) — batches respect ctx_budget, oversized chunk is hard-cut to budget, `embed_batch_size` cap honored, budget from argument (not constant).
-- `tests/test_config.py` (root): `Settings(embed_ctx_budget=8000, _env_file=None)` plumbs through; default is 1900.
-
-**Suite:** workers (`services/workers/tests/`) + root for the config test.
+- `internal/pipeline/splitter_test.go` — fixed/chapter-aligned bounds vs 1.0 fixtures (port `tests/test_splitter.py` cases verbatim, incl. shard_pages=1 anti-loop and degenerate outline).
+- `internal/pipeline/gate_test.go` — fixture PDFs (text-layer page, scanned page) → verdict thresholds.
+- `internal/pipeline/anydoc_test.go` (tag `anydoc`) — fixture PDF/DOCX bytes → markdown, ≥50 chars/page yield check; stub test (no tag) asserts stub error type.
+- `internal/pipeline/docling_client_test.go` — httptest server: success shape, 429/503 backoff, breaker opens at 5, non-retryable 4xx.
+- `internal/pipeline/chunker_test.go` — parent caps (2048/4096), child window 384/stride 64, breadcrumb rendering, per-window page ranges from line map, neighbour dedupe; golden cases ported from `tests/test_chunking.py` where semantics carry over.
+- `internal/pipeline/embedder_test.go` — PlanBatches budget math (port `test_embedder_batches.py`), stitch boundary dedupe (`test_stitch.py`), retry cap counters, idempotent insert.
+- `internal/worker/runner_test.go`, `janitor_test.go` — port `test_ack_trim.py`, `test_janitor_*.py`, `test_runner_recycle.py`, `test_retry_ladder.py` semantics: ack+XDEL, PEL retention on failure, recycle exit boundary, reclaim cap → quarantine DLQ row, embed rescue dedup.
+- **Acceptance:** `go test ./...` green (unit lanes); `docker compose --profile ingest up` end-to-end: upload a 60-page fixture PDF via the web UI → shards created (~3×20p) → parser logs show anydoc fast-path (<100ms/shard) → children+parents in ParadeDB → doc `ready` with completeness 1.0 → `/v1/search` returns citations with correct page ranges → a forced failure (kill parser mid-shard) recovers via lease reaper without losing the shard.
 
 ---
 
-## Phase 4 — R-13: window-level page citations
+## 4. Phase 4 — Evaluation & rollout (hard cut)
 
-**Objective:** Each window cites its own first/last line's pages, not the section's.
+### 4.1 `cmd/lybrix-eval/` — Go eval harness (replaces `scripts/eval`)
 
-**Edit `libs/chunking/src/chunking/hybrid.py`:** carry `(line_no, word)` pairs through the pack.
+Port of `scripts/eval/run.py` + `judge.py` + `compare.py`: loads `scripts/eval/datasets/seed.jsonl` (unchanged golden set), calls the live MCP endpoint (streamable HTTP, bearer key; `initialize`→`tools/call search`), computes hit@top-k / MRR / hit_at_top_k semantics identical to the Python harness (`run.py` flags: `--dataset --top-k --label --junk-filter --collection`), writes results JSON + human summary MD to `scripts/eval/results/` (directory kept), `compare.py` equivalent flags `--baseline --candidate` for pre/post deltas. `scripts/eval/README.md` rewritten for the Go command.
 
-1. `_sections` returns `(heading_path, body_lines, ...)` where `body_lines: list[tuple[int, str]]` — `(global_line_no, text)` pairs instead of a joined `str` body (internal function; the only caller is `chunk_markdown`). Track line numbers alongside `current` (append `(line_no, line)`); `start_line`/`end_line` stay for the first/last section bound.
-2. `chunk_markdown` pack loop:
+### 4.2 Rollout sequence (hard cut, per user decision)
 
-```python
-    for heading_path, body_lines, _start, _end in _sections(markdown):
-        words = [(w, ln) for ln, line in body_lines for w in line.split()]
-        if not words:
-            continue
-        window: list[tuple[str, int]] = []
-        window_tokens = 0
-        for word, line_no in words:
-            t = count(word)
-            if window and window_tokens + t > max_tokens:
-                _emit(chunks, heading_path, window, count, pages)
-                window, window_tokens = [], 0
-            window.append((word, line_no))
-            window_tokens += t
-        if window:
-            _emit(chunks, heading_path, window, count, pages, min_tokens=min_tokens)
-```
+1. Ship the branch; CI green (Go lanes + web build).
+2. `make down-core && make down-ingest` on both hosts; **drop the old Postgres `rag` DB** (corpus is re-ingested; no data migration — hard cut) or use a fresh `rag2` DB and point `DATABASE_URL` at it. Qdrant volume retired after final export sanity check (`curl :6333/collections` snapshot for the record, then discard).
+3. `make up-core` (paradedb + lybrix-server serve + web) → `lybrix-server keys bootstrap` → re-create the `API_ADMIN_KEY`/`MCP_API_KEY` values in the web env.
+4. `make up-ingest` (lybrix-server workers + docling-serve + tei planes).
+5. Re-ingest the Calibre corpus (upload pipeline unchanged; `scripts/backfill` equivalent = `lybrix-eval`'s collection loader or a `lybrix-server admin ingest-dir` convenience subcommand — keep scope minimal: batch `presign/commit` via a small Go loop inside `cmd/lybrix-eval` is enough).
+6. Evaluate: run `lybrix-eval` against the golden set; acceptance = hit@8 ≥ 1.0-baseline (53% dense-only / improved with BM25-weight 0.15 per PLAN.md history) and no per-query crash; any regression → tune RRF weights in `internal/store/search.go` SQL (`dense_weight 1.0 / bm25 0.3` per blueprint §5 — note blueprint says 0.3 where 1.0 measured 0.15; start at 0.3, A/B down if eval regresses).
+7. Decommission: delete `services/{api,mcp,workers}/`, `libs/`, `migrations/`, `tests/`, root `pyproject.toml`/`uv.lock`/`.python-version`/`.ruff_cache`/`.pytest_cache`, all Python scripts (`scripts/backfill.py`, `scripts/reembed.py`, `scripts/reindex.py`, `scripts/ops_backfill_sparse.py`, and the full `scripts/eval/*.py` harness per §5), old `.env.example` entries; update `CLAUDE.md` (commands, architecture, milestone paragraph), `docs/adr/0003-web-stack.md` addendum, `README.md`. `services/web` stays; `services/web/openapi.json` snapshot stays as the contract artifact.
+8. Update `docs/BACKLOG.md`: close rows whose fixes were 1.0-code-specific with a "superseded by 2.0 rewrite" note where the fix must be re-validated; carry forward any still-open rows as Go-port requirements (the implementer must check each open row against this plan).
 
-3. `_emit(chunks, heading_path, window_words, count, pages=None, min_tokens=0)`:
+### 4.3 Phase 4 acceptance
 
-```python
-    text = " ".join(w for w, _ in window_words)
-    if heading_path:
-        text = "\n\n".join([heading_path[-1], text])
-    if count(text) < min_tokens:
-        return
-    h = hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
-    page_start = pages[window_words[0][1]] if pages else None
-    page_end = pages[window_words[-1][1]] if pages else None
-```
-
-(R-10's section-level behavior is preserved for single-window sections — `tests/test_chunking.py:67-79` expectations still hold: first window starts at the first body word's line, last window ends at the section's last word. Text and hashes are unchanged; only page bounds tighten.)
-
-**Tests** (`tests/test_chunking.py`, root suite): new `test_windows_carry_own_page_range` — a 10-line single-section body with `max_tokens` forcing 3 windows and a line→page map; assert the 3 chunks have strictly increasing `page_start`s and each `page_start < section_end` (previously all three shared the section range). Keep the two existing page tests green.
-
-**Suite:** root (`tests/`).
+- `go test ./...` fully green including the `anydoc` tag lane on the ingest host.
+- Golden-set eval: `hit@8` ≥ baseline, zero endpoint errors, MRR within tolerance of 1.0 numbers.
+- Web UI smoke: upload → pipeline page live SSE progress → ready → search works from the playground.
+- Janitor drill: `docker kill` a parser mid-book → recovery within one pass; wipe Redis → janitor re-enqueues all non-terminal docs (no blind re-add); poison job → DLQ events row after cap.
+- `make lint` (golangci-lint) zero errors; `govulncheck` clean.
 
 ---
 
-## Phase 5 — Retry-ladder sub-sharding (M2, PRD §6.3)
+## 5. Complete file inventory
 
-**Objective:** Implement ladder attempts 2-4 in `handle_parse`: attempt 2 re-splits the shard into 4 sub-shards of `SHARD_PAGES/4`; attempt 3 into single pages; attempt ≥4 converts text-only (table structure off); final failure path unchanged (janitor escalation already handles attempts ≥ `max_shard_attempts`).
+**Create:** `go.mod`, `go.sum`, `Makefile` (rewrite), `.golangci.yml`, `.github/workflows/ci.yml` (rewrite), `deploy/schema.sql`, `deploy/Dockerfile.lybrix`, `deploy/.env.example`, `cmd/lybrix-server/main.go`, `cmd/lybrix-eval/main.go`, `internal/{config,errors,logging,objectstore,queue,store,api,mcp,pipeline,worker}/…` (files as §1.4/§2/§3), `third_party/anydoc-go/{include/anydoc.h,lib/…,README.md}`, `scripts/build-anydoc-lib.sh`, `internal/**/*_test.go` (~25 files).
+**Modify:** `deploy/docker-compose.yml`, `services/web/openapi.json` (only if a field is intentionally renamed — default: no changes), `services/web/README` refs, `CLAUDE.md`, `README.md`, `docs/BACKLOG.md`, `scripts/eval/README.md`, `LYBRIX_2.0_EVOLUTION_PLAN.md` (append "implemented" status notes per phase).
+**Replace:** root `PLAN.md` ← this plan (step 0).
+**Delete (Phase 4, step 7 only):** `services/api/`, `services/mcp/`, `services/workers/`, `libs/`, `migrations/`, `tests/`, `scripts/{backfill,reembed,reindex,ops_backfill_sparse}.py`, **and the entire Python eval harness `scripts/eval/*.py` — `run.py`, `judge.py`, `compare.py`, `dataset.py`, `filters.py`, `mcp_client.py`, `__init__.py`** (superseded by `cmd/lybrix-eval`; the golden set `scripts/eval/datasets/seed.jsonl`, the results directory `scripts/eval/results/`, and a rewritten `scripts/eval/README.md` stay), `pyproject.toml`, `uv.lock`, `.python-version`, CI python steps. `services/web/` and `docs/` stay. **Zero custom Python remains in the repo after Phase 4** — verify with `find . -name '*.py' -not -path './services/web/node_modules/*'` returning nothing.
 
-**Key design decisions (validated against code):**
-- Attempt number = `shard.attempts` after `claim_shard` (repo.py:85 increments then returns).
-- Sub-shards get **new `idx` values** (max idx per doc + 1 + i) and the embedder's shard query (`embedder.py:100-103`) switches `order_by(Shard.idx)` → `order_by(Shard.page_start)` so stitched page order stays correct regardless of idx. Normal books are unaffected (idx order == page_start order for `fixed_bounds`/`chapter_aligned_bounds`).
-- The parent shard becomes `ShardState.SKIPPED` (exists in `ShardState`, models.py:55; embedder selects only `state=="done"`, so skipped parents are excluded from embed — correct).
-- `Document.total_shards` must grow by the sub-shard count or `book_settled` (repo.py:145-149) never fires.
-- Text-only attempt builds the converter with a settings copy: `s.model_copy(update={"parsing_do_table_structure": False})` — `converter_cache_key` already includes `parsing_do_table_structure` (converter.py:73), so the cache separates the variants for free.
+## 6. Verification (end-to-end)
 
-**Edit `libs/core/src/core/db/repo.py`:** extend `insert_shards` with `start_idx: int = 0`:
-
-```python
-def insert_shards(session, doc_id, bounds, start_idx: int = 0) -> int:
-    """Insert one row per shard bound; idx runs from start_idx (retry-ladder
-    sub-shards continue after the parent's idx so idx stays unique per doc)."""
-    session.add_all(
-        [
-            Shard(doc_id=doc_id, idx=start_idx + i, page_start=s, page_end=e)
-            for i, (s, e) in enumerate(bounds)
-        ]
-    )
-    return len(bounds)
-```
-
-plus a helper `next_shard_idx(session, doc_id) -> int` (`select(func.max(Shard.idx)).where(Shard.doc_id == doc_id)` + 1) and `skip_shard(session, doc_id, idx)` setting state SKIPPED.
-
-**Edit `services/workers/src/workers/parser.py`:** after `claim_shard` returns a shard (line 55-58), before the PDF work:
-
-```python
-    # Retry ladder (PRD §6.3) — attempts are not identical. claim_shard
-    # already incremented attempts, so shard.attempts IS this attempt's number.
-    if shard.attempts >= 2:
-        ladder = _ladder_action(shard, s)
-        if ladder == "split":
-            return _split_and_requeue(session, redis, doc, shard, s)
-        # "text_only": fall through with a degraded converter config
-```
-
-with module functions:
-
-```python
-def _ladder_action(shard, s: Settings) -> str:
-    """Attempt 2: quarter-split; attempt 3: single-page; attempt >=4:
-    text-only convert. A shard too small to split skips straight to
-    text-only. Return "split"|"text_only"."""
-    span = shard.page_end - shard.page_start + 1
-    if shard.attempts == 2 and span >= 4 * max(1, s.shard_pages // 4) // 2:  # worth quarter-splitting
-        return "split"
-    if shard.attempts == 3 and span >= 2:
-        return "split"  # single-page sub-shards
-    return "text_only"
-
-
-def _split_and_requeue(session, redis, doc, shard, s: Settings) -> None:
-    """Replace a failing shard with finer sub-shards (ladder attempts 2-3).
-    The parent becomes SKIPPED; each sub-shard is a fresh ParseJob."""
-    from core.queue import contracts, streams as st
-
-    span = shard.page_end - shard.page_start + 1
-    shard_pages = 1 if shard.attempts >= 3 else max(1, span // 4)
-    bounds = [
-        (shard.page_start + b.page_start - 1, shard.page_start + b.page_end - 1)
-        for b in parsing_splitter_fixed_bounds(span, shard_pages, overlap=0)
-        # overlap=0 is required: sub-shards must tile the parent disjointly
-        # (fixed_bounds' default overlap=1 would emit overlapping bounds —
-        # a span-20 attempt-2 shard would yield 5 overlapping bounds like
-        # [1-5],[5-9],[9-13],... instead of 4 disjoint ones, double-counting
-        # total_shards and re-parsing boundary pages).
-    ]
-    start_idx = repo.next_shard_idx(session, doc.id)
-    repo.skip_shard(session, doc.id, shard.idx)
-    repo.insert_shards(session, doc.id, bounds, start_idx=start_idx)
-    doc.total_shards = (doc.total_shards or 0) + len(bounds)
-    session.flush()
-    for i, (ps, pe) in enumerate(bounds):
-        st.xadd_job(
-            redis, st.STREAM_PARSE,
-            contracts.ParseJob(
-                doc_id=doc.id, idx=start_idx + i, page_start=ps, page_end=pe,
-                source_uri=doc.source_uri,
-            ),
-        )
-    from core.events import write_event
-
-    write_event(
-        session, "warn", "parse", 
-        f"shard {shard.idx} re-split into {len(bounds)} sub-shards "
-        f"(ladder attempt {shard.attempts})",
-        doc_id=doc.id, shard_idx=shard.idx, code="SHARD_RESPLIT",
-    )
-```
-
-(`parsing_splitter_fixed_bounds` = `from parsing.splitter import fixed_bounds` — reused, offset by `page_start - 1`, and **always with `overlap=0`** so sub-shards tile the parent disjointly; the snippet above already passes it — `fixed_bounds` takes the param, splitter.py:22-25, default `overlap=1`. Attempt 4 / `text_only`: replace the `converter = get_converter(...)` call (parser.py:109) with `get_converter(need_ocr=verdict.needs_ocr, settings=s.model_copy(update={"parsing_do_table_structure": False}), builder=build_converter)` when the ladder says text_only and `s.parsing_do_table_structure` is still True.)
-
-**Edit `services/workers/src/workers/embedder.py:100-103`:** `.order_by(Shard.idx)` → `.order_by(Shard.page_start)` (comment: sub-shards continue idx after the parent; page_start is the true document order).
-
-**Tests `services/workers/tests/test_retry_ladder.py`** (workers suite; fake session/redis pattern of `test_embedder_retry_cap.py`, converter monkeypatched):
-1. Attempt-2 shard (span 20, SHARD_PAGES=20) → parent SKIPPED, 4 sub-shard rows of 5 pages each, 4 `ParseJob` XADDs, `total_shards` +4, `SHARD_RESPLIT` event.
-2. Attempt-3 shard (span 6) → 6 single-page sub-shards.
-3. Attempt-4 → converter receives settings with `parsing_do_table_structure=False`; shard proceeds to normal done/fail path.
-4. Small-span attempt-2 (span 2) → falls through to text_only, no split.
-5. Sub-shards embed in page order: embedder query ordered by `page_start` (assert via captured statement or a fake-session ordering check).
-
-**Suite:** workers (`services/workers/tests/`) for behavior; root suite unaffected except repo signature (root has no repo shard tests — verify `make test` stays green).
-
----
-
-## Phase 6 — Metrics rollup writer (§10.1) + R-18 (embedded_at)
-
-**Objective:** Janitor writes one `metrics_rollup` row per minute bucket from real data; embedder stamps `chunks.embedded_at`.
-
-**Migration `migrations/versions/0004_shard_done_at.py`:** revision id `0004_shard_done_at`, `down_revision = "0003_api_key_expiry_usage"` — the chain is already `0001_initial → 0002_parsed_uri_md → 0003_api_key_expiry_usage` (verified: `migrations/versions/0003_api_key_expiry_usage.py:19-20`), so id 0002/0003 are taken and a new 0002 would break `alembic upgrade head`. Content: `op.add_column("shards", sa.Column("done_at", sa.DateTime(timezone=True), nullable=True))` (+ index `ix_shards_done_at`); downgrade drops both. (Needed because shards carry no completion timestamp — the rollup needs per-minute windows for pages/p50/p95.)
-
-**Edit `libs/core/src/core/db/models.py` (Shard):** `done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)`; add `MetricsRollup` model mirroring migration 0001:128-143 columns exactly (bucket PK TIMESTAMPTZ, pages_parsed, shards_done, shards_failed, chunks_embedded, parse_p50_ms, parse_p95_ms, peak_rss_p95_mb, queue_depth JSONB, search_p95_ms, search_count).
-
-**Edit `libs/core/src/core/db/repo.py` (`mark_shard_done`):** set `shard.done_at = datetime.now(UTC)` alongside state DONE.
-
-**Edit `services/workers/src/workers/embedder.py` (chunk insert, ~line 142):** add `embedded_at=func.now()` to the `pg_insert(Chunk).values(...)` — sets R-18's column on first insert (ON CONFLICT DO NOTHING keeps the original stamp on re-delivery, which is the desired semantics).
-
-**Edit `services/workers/src/workers/janitor.py`:** module-level `_last_bucket: datetime | None = None` and a `write_metrics_rollup(session, redis, settings)` step run at the end of `janitor_pass` when the current minute bucket > `_last_bucket`:
-
-```python
-def write_metrics_rollup(session, redis, settings: Settings) -> bool:
-    """One row per minute bucket (PRD §10.1): per-minute deltas from the
-    previous bucket's snapshot + windowed p50/p95 from shards.done_at.
-    search_p95_ms/search_count stay None for now — no search-latency
-    capture exists yet (UsageMiddleware records counts, not durations)."""
-    now = datetime.now(UTC)
-    bucket = now.replace(second=0, microsecond=0)
-    window_start = bucket - timedelta(minutes=1)
-    rows = (
-        session.execute(
-            select(Shard).where(Shard.done_at.is_not(None), Shard.done_at >= window_start, Shard.done_at < bucket)
-        ).scalars().all()
-    )
-    if not rows and _last_bucket == bucket:
-        return False
-    durations = sorted(r.duration_ms or 0 for r in rows)
-    def pct(sorted_list, p):
-        if not sorted_list:
-            return None
-        i = max(0, round((len(sorted_list) - 1) * p / 100))
-        return sorted_list[i]
-    queue_depth = {name: streams.queue_depth(redis, name) for name in streams.ALL_STREAMS}  # try/except → {}
-    from core.db.models import MetricsRollup
-
-    session.merge(MetricsRollup(
-        bucket=bucket,
-        pages_parsed=sum(r.page_end - r.page_start + 1 for r in rows),
-        shards_done=len(rows),
-        shards_failed=sum(1 for r in rows if r.state == "failed"),
-        chunks_embedded=...,  # count(Chunk) where embedded_at in window — same pattern
-        parse_p50_ms=pct(durations, 50),
-        parse_p95_ms=pct(durations, 95),
-        peak_rss_p95_mb=pct(sorted(r.peak_rss_mb or 0 for r in rows), 95),
-        queue_depth=queue_depth,
-    ))
-    return True
-```
-
-(`session.merge` = idempotent upsert on the bucket PK; `_last_bucket` updated on success — janitor is a single process, restart just re-writes one bucket. Wire as step 7 in `janitor_pass` before the return; add `"rollup": 0/1` to the counters dict.)
-
-**Tests:**
-- `services/workers/tests/test_metrics_rollup.py` (workers suite): fake session capturing the merged object + canned shards in-window → assert pages_parsed sum, p50/p95 by index, bucket floor to the minute, second call in the same minute is a no-op.
-- Root `tests/` : none needed beyond existing suites staying green (model is exercised via the workers test).
-
-**Suite:** workers (`services/workers/tests/`).
-
----
-
-## Phase 7 — Minor fixes (README, read-endpoint auth, eval key bug, `/pipeline` swallow, prefix A/B toggle)
-
-### 7a. README + CLAUDE.md drift (minor 1)
-**Edit `README.md:56-57`:** replace the two phantom targets with the real ones:
-
-```markdown
-make up-ingest    # parsers run as discrete replicas (worker-parser..worker-parser-4)
-make down-ingest  # docker compose down on the ingest profile — stops consumers immediately
-```
-
-(The `down-ingest` comment must describe what the target does: `docker compose --profile ingest down` kills consumers immediately. "Let in-flight shards finish" is `drain` semantics — a target that does not exist — and must not be documented as `down-ingest` behavior. If drain semantics are wanted later, implement `make drain` explicitly; not in scope here.)
-
-**Edit `CLAUDE.md:31-32` in the same commit:** the Commands section documents the same phantom `make scale N=8` and `make drain` targets (the Makefile has neither — fixing only README.md leaves the drift exactly where future sessions trip on it). Replace both lines with the real targets, matching the README wording:
-
-```markdown
-make up-ingest   # parsers run as discrete replicas (worker-parser..worker-parser-4)
-make down-ingest # docker compose down on the ingest profile — stops consumers immediately
-```
-
-While in README.md, also correct the stale Status section (README.md:90-95 — still says rerank is stubbed; it is implemented per `db1ffa9`/`6c5b5b1`).
-
-### 7b. Read-endpoint auth (minor 2)
-**Edit `services/api/src/api/routers/documents.py`:** add `key=Depends(require_scope("search"))` to `list_documents` (:92), `get_document` (:111), `get_shards` (:121); **edit `collections.py:22`** likewise for `list_collections`.
-
-**Required companion (or the admin UI breaks) — route the gated browser calls through the existing session-gated proxy.** The pages consuming the newly-gated endpoints are **client components** fetching from the browser via the same-origin rewrite, which carries **no header**: `services/web/app/(dashboard)/documents/page.tsx:1` is `"use client"` and fetches via `useDocuments()` → `/v1/documents` (same for `collections/page.tsx:1` → `/v1/collections`, and detail pages via `useDocument`/`useShards` in `services/web/lib/queries.ts`). Those calls will 401 the moment `require_scope("search")` lands. Fix, per call path:
-
-1. **Browser calls to gated endpoints** (`useDocuments`, `useDocument`, `useShards`, `useCollections`): change the generated-SDK call sites to go through the existing session-gated same-origin proxy `/api/admin/v1/*` (handler: `services/web/app/api/admin/[...path]/route.ts`, which verifies the session cookie then attaches `Authorization: Bearer $API_ADMIN_KEY` upstream). Concretely: edit `services/web/lib/api-client.ts` so `documents`, `document`, `shards` and `collections` hit the `/api/admin/v1/...` paths in the browser (keep the direct `/v1/...` paths when `!isBrowser`, where server components can use `API_URL` with a server-held key). The proxy already supports GET (`route.ts:35-37`) — no new proxy code needed.
-2. **`API_ADMIN_KEY` scope:** document in `.env.example` that `API_ADMIN_KEY` must carry **both** `admin` and `search` scopes (`VALID_SCOPES` in `services/mcp/src/mcp_server/auth.py:15` — no superset logic exists in `require_scope`, deps.py:74-78, so the key needs both), or every proxied dashboard read 403s.
-3. **Server components** that read these endpoints keyless via `API_URL` (`services/web/lib/oid-client.ts:12-14` wiring) keep working only if their callers are covered by the browser-path change or converted — audit each `apiClient.*` caller during implementation; any remaining server-side reader gets the bearer header attached server-side where `API_ADMIN_KEY` is already available.
-
-Verification: `npm run build` in `services/web/` must pass, and the documents + collections pages must render logged-in (they are the pages that break if step 1 is skipped).
-
-**Test** (root `tests/test_read_endpoints_auth.py`): introspect `documents.router.routes` / `collections.router.routes` — every GET route's dependant declares a `require_scope` dependency; no 401-bypass remains. (Web-side proxy routing is covered by the `services/web` build + manual page check, per repo convention — no Playwright lane exists.)
-
-### 7c. Eval hit@top_k (R-19, minor 6)
-**Edit `scripts/eval/judge.py` (CategoryStats):** add property
-
-```python
-    @property
-    def hit_at_top_k(self) -> float:
-        """Any-rank hit rate: a rank was recorded iff the expected doc
-        appeared within the run's top_k (reciprocal_ranks gets one entry
-        per hit, misses append nothing) — correct for any top_k, unlike
-        the fixed hit@1/3/8 counters."""
-        return len(self.reciprocal_ranks) / self.queries if self.queries else 0.0
-```
-
-**Edit `scripts/eval/run.py:214`:** `f"hit_at_{args.top_k}": summary.overall.hit_at_8,` → `"hit_at_top_k": summary.overall.hit_at_top_k,`; same for the console print at :239 (`hit@k={overall.hit_at_top_k:.2f}`). Check `scripts/eval/compare.py` for consumers of the old key during implementation and update its reader (keep a backwards-compat fallback for old result files).
-
-**Test** (`tests/test_eval_judge.py`, root suite): Summary with 3 queries, 2 hits (ranks 2 and 5) → `hit_at_top_k == pytest.approx(2/3)` while `hit_at_8 == 2/3` and `hit_at_1 == 1/3`; a top_k=16-shaped case where rank 12 counts for top_k but not for hit@8.
-
-### 7d. `/pipeline` lane errors (R-20, minor 7)
-**Edit `services/api/src/api/routers/system.py:160-161`:**
-
-```python
-        except Exception as exc:
-            # Mirror /queues' stance: a dead Redis must not read as an
-            # empty lane silently. waiting=None already signals unknown;
-            # make the cause explicit and visible in logs (R-20).
-            logger.warning("pipeline lane read failed for %s: %s", name, exc)
-            lane["error"] = str(exc)
-```
-
-(add `logger = logging.getLogger(__name__)` at module top; keep the `embed_backend` line-128 swallow as-is — it already surfaces `"down"` explicitly.)
-
-**Test** (`tests/test_system_queues.py`, root suite, existing fake-redis pattern): redis raising on `xinfo_groups` → `/pipeline` lane dict carries `error`, function does not raise, other lanes still populated.
-
-### 7e. Query-prefix A/B toggle (minor 5)
-**Edit `libs/core/src/core/config.py`:** `embed_query_prefix: str = Field(default="search_query: ", description="asymmetric-query prefix; empty disables (bge-m3 docs specify none — A/B via scripts/eval)")`.
-**Edit `services/api/src/api/routers/search.py:40`** → `qclient.embed([f"{s.embed_query_prefix}{body.query}"])[0]`; **edit `services/mcp/src/mcp_server/server.py:54`** — the prefix is applied inside `search_impl`, which already receives `settings: Settings` as a parameter — so the edit is directly at that line:
-
-```python
-    dense = query_embedder(f"{settings.embed_query_prefix}{query}")
-```
-
-(Not in the tool wiring: the embedder lambda at server.py:274 only passes the callable through; the `search_query:` prefix lives at server.py:54 inside `search_impl`.)
-
-**Acceptance (operational, no unit test beyond config):** with the stack up, run `uv run python -m scripts.eval.run --label prefix-on --top_k 8 ...` and `EMBED_QUERY_PREFIX=""` `--label prefix-off`, compare via `scripts/eval/compare.py`; commit the winning default and record both result files under `scripts/eval/results/` (existing convention, cf. commit `937b9a1`). Unit tests: config field default present (root `test_config.py`).
-
----
-
-# VERIFICATION (whole plan)
-
-```bash
-uv sync --locked --group dev --all-packages        # after pyproject changes (Phase 3a)
-make test                                          # root suite: retry router, point ids, hydration,
-                                                   #   build_filter, paged upsert, commit router, chunking
-                                                   #   pages, config, eval judge, system queues, auth introspection
-uv run pytest services/workers/tests/ -q           # workers suite: plan_batches, retry ladder, metrics rollup
-uv run pytest tests/ services/workers/tests/ -q    # everything (~269 + new)
-make lint                                          # uvx ruff check . (line-length 100)
-```
-
-Per-phase suite mapping: Phases 1, 2, 3a, 4, 7b-7d → root `tests/`; Phases 3b, 5, 6 → `services/workers/tests/` (+ root for config); config-field additions → root `tests/test_config.py`.
-
-Deploy/operational notes for the implementer (not CI-verifiable):
-- Phase 1b: run `uv run python -m scripts.reindex` once after deploy to re-derive point ids (Qdrant is a cache, PRD §13.5).
-- Phase 5: flip `docs/BACKLOG.md` R-11..R-21 rows to `fixed <sha>` as each lands; parser docstring TODO M2 lines (parser.py:12-14) get deleted in Phase 5; CLAUDE.md's "Still stubbed" paragraph updates in the same commit.
-- Phase 7b: confirm `API_ADMIN_KEY` carries `["admin","search"]` scopes and that the browser calls to `/v1/documents`/`/v1/collections` now ride the `/api/admin` proxy — the documents, collections, and document-detail pages must render logged-in (web build passes; manual check of `/`, `/documents`, `/collections`, `/pipeline` pages).
+1. `go build -tags anydoc ./cmd/lybrix-server` on the ingest host (lib present) and `go build ./...` in CI (stub lane) — both compile.
+2. `go test ./...` + `golangci-lint run` — green, per-phase acceptance criteria above.
+3. Live E2E: `make up-core && make up-ingest` → upload fixture → ingest completes → `curl -H "Authorization: Bearer $KEY" :8000/v1/search -d '{"query":"…","top_k":8}'` returns citations with parent-backed context; MCP playground `search` + `read_pages` round-trip; eval harness passes golden set.
+4. Resilience drills (4.3): kill parser, wipe Redis, poison job.

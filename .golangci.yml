@@ -1,0 +1,17 @@
+# lybrix 2.0 linter config — errcheck, govet, staticcheck, revive
+# (line-length 100 per the 1.0 standard).
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+
+linters-settings:
+  revive:
+    rules:
+      - name: line-length-limit
+        arguments: [100]

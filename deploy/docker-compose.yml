@@ -1,48 +1,54 @@
-# deploy/docker-compose.yml — split-host deployment per PRD §4.3/§13.4.
+# deploy/docker-compose.yml — lybrix 2.0, split-host deployment.
 #
 # Two planes, two hosts:
-#   core   (VM2, low RAM)  — postgres redis minio qdrant api mcp web migrate janitor
-#   ingest (nsspq, 31GB)   — worker-splitter worker-parser worker-embedder tei-ingest tei-query
+#   core   (VM2, low RAM)  — paradedb redis lybrix-server(serve) web
+#   ingest (nsspq, 31GB)   — lybrix-server(splitter/parser/embedder) docling-serve tei planes
+#
+# 2.0 deltas from 1.0: Qdrant removed (ParadeDB replaces it); api/mcp/workers
+# collapsed into the one lybrix-server image; docling-serve joins the ingest
+# plane as the OCR/layout fallback. MinIO stays on the INGEST profile (it
+# runs next to the parsers that download full source PDFs per shard; the
+# api/web/ui reach it over tailscale via S3_PUBLIC_ENDPOINT). Consequently
+# every acceptance step that needs object storage: `make up-core &&
+# make up-ingest`, not `make up-core` alone.
 #
 # Cross-host wiring: stores publish ports ONLY on the host's tailscale IP
 # (RAG_TAILSCALE_IP), so ingest workers on nsspq reach them over tailscale
-# and nothing is exposed to the LAN/internet. Images are pulled from GHCR
-# (CI-built :edge) — never build on VM2.
+# and nothing is exposed to the LAN/internet.
+
 name: lybrix
 
 x-core-store-env: &core-store-env
-  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@postgres:5432/rag
+  DATABASE_URL: postgres://rag:${POSTGRES_PASSWORD}@paradedb:5432/rag?sslmode=disable
   REDIS_URL: redis://redis:6379/0
   S3_ENDPOINT: ${S3_PUBLIC_ENDPOINT}   # tailscale URL so presigned PUTs work cross-host
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-  QDRANT_URL: http://qdrant:6333
-  QDRANT_API_KEY: ${QDRANT_API_KEY}
   TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on ingest host (nsspq) over tailscale
-  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # Jetson ollama URL from .env — pipeline health probe embed backend
+  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # embed-backend health probe
+  DOCLING_URL: http://docling-serve:5001
+  ANYDOC_ENABLED: ${ANYDOC_ENABLED:-true}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
 x-ingest-env: &ingest-env
-  DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD}@${RAG_TAILSCALE_IP}:5432/rag
+  DATABASE_URL: postgres://rag:${POSTGRES_PASSWORD}@${RAG_TAILSCALE_IP}:5432/rag?sslmode=disable
   REDIS_URL: redis://${RAG_TAILSCALE_IP}:6379/0
-  S3_ENDPOINT: http://minio:9000   # minio runs on THIS host (ingestnet) — parser pulls full PDFs per shard
+  S3_ENDPOINT: http://minio:9000   # minio runs on THIS host — parser pulls full PDFs per shard
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-  QDRANT_URL: http://${RAG_TAILSCALE_IP}:6333
-  QDRANT_API_KEY: ${QDRANT_API_KEY}
-  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # set in .env to offload to GPU (ollama bge-m3 on Jetson, 1024-dim)
+  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # offload to GPU via .env
   EMBED_BACKEND: ${EMBED_BACKEND:-tei}
   EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
   TEI_MODEL: ${TEI_MODEL:-BAAI/bge-m3}
   TEI_QUERY_URL: http://tei-query:80
   EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
-  EMBED_CONCURRENCY: ${EMBED_CONCURRENCY:-8}
-  PARSING_OCR_ENGINE: ${PARSING_OCR_ENGINE:-rapidocr}
-  PARSING_OCR_LANG: ${PARSING_OCR_LANG:-en}
-  PARSING_OCR_TEXT_SCORE: ${PARSING_OCR_TEXT_SCORE:-0.5}
-  PARSING_TORCH_THREADS: ${PARSING_TORCH_THREADS:-2}
-  PARSING_ACCELERATOR_DEVICE: ${PARSING_ACCELERATOR_DEVICE:-cpu}
-  PARSING_DO_TABLE_STRUCTURE: ${PARSING_DO_TABLE_STRUCTURE:-true}
+  EMBED_CTX_BUDGET: ${EMBED_CTX_BUDGET:-1900}
+  EMBED_TRUNCATE_CHARS: ${EMBED_TRUNCATE_CHARS:-6000}
+  EMBED_QUERY_PREFIX: ${EMBED_QUERY_PREFIX:-search_query: }
+  DOCLING_URL: http://docling-serve:5001
+  ANYDOC_ENABLED: ${ANYDOC_ENABLED:-true}
+  SHARD_PAGES: ${SHARD_PAGES:-20}
+  OCR_MIN_CHARS_PER_PAGE: ${OCR_MIN_CHARS_PER_PAGE:-20}
   WORKER_PREFETCH: ${WORKER_PREFETCH:-1}
   WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -53,15 +59,15 @@ x-restart: &restart
 # ---------------- core (VM2) ----------------
 
 services:
-  postgres:
+  paradedb:
     <<: *restart
-    image: postgres:16-alpine
+    image: paradedb/paradedb:17
     profiles: [core]
     environment:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: rag
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes: [paradedbdata:/var/lib/postgresql/data]
     ports:
       - "${BIND_IP}:5432:5432"   # ingest plane on nsspq
     healthcheck:
@@ -83,6 +89,63 @@ services:
       interval: 10s
     networks: [internal]
 
+  lybrix-server:
+    <<: *restart
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    profiles: [core]
+    command: ["serve"]
+    environment:
+      <<: *core-store-env
+      # 900-book corpus ≈ 13k shard jobs; default 2000 cap would 429 mid-run.
+      # Redis RAM cost trivial (~300B/job ≈ 4MB total).
+      MAX_PARSE_BACKLOG: "20000"
+    ports:
+      - "${BIND_IP}:8000:8000"   # browser (NEXT_PUBLIC_API_URL) + REST
+      - "${BIND_IP}:8430:8430"   # MCP streamable HTTP
+    depends_on:
+      paradedb: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "/app/lybrix-eval --version 2>/dev/null; wget -qO- http://127.0.0.1:8000/v1/system/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lybrixapi.rule=Host(`lybrix.loxikum.xyz`) && (PathPrefix(`/v1`) || PathPrefix(`/openapi.json`))"
+      - "traefik.http.routers.lybrixapi.entrypoints=web"
+      - "traefik.http.routers.lybrixapi.priority=200"
+      - "traefik.http.services.lybrixapi.loadbalancer.server.port=8000"
+      - "traefik.http.routers.lybrixmcp.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/mcp`)"
+      - "traefik.http.routers.lybrixmcp.entrypoints=web"
+      - "traefik.http.routers.lybrixmcp.priority=200"
+      - "traefik.http.services.lybrixmcp.loadbalancer.server.port=8430"
+
+  web:
+    <<: *restart
+    image: ghcr.io/saufi-opi/lybrix/web:edge
+    profiles: [core]
+    environment:
+      API_URL: http://lybrix-server:8000
+      MCP_API_URL: http://lybrix-server:8430/mcp   # MCP playground proxy target (internal network)
+      MCP_API_KEY: ${MCP_API_KEY}   # playground proxy holds the key server-side; browser never sees it
+      HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}   # bcrypt hash — see .env.example
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      API_ADMIN_KEY: ${API_ADMIN_KEY}   # admin-scope ragk_ key the web proxy uses server-side
+    depends_on: [lybrix-server]
+    ports:
+      - "${BIND_IP}:3000:3000"
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lybrixweb.rule=Host(`lybrix.loxikum.xyz`)"
+      - "traefik.http.routers.lybrixweb.entrypoints=web"
+      - "traefik.http.routers.lybrixweb.priority=100"
+      - "traefik.http.services.lybrixweb.loadbalancer.server.port=3000"
+
+  # ------------- ingest (nsspq) -------------
+
   minio:
     <<: *restart
     image: minio/minio
@@ -102,234 +165,126 @@ services:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
 
-  qdrant:
+  docling-serve:
     <<: *restart
-    image: qdrant/qdrant:v1.19.1
-    profiles: [core]
-    volumes: [qdrantdata:/qdrant/storage]
-    environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
-    ports:
-      - "${BIND_IP}:6333:6333"
-    networks: [internal]
-
-  api:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/api:edge
-    profiles: [core]
-    environment:
-      <<: *core-store-env
-      # 900-book corpus ≈ 13k shard jobs; default 2000 cap would 429 mid-run.
-      # Redis RAM cost trivial (~300B/job ≈ 4MB total).
-      MAX_PARSE_BACKLOG: "20000"
-    ports:
-      - "${BIND_IP}:8000:8000"   # browser (NEXT_PUBLIC_API_URL) + backfill
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-    healthcheck:
-      # image has no curl; use python (matches Dockerfile HEALTHCHECK)
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/system/health', timeout=3).read()"]
-      interval: 15s
-    networks: [internal, traefik-public]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.lybrixapi.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/v1`)"
-      - "traefik.http.routers.lybrixapi.entrypoints=web"
-      - "traefik.http.routers.lybrixapi.priority=200"
-      - "traefik.http.services.lybrixapi.loadbalancer.server.port=8000"
-
-  worker-janitor:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
-    profiles: [core]
-    command: ["python", "-m", "workers.janitor"]
-    environment:
-      <<: *core-store-env
-      JANITOR_INTERVAL: "30"
-    mem_limit: 512m
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-    networks: [internal]
-
-  mcp:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/mcp:edge
-    profiles: [core]
-    environment:
-      <<: *core-store-env
-      TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on nsspq over tailscale
-      MCP_API_KEY: ${MCP_API_KEY}
-      QDRANT_API_KEY: ${QDRANT_API_KEY}   # qdrant service API key (else qdrant-client 401)
-      RETRIEVAL_BM25_ENABLED: ${RETRIEVAL_BM25_ENABLED:-false}
-      TEI_RERANK_URL: ${TEI_RERANK_PUBLIC_URL:-}   # tei-rerank on nsspq over tailscale
-      RERANK_ENABLED: ${RERANK_ENABLED:-false}
-      RERANK_CANDIDATES: ${RERANK_CANDIDATES:-30}
-      RERANK_TIMEOUT_S: ${RERANK_TIMEOUT_S:-5}
-    depends_on: [postgres, qdrant]
-    ports:
-      - "${BIND_IP}:8430:8430"
-    networks: [internal, traefik-public]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.lybrixmcp.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/mcp`)"
-      - "traefik.http.routers.lybrixmcp.entrypoints=web"
-      - "traefik.http.routers.lybrixmcp.priority=200"
-      - "traefik.http.services.lybrixmcp.loadbalancer.server.port=8430"
-
-  web:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/web:edge
-    profiles: [core]
-    environment:
-      API_URL: http://api:8000
-      MCP_API_URL: http://mcp:8430/mcp   # MCP playground proxy target (internal network)
-      MCP_API_KEY: ${MCP_API_KEY}   # playground proxy holds the key server-side; browser never sees it
-      HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
-      ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}   # bcrypt hash — see .env.example
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
-      API_ADMIN_KEY: ${API_ADMIN_KEY}   # admin-scope ragk_ key the web proxy uses server-side
-    depends_on: [api, mcp]
-    ports:
-      - "${BIND_IP}:3000:3000"
-    networks: [internal, traefik-public]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.lybrixweb.rule=Host(`lybrix.loxikum.xyz`)"
-      - "traefik.http.routers.lybrixweb.entrypoints=web"
-      - "traefik.http.routers.lybrixweb.priority=100"
-      - "traefik.http.services.lybrixweb.loadbalancer.server.port=3000"
-
-  migrate:
-    image: ghcr.io/saufi-opi/lybrix/api:edge
-    profiles: [core]
-    command: ["alembic", "-c", "/app/migrations/alembic.ini", "upgrade", "head"]
-    environment: {<<: *core-store-env}
-    depends_on:
-      postgres: {condition: service_healthy}
-    restart: "no"
-    networks: [internal]
-
-  # ------------- ingest (nsspq) -------------
-
-  worker-splitter:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: quay.io/docling-project/docling-serve:latest
     profiles: [ingest]
-    command: ["python", "-m", "workers.splitter"]
+    # OCR + layout fallback for scanned/low-yield shards (blueprint §4.2):
+    # anydoc handles born-digital PDFs in-process; docling-serve takes the
+    # <50 chars/page tier via whole-shard multipart POSTs.
+    ports:
+      - "${BIND_IP}:5001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5001/health >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      retries: 10
+      start_period: 5m
+    mem_limit: 8g
+    networks: [ingestnet]
+
+  lybrix-splitter:
+    <<: *restart
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    profiles: [ingest]
+    command: ["splitter"]
     environment: {<<: *ingest-env}
     # Large Calibre PDFs need host-backed temporary space; the 2g tmpfs
     # exhausted while the host still had 162g free.
     mem_limit: 2g
     networks: [ingestnet]
 
-  worker-parser:
+  lybrix-parser:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
     profiles: [ingest]
-    command: ["python", "-m", "workers.parser"]
+    command: ["parser"]
     environment:
       <<: *ingest-env
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      # Tuned 2026-09-09: 2GB/replica × 3 replicas measured (6.2GiB total),
-      # 8 cores / 3 parsers = 2 cores each matches OMP_NUM_THREADS=2.
-      # Soft budget above sustained peak (3.0-3.1GB) with headroom; hard
-      # limit 6g gives ~2x headroom before OOM-kill.
-      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
-      OMP_NUM_THREADS: "2"
       PARSER_PDF_CACHE_DIR: /data/pdf-cache
-    mem_limit: 6g
+    # 2.0: anydoc handles born-digital shards in-process (sub-100ms) — the
+    # 6g/2.6-cpu parser envelope of 1.0 shrinks accordingly; keep headroom
+    # for docling-serve-bound scanned shards.
+    mem_limit: 4g
     cpus: 2.6
-    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
-    # still had ample disk space.
     volumes:
       - /home/appsadmin/pdf-cache:/data/pdf-cache
     networks: [ingestnet]
 
-  worker-parser-2:
+  lybrix-parser-2:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
     profiles: [ingest]
-    command: ["python", "-m", "workers.parser"]
+    command: ["parser"]
     environment:
       <<: *ingest-env
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
-      OMP_NUM_THREADS: "2"
       PARSER_PDF_CACHE_DIR: /data/pdf-cache
-    mem_limit: 6g
+    mem_limit: 4g
     cpus: 2.6
-    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
-    # still had ample disk space.
     volumes:
       - /home/appsadmin/pdf-cache:/data/pdf-cache
     networks: [ingestnet]
 
-  worker-parser-3:
+  lybrix-parser-3:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
     profiles: [ingest]
-    command: ["python", "-m", "workers.parser"]
+    command: ["parser"]
     environment:
       <<: *ingest-env
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
-      OMP_NUM_THREADS: "2"
       PARSER_PDF_CACHE_DIR: /data/pdf-cache
-    mem_limit: 6g
+    mem_limit: 4g
     cpus: 2.6
-    # Use host-backed /tmp; large PDFs exceeded the 2g tmpfs while the host
-    # still had ample disk space.
     volumes:
       - /home/appsadmin/pdf-cache:/data/pdf-cache
     networks: [ingestnet]
 
-  worker-parser-4:
+  lybrix-parser-4:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
     profiles: [ingest]
-    command: ["python", "-m", "workers.parser"]
+    command: ["parser"]
     environment:
       <<: *ingest-env
       WORKER_PREFETCH: "1"
       WORKER_CONCURRENCY: "1"
       PARSER_RECYCLE_AFTER: "10"
-      PARSER_SOFT_RSS_MB: "4608"
       SHARD_LEASE_SECONDS: "900"
-      OMP_NUM_THREADS: "1"
       PARSER_PDF_CACHE_DIR: /data/pdf-cache
-    mem_limit: 6g
+    mem_limit: 4g
     cpus: 1.5
-    # Use host-backed /tmp for large PDFs.
     volumes:
       - /home/appsadmin/pdf-cache:/data/pdf-cache
     networks: [ingestnet]
 
-  worker-embedder:
+  lybrix-embedder:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/workers:edge
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
     profiles: [ingest]
-    command: ["python", "-m", "workers.embedder"]
+    command: ["embedder"]
     environment:
       <<: *ingest-env
-      # Tuned 2026-09-09: parser produces ~3-6 chunks/12s/shard while 3
-      # parsers run; EMBED_CONCURRENCY=4 matches TEI warm throughput
-      # (~800% CPU, batch 8 → ~1.1s/req). 8 keeps the queue flat without
-      # starving the parser's 6 remaining cores.
     mem_limit: 3g
-    # Embedding backend is selected by EMBED_BACKEND/TEI_INGEST_URL.
-    # Jetson offload must not start the memory-heavy local TEI service.
+    networks: [ingestnet]
+
+  lybrix-janitor:
+    <<: *restart
+    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    profiles: [ingest]
+    command: ["janitor"]
+    environment: {<<: *ingest-env}
+    mem_limit: 512m
     networks: [ingestnet]
 
   tei-ingest:
@@ -388,12 +343,8 @@ services:
       --max-client-batch-size 32
       --dtype float32
     volumes: [hfcache:/data]
-    # Phase 2 reranker: cross-encoder over the 30-candidate pool. CPU budget:
-    # 4 cores keeps a 30-candidate request under ~500ms p50; the Xeon also
-    # runs parsers (3×2.6 + 1.5 cores), embedder, and tei-query. fp32 weights
-    # ≈ 2.2GB weights; 8g limit (tei-query lesson: 5g OOM-looped at 6.2G peak —
-    # same margin style for a long-context model whose KV/activation memory
-    # grows with batch length).
+    # Phase 2 reranker: cross-encoder over the 30-candidate pool. Kept as-is
+    # from 1.0 (still useful later; RERANK_ENABLED gates it server-side).
     mem_limit: 8g
     cpus: 8   # was 4: measured 2026-09-19 — at 4 cores a 30-text rerank request
               # exceeds the backend batch forcing (max_batch_requests=8) and 429s
@@ -409,7 +360,7 @@ services:
       start_period: 10m    # first boot downloads ~2.2GB model into hfcache
     networks: [ingestnet]
 
-volumes: {pgdata: {}, redisdata: {}, miniodata: {}, qdrantdata: {}, hfcache: {}}
+volumes: {paradedbdata: {}, redisdata: {}, miniodata: {}, hfcache: {}}
 networks:
   internal: {}
   ingestnet: {}
