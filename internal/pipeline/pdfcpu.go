@@ -23,7 +23,9 @@ func PageCount(path string) (int, error) {
 		return 0, err
 	}
 	defer f.Close()
-	ctx, err := api.ReadAndValidate(f, model.NewDefaultConfiguration())
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	ctx, err := api.ReadContext(f, conf)
 	if err != nil {
 		return 0, err
 	}
@@ -32,7 +34,9 @@ func PageCount(path string) (int, error) {
 
 // PageCountBytes is PageCount over in-memory bytes (commit verify path).
 func PageCountBytes(b []byte) (int, error) {
-	ctx, err := api.ReadAndValidate(bytes.NewReader(b), model.NewDefaultConfiguration())
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	ctx, err := api.ReadContext(bytes.NewReader(b), conf)
 	if err != nil {
 		return 0, err
 	}
