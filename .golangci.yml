@@ -7,7 +7,7 @@ issues:
   exclude-rules:
     - linters:
         - staticcheck
-      text: "SA1019:.*manager\\.(NewUploader|NewDownloader|Uploader|Downloader)"
+      text: "SA1019:.*superceded by feature/s3/transfermanager"
     - path: _test\.go
       linters:
         - errcheck
