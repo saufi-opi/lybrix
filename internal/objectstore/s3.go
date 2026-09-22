@@ -122,7 +122,7 @@ func (c *Client) UploadText(ctx context.Context, bucket, key, text, contentType 
 	_, err := c.api.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
-		Body:        stringReader(text),
+		Body:        strings.NewReader(text),
 		ContentType: aws.String(contentType),
 	})
 	return err
