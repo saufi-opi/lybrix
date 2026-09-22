@@ -168,13 +168,6 @@ func splitSections(markdown string) []section {
 	return sections
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // sectionText builds the section body text: heading tail + body, the same
 // "\n\n".join([heading_path[-1], body]) shape 1.0's _emit used.
 func sectionText(headingPath []string, body []lineNo) string {

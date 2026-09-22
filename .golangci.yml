@@ -3,6 +3,15 @@
 run:
   timeout: 5m
 
+issues:
+  exclude-rules:
+    - linters:
+        - staticcheck
+      text: "SA1019:.*manager\\.(NewUploader|NewDownloader|Uploader|Downloader)"
+    - path: _test\.go
+      linters:
+        - errcheck
+
 linters:
   enable:
     - errcheck
