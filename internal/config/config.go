@@ -72,13 +72,24 @@ type Settings struct {
 	SearchDefaultTopK int
 	SearchMaxTopK     int
 	ReadPagesMax      int
-	RerankEnabled     bool
-	TEIRerankURL      string
-	RerankCandidates  int
-	RerankTimeout     time.Duration
+	// Rerank: RERANK_ENABLED / RERANK_MODEL / TEI_RERANK_URL are SEED-ONLY
+	// (they initialize the rerank_models registry row exactly once on an
+	// empty table, when enabled); RERANK_CANDIDATES / RERANK_TIMEOUT_S stay
+	// runtime knobs of the rerank stage.
+	RerankSeed       RerankSeed
+	RerankCandidates int
+	RerankTimeout    time.Duration
 
 	// misc
 	LogLevel string
+}
+
+// RerankSeed is the first-boot rerank_models seed (seed-only env treatment,
+// mirroring EmbedSeed: legacy names read ONLY when the table is empty).
+type RerankSeed struct {
+	Enabled  bool
+	ModelID  string
+	QueryURL string
 }
 
 // EmbedSeed is the first-boot registry seed (legacy env names read ONLY as
@@ -189,8 +200,7 @@ func DefaultSettings() *Settings {
 		SearchDefaultTopK:    8,
 		SearchMaxTopK:        25,
 		ReadPagesMax:         30,
-		RerankEnabled:        false,
-		TEIRerankURL:         "http://localhost:8083",
+		RerankSeed:           RerankSeed{Enabled: false, ModelID: "bge-reranker-v2-m3", QueryURL: "http://localhost:8083"},
 		RerankCandidates:     30,
 		RerankTimeout:        5 * time.Second,
 		LogLevel:             "info",
@@ -249,8 +259,9 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.SearchDefaultTopK = getint(env, "SEARCH_DEFAULT_TOP_K", s.SearchDefaultTopK)
 	s.SearchMaxTopK = getint(env, "SEARCH_MAX_TOP_K", s.SearchMaxTopK)
 	s.ReadPagesMax = getint(env, "READ_PAGES_MAX", s.ReadPagesMax)
-	s.RerankEnabled = getbool(env, "RERANK_ENABLED", s.RerankEnabled)
-	s.TEIRerankURL = getenv(env, "TEI_RERANK_URL", s.TEIRerankURL)
+	s.RerankSeed.Enabled = getbool(env, "RERANK_ENABLED", s.RerankSeed.Enabled)
+	s.RerankSeed.ModelID = getenv(env, "RERANK_MODEL", s.RerankSeed.ModelID)
+	s.RerankSeed.QueryURL = getenv(env, "TEI_RERANK_URL", s.RerankSeed.QueryURL)
 	s.RerankCandidates = getint(env, "RERANK_CANDIDATES", s.RerankCandidates)
 	s.RerankTimeout = getduration(env, "RERANK_TIMEOUT_S", s.RerankTimeout)
 	s.LogLevel = strings.ToLower(getenv(env, "LOG_LEVEL", s.LogLevel))
@@ -268,7 +279,7 @@ func (s *Settings) Validate() error {
 		return &SettingsError{"SEARCH_DEFAULT_TOP_K",
 			fmt.Sprintf("(%d) must be <= SEARCH_MAX_TOP_K (%d)", s.SearchDefaultTopK, s.SearchMaxTopK)}
 	}
-	if s.RerankEnabled && s.TEIRerankURL == "" {
+	if s.RerankSeed.Enabled && s.RerankSeed.QueryURL == "" {
 		return &SettingsError{"RERANK_ENABLED", "=true requires TEI_RERANK_URL"}
 	}
 	if s.ShardPages < 1 {

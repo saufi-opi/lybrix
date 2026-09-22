@@ -77,7 +77,7 @@ func TestStitchOrderFollowsShardIdx(t *testing.T) {
 	idx0 := strings.Index(out.Markdown, "first shard")
 	idx1 := strings.Index(out.Markdown, "second shard")
 	idx2 := strings.Index(out.Markdown, "third shard")
-	if !(idx0 < idx1 && idx1 < idx2) {
+	if idx0 >= idx1 || idx1 >= idx2 {
 		t.Fatalf("shard order broken: %q (%d,%d,%d)", out.Markdown, idx0, idx1, idx2)
 	}
 }

@@ -81,7 +81,7 @@ func TestMultiHybridSearchCrossDims(t *testing.T) {
 	embedFn, calls := embedCounter(vec768, vec1024)
 
 	// explicit multi-collection target set
-	hits, err := db.MultiHybridSearch(ctx, "seven", []string{"col768", "col1024"}, nil, 8, embedFn)
+	hits, err := db.MultiHybridSearch(ctx, "seven", []string{"col768", "col1024"}, nil, 8, "", nil, embedFn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestMultiHybridSearchAllCollections(t *testing.T) {
 	ctx := context.Background()
 	embedFn, calls := embedCounter(vec768, vec1024)
 
-	hits, err := db.MultiHybridSearch(ctx, "ten", nil, nil, 8, embedFn)
+	hits, err := db.MultiHybridSearch(ctx, "ten", nil, nil, 8, "", nil, embedFn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestMultiHybridSearchScopeFilter(t *testing.T) {
 	ctx := context.Background()
 	embedFn, _ := embedCounter(vec768, vec1024)
 
-	hits, err := db.MultiHybridSearch(ctx, "seven ten", nil, []string{"col768"}, 8, embedFn)
+	hits, err := db.MultiHybridSearch(ctx, "seven ten", nil, []string{"col768"}, 8, "", nil, embedFn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestMultiHybridSearchScopeFilter(t *testing.T) {
 func TestMultiHybridSearchEmbedErrorPropagates(t *testing.T) {
 	db, _, _, _, _ := multiSearchDB(t)
 	ctx := context.Background()
-	_, err := db.MultiHybridSearch(ctx, "x", []string{"col768", "col1024"}, nil, 8,
+	_, err := db.MultiHybridSearch(ctx, "x", []string{"col768", "col1024"}, nil, 8, "", nil,
 		func(m *EmbeddingModel) ([]float32, error) {
 			return nil, fmt.Errorf("embed backend down")
 		})
@@ -173,7 +173,7 @@ func TestMultiHybridSearchRRFArithmetic(t *testing.T) {
 
 	// "seven" is BM25 rank-1 AND dense rank-1 in the 768 group; "ten" is
 	// dense rank-1 in the 1024 group only (BM25 leg finds no "seven" match).
-	hits, err := db.MultiHybridSearch(ctx, "seven", []string{"col768", "col1024"}, nil, 8, embedFn)
+	hits, err := db.MultiHybridSearch(ctx, "seven", []string{"col768", "col1024"}, nil, 8, "", nil, embedFn)
 	if err != nil {
 		t.Fatal(err)
 	}

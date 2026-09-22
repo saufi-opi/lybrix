@@ -278,6 +278,26 @@ export type SearchRequest = {
      * Top K
      */
     top_k?: number;
+    /**
+     * Rerank
+     *
+     * Re-score the candidate pool with the configured cross-encoder reranker
+     */
+    rerank?: boolean | null;
+    /**
+     * Rerank Model Id
+     *
+     * Explicit reranker registry id — overrides the collection's bound reranker
+     */
+    rerank_model_id?: string | null;
+    /**
+     * Metadata Filter
+     *
+     * Document-level filter: {"author"} (case-insensitive), {"year_from"/"year_to"} (metadata year range), other keys match metadata->>key exactly
+     */
+    metadata_filter?: {
+        [key: string]: unknown;
+    };
 };
 
 /**
@@ -718,6 +738,276 @@ export type OpdsSyncResult = {
      * Results
      */
     results: Array<OpdsItemResult>;
+};
+
+/**
+ * RerankModelOut
+ */
+export type RerankModelOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Provider
+     */
+    provider: 'tei' | 'openai';
+    /**
+     * Model Id
+     */
+    model_id: string;
+    /**
+     * Query Url
+     */
+    query_url: string;
+    /**
+     * Has Api Key
+     */
+    has_api_key?: boolean;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number;
+    /**
+     * Created At
+     */
+    created_at?: string;
+    /**
+     * Updated At
+     */
+    updated_at?: string;
+};
+
+/**
+ * RerankModelCreate
+ */
+export type RerankModelCreate = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Provider
+     */
+    provider: 'tei' | 'openai';
+    /**
+     * Model Id
+     */
+    model_id: string;
+    /**
+     * Query Url
+     */
+    query_url: string;
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number;
+};
+
+/**
+ * RerankModelUpdate
+ */
+export type RerankModelUpdate = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Provider
+     */
+    provider?: 'tei' | 'openai' | null;
+    /**
+     * Model Id
+     */
+    model_id?: string | null;
+    /**
+     * Query Url
+     */
+    query_url?: string | null;
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+    /**
+     * Truncate Chars
+     */
+    truncate_chars?: number | null;
+};
+
+/**
+ * RerankTestResult
+ */
+export type RerankTestResult = {
+    /**
+     * Reachable
+     */
+    reachable: boolean;
+    /**
+     * Latency Ms
+     */
+    latency_ms?: number | null;
+    /**
+     * Detail
+     */
+    detail: string;
+};
+
+/**
+ * CollectionRerankerBind
+ */
+export type CollectionRerankerBind = {
+    /**
+     * Rerank Model Id
+     *
+     * null clears the binding
+     */
+    rerank_model_id?: string | null;
+};
+
+/**
+ * ChunkOut
+ */
+export type ChunkOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Seq
+     */
+    seq: number;
+    /**
+     * Is Parent
+     */
+    is_parent: boolean;
+    /**
+     * Parent Id
+     */
+    parent_id?: string | null;
+    /**
+     * Page Start
+     */
+    page_start?: number | null;
+    /**
+     * Page End
+     */
+    page_end?: number | null;
+    /**
+     * Heading Path
+     */
+    heading_path?: Array<string>;
+    /**
+     * Header Breadcrumb
+     */
+    header_breadcrumb?: string | null;
+    /**
+     * Text
+     */
+    text: string;
+    /**
+     * Token Count
+     */
+    token_count: number;
+    /**
+     * Embedded At
+     */
+    embedded_at?: string | null;
+};
+
+/**
+ * ChunkList
+ */
+export type ChunkList = {
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Page Size
+     */
+    page_size: number;
+    /**
+     * Chunks
+     */
+    chunks: Array<ChunkOut>;
+};
+
+/**
+ * ChunkDetail
+ */
+export type ChunkDetail = {
+    /**
+     * Id
+     */
+    id?: string;
+    /**
+     * Seq
+     */
+    seq?: number;
+    /**
+     * Is Parent
+     */
+    is_parent?: boolean;
+    /**
+     * Parent Id
+     */
+    parent_id?: string | null;
+    /**
+     * Page Start
+     */
+    page_start?: number | null;
+    /**
+     * Page End
+     */
+    page_end?: number | null;
+    /**
+     * Heading Path
+     */
+    heading_path?: Array<string>;
+    /**
+     * Header Breadcrumb
+     */
+    header_breadcrumb?: string | null;
+    /**
+     * Text
+     */
+    text?: string;
+    /**
+     * Token Count
+     */
+    token_count?: number;
+    /**
+     * Embedded At
+     */
+    embedded_at?: string | null;
+    /**
+     * Parent Text
+     */
+    parent_text?: string;
+    /**
+     * Prev Id
+     */
+    prev_id?: string | null;
+    /**
+     * Next Id
+     */
+    next_id?: string | null;
+    /**
+     * Neighbours
+     */
+    neighbours?: Array<ChunkOut>;
 };
 
 export type PresignV1DocumentsPresignPostData = {
@@ -1603,3 +1893,269 @@ export type OpdsSyncV1ConnectorsOpdsSyncPostResponses = {
 };
 
 export type OpdsSyncV1ConnectorsOpdsSyncPostResponse = OpdsSyncV1ConnectorsOpdsSyncPostResponses[keyof OpdsSyncV1ConnectorsOpdsSyncPostResponses];
+
+export type ListRerankModelsV1RerankModelsGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/rerank-models';
+};
+
+export type ListRerankModelsV1RerankModelsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListRerankModelsV1RerankModelsGetError = ListRerankModelsV1RerankModelsGetErrors[keyof ListRerankModelsV1RerankModelsGetErrors];
+
+export type ListRerankModelsV1RerankModelsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: Array<RerankModelOut>;
+};
+
+export type ListRerankModelsV1RerankModelsGetResponse = ListRerankModelsV1RerankModelsGetResponses[keyof ListRerankModelsV1RerankModelsGetResponses];
+
+export type CreateRerankModelV1RerankModelsPostData = {
+    body: RerankModelCreate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/rerank-models';
+};
+
+export type CreateRerankModelV1RerankModelsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateRerankModelV1RerankModelsPostError = CreateRerankModelV1RerankModelsPostErrors[keyof CreateRerankModelV1RerankModelsPostErrors];
+
+export type CreateRerankModelV1RerankModelsPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RerankModelOut;
+};
+
+export type CreateRerankModelV1RerankModelsPostResponse = CreateRerankModelV1RerankModelsPostResponses[keyof CreateRerankModelV1RerankModelsPostResponses];
+
+export type TestRerankModelV1RerankModelsTestPostData = {
+    body: RerankModelCreate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/rerank-models/test';
+};
+
+export type TestRerankModelV1RerankModelsTestPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TestRerankModelV1RerankModelsTestPostError = TestRerankModelV1RerankModelsTestPostErrors[keyof TestRerankModelV1RerankModelsTestPostErrors];
+
+export type TestRerankModelV1RerankModelsTestPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RerankTestResult;
+};
+
+export type TestRerankModelV1RerankModelsTestPostResponse = TestRerankModelV1RerankModelsTestPostResponses[keyof TestRerankModelV1RerankModelsTestPostResponses];
+
+export type DeleteRerankModelV1RerankModelsModelIdDeleteData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Model Id
+         */
+        model_id: string;
+    };
+    query?: never;
+    url: '/v1/rerank-models/{model_id}';
+};
+
+export type DeleteRerankModelV1RerankModelsModelIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteRerankModelV1RerankModelsModelIdDeleteError = DeleteRerankModelV1RerankModelsModelIdDeleteErrors[keyof DeleteRerankModelV1RerankModelsModelIdDeleteErrors];
+
+export type UpdateRerankModelV1RerankModelsModelIdPostData = {
+    body: RerankModelUpdate;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Model Id
+         */
+        model_id: string;
+    };
+    query?: never;
+    url: '/v1/rerank-models/{model_id}';
+};
+
+export type UpdateRerankModelV1RerankModelsModelIdPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateRerankModelV1RerankModelsModelIdPostError = UpdateRerankModelV1RerankModelsModelIdPostErrors[keyof UpdateRerankModelV1RerankModelsModelIdPostErrors];
+
+export type UpdateRerankModelV1RerankModelsModelIdPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RerankModelOut;
+};
+
+export type UpdateRerankModelV1RerankModelsModelIdPostResponse = UpdateRerankModelV1RerankModelsModelIdPostResponses[keyof UpdateRerankModelV1RerankModelsModelIdPostResponses];
+
+export type BindCollectionRerankerV1CollectionsCollectionIdRerankerPostData = {
+    body: CollectionRerankerBind;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/v1/collections/{collection_id}/reranker';
+};
+
+export type BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type BindCollectionRerankerV1CollectionsCollectionIdRerankerPostError = BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors[keyof BindCollectionRerankerV1CollectionsCollectionIdRerankerPostErrors];
+
+export type BindCollectionRerankerV1CollectionsCollectionIdRerankerPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type GetChunkV1ChunksChunkIdGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Chunk Id
+         */
+        chunk_id: string;
+    };
+    query?: never;
+    url: '/v1/chunks/{chunk_id}';
+};
+
+export type GetChunkV1ChunksChunkIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetChunkV1ChunksChunkIdGetError = GetChunkV1ChunksChunkIdGetErrors[keyof GetChunkV1ChunksChunkIdGetErrors];
+
+export type GetChunkV1ChunksChunkIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ChunkDetail;
+};
+
+export type GetChunkV1ChunksChunkIdGetResponse = GetChunkV1ChunksChunkIdGetResponses[keyof GetChunkV1ChunksChunkIdGetResponses];
+
+export type ListDocumentChunksV1DocumentsDocIdChunksGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Doc Id
+         */
+        doc_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Page Size
+         */
+        page_size?: number;
+    };
+    url: '/v1/documents/{doc_id}/chunks';
+};
+
+export type ListDocumentChunksV1DocumentsDocIdChunksGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDocumentChunksV1DocumentsDocIdChunksGetError = ListDocumentChunksV1DocumentsDocIdChunksGetErrors[keyof ListDocumentChunksV1DocumentsDocIdChunksGetErrors];
+
+export type ListDocumentChunksV1DocumentsDocIdChunksGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ChunkList;
+};
+
+export type ListDocumentChunksV1DocumentsDocIdChunksGetResponse = ListDocumentChunksV1DocumentsDocIdChunksGetResponses[keyof ListDocumentChunksV1DocumentsDocIdChunksGetResponses];

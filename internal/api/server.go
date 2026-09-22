@@ -16,6 +16,7 @@ import (
 
 	"github.com/saufi-opi/lybrix/internal/config"
 	"github.com/saufi-opi/lybrix/internal/objectstore"
+	"github.com/saufi-opi/lybrix/internal/service"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
 
@@ -33,14 +34,21 @@ type Deps struct {
 	EmbedQuery func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error)
 	// HybridSearch is the single-collection RRF fusion — production wiring
 	// is db.HybridSearch; tests stub it.
-	HybridSearch func(ctx context.Context, queryVec []float32, dim int, collection string, collectionScope []string, bm25Query string, limit int) ([]*store.SearchHit, error)
+	HybridSearch func(ctx context.Context, queryVec []float32, dim int, collection string, collectionScope []string, bm25Query string, limit int, metaFilter string, metaArgs []any) ([]*store.SearchHit, error)
 	// EmbedForModel produces a query-plane embedding with a SPECIFIC
 	// registered model — the multi-collection grouped search calls it once
 	// per unique model (WeKnora multi-KB architecture; no default row).
 	EmbedForModel func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error)
 	// MultiSearch runs the grouped multi-collection fusion — production
 	// wiring is DB.MultiHybridSearch; tests stub it.
-	MultiSearch func(ctx context.Context, query string, collections, scope []string, topK int, embedFn func(*store.EmbeddingModel) ([]float32, error)) ([]*store.SearchHit, error)
+	MultiSearch func(ctx context.Context, query string, collections, scope []string, topK int, metaFilter string, metaArgs []any, embedFn func(*store.EmbeddingModel) ([]float32, error)) ([]*store.SearchHit, error)
+	// RerankHits is the cross-encoder rerank stage — production wiring
+	// composes service.RerankHits with a registry-resolved client; tests
+	// stub it. Nil means rerank is entirely unavailable (off).
+	RerankHits func(ctx context.Context, rm *store.RerankModel, query string, hits []*store.SearchHit, topK int) ([]*store.SearchHit, service.RerankStatus, error)
+	// ResolveReranker implements the rerank resolution rule (explicit
+	// override > collection binding > none). Nil treated as never-rerank.
+	ResolveReranker func(ctx context.Context, req RerankResolveRequest) (*store.RerankModel, error)
 }
 
 // Server is the assembled REST API.
@@ -67,6 +75,8 @@ func (s *Server) Router() http.Handler {
 	r.Get("/v1/documents", s.handleListDocuments)
 	r.Get("/v1/documents/{doc_id}", s.handleGetDocument)
 	r.Get("/v1/documents/{doc_id}/shards", s.handleGetShards)
+	r.Get("/v1/documents/{doc_id}/chunks", s.handleListDocChunks)
+	r.Get("/v1/chunks/{chunk_id}", s.handleGetChunk)
 	r.Post("/v1/documents/{doc_id}/retry", s.handleRetry)
 
 	// Connectors (OPDS)
@@ -78,6 +88,7 @@ func (s *Server) Router() http.Handler {
 	r.Post("/v1/collections", s.handleCreateCollection)
 	r.Get("/v1/collections/{collection_id}/stats", s.handleCollectionStats)
 	r.Post("/v1/collections/{collection_id}/model", s.handleBindCollectionModel)
+	r.Post("/v1/collections/{collection_id}/reranker", s.handleBindCollectionReranker)
 
 	// Model registry
 	r.Get("/v1/models", s.handleListModels)
@@ -85,6 +96,13 @@ func (s *Server) Router() http.Handler {
 	r.Post("/v1/models/test", s.handleTestModel) // dry-run probe, no persist
 	r.Post("/v1/models/{model_id}", s.handleUpdateModel)
 	r.Delete("/v1/models/{model_id}", s.handleDeleteModel)
+
+	// Reranker registry
+	r.Get("/v1/rerank-models", s.handleListRerankModels)
+	r.Post("/v1/rerank-models", s.handleCreateRerankModel)
+	r.Post("/v1/rerank-models/test", s.handleTestRerankModel) // dry-run probe
+	r.Post("/v1/rerank-models/{model_id}", s.handleUpdateRerankModel)
+	r.Delete("/v1/rerank-models/{model_id}", s.handleDeleteRerankModel)
 
 	// Search
 	r.Post("/v1/search", s.handleSearch)

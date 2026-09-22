@@ -16,6 +16,7 @@ package api
 // InsertDocument, one SplitJob, 202 {"id","state"}.
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -33,6 +34,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/saufi-opi/lybrix/internal/objectstore"
 	"github.com/saufi-opi/lybrix/internal/pipeline"
@@ -40,11 +42,12 @@ import (
 	"github.com/saufi-opi/lybrix/internal/store"
 )
 
-// ingest size policy (PLAN.md item 18):
+// ingest size policy (Workstream 2):
 //   - PDF: rough 40KB/page upper bound × MaxDocumentPages — the early stop
 //     fires DURING the download, before the write completes.
-//   - EPUB: hard ceiling 64 MiB, enforced by byte accounting mid-stream.
-const epubMaxBytes = 64 * 1024 * 1024
+//   - EPUB + office + text/HTML: hard ceiling 64 MiB, enforced by byte
+//     accounting mid-stream.
+const nonPdfMaxBytes = 64 * 1024 * 1024
 
 // ingestResult is the typed outcome of ingestFromStream.
 type ingestResult struct {
@@ -60,29 +63,26 @@ type ingestResult struct {
 // semantics. The temp file is removed on all paths.
 func (s *Server) ingestFromStream(ctx context.Context, r io.Reader, collectionID, filename, mimeType string, title, author *string, metadata map[string]any) ingestResult {
 	// sniff magic from the first bytes before committing to a temp file
-	head := make([]byte, 5)
+	head := make([]byte, 64)
 	n, err := io.ReadFull(r, head)
-	isEpub := false
-	if err == nil && n == 5 {
-		isEpub = string(head) == "PK\x03\x04"
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return ingestResult{HTTPStatus: http.StatusBadRequest, Detail: "unreadable body"}
 	}
-	if !isEpub && !(n >= 5 && string(head[:n]) == "%PDF-") {
-		// allow a short-but-PDF-looking prefix? No — both formats need 5 bytes
+	head = head[:n]
+	format, ferr := pipeline.DetectFormat(head, filename)
+	if ferr != nil {
 		return ingestResult{HTTPStatus: http.StatusBadRequest, Detail: "unsupported file type"}
 	}
-	reader := io.MultiReader(bytesReader(head[:n]), r)
+	reader := io.MultiReader(bytesReader(head), r)
 
 	var maxBytes int
-	var mime, contentType string
-	if isEpub {
-		maxBytes = epubMaxBytes
-		mime = "application/epub+zip"
-		contentType = "application/epub+zip"
-	} else {
+	mime := format.MimeType()
+	contentType := mime
+	if format == pipeline.FmtPDF {
 		// ~40KB/page upper bound; page-count probe after the download
 		maxBytes = s.deps.Settings.MaxDocumentPages * 40 * 1024
-		mime = "application/pdf"
-		contentType = "application/pdf"
+	} else {
+		maxBytes = nonPdfMaxBytes
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ingest-")
@@ -111,9 +111,9 @@ func (s *Server) ingestFromStream(ctx context.Context, r io.Reader, collectionID
 
 	// Post-download verification, commit parity with verifyRawObject.
 	if filename == "" {
-		filename = "source." + map[bool]string{true: "epub", false: "pdf"}[isEpub]
+		filename = pipeline.ParseSourceName(format)
 	}
-	if !isEpub {
+	if format == pipeline.FmtPDF {
 		pageCount, perr := pipelinePageCount(tmpFile.Name())
 		if perr != nil {
 			return ingestResult{HTTPStatus: http.StatusBadRequest, Detail: "unreadable PDF: " + perr.Error()}
@@ -129,6 +129,12 @@ func (s *Server) ingestFromStream(ctx context.Context, r io.Reader, collectionID
 			sha: hex.EncodeToString(digest.Sum(nil)), pageCount: &pageCount,
 		})
 	}
+	// non-PDF verification: zip-integrity probe for the container formats,
+	// UTF-8 + non-empty for text/markdown, tag heuristic for HTML — all
+	// treated as one synthetic page (pageCount = 1).
+	if verr := verifyNonPDF(format, tmpFile.Name()); verr != nil {
+		return ingestResult{HTTPStatus: http.StatusBadRequest, Detail: verr.Error()}
+	}
 	one := 1
 	return s.ingestCommit(ctx, ingestCommitArgs{
 		collectionID: collectionID, filename: filename, mimeType: mime,
@@ -136,6 +142,40 @@ func (s *Server) ingestFromStream(ctx context.Context, r io.Reader, collectionID
 		metadata: metadata, path: tmpFile.Name(),
 		sha: hex.EncodeToString(digest.Sum(nil)), pageCount: &one,
 	})
+}
+
+// verifyNonPDF is the post-download verification table for the non-PDF
+// formats: zip containers must open with >0 members; text must be valid
+// UTF-8 and non-empty (reject binary garbage); HTML must contain a tag.
+func verifyNonPDF(format pipeline.Format, path string) error {
+	switch format {
+	case pipeline.FmtEPUB, pipeline.FmtDOCX, pipeline.FmtPPTX, pipeline.FmtXLSX:
+		zr, err := zip.OpenReader(path)
+		if err != nil {
+			return fmt.Errorf("unreadable %s: %v", format.Ext(), err)
+		}
+		defer zr.Close()
+		if len(zr.File) == 0 {
+			return fmt.Errorf("empty %s container", format.Ext())
+		}
+		return nil
+	case pipeline.FmtTXT, pipeline.FmtMD, pipeline.FmtHTML:
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("unreadable %s: %v", format.Ext(), err)
+		}
+		if len(b) == 0 {
+			return fmt.Errorf("empty %s file", format.Ext())
+		}
+		if !utf8.Valid(b) {
+			return fmt.Errorf("%s file is not valid UTF-8", format.Ext())
+		}
+		if format == pipeline.FmtHTML && !strings.Contains(string(b), "<") {
+			return fmt.Errorf("html file contains no markup")
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported format")
 }
 
 // ingestCommitArgs carries the verified body into the commit-parity insert.
@@ -437,14 +477,27 @@ type atomAuthor struct {
 	Name string `xml:"name"`
 }
 
+// opdsMimes is the full acquisition allowlist — the shared format table's
+// mime types (Workstream 2: OPDS feeds carry office/text books too).
+var opdsMimes = map[string]bool{
+	pipeline.FmtPDF.MimeType():  true,
+	pipeline.FmtEPUB.MimeType(): true,
+	pipeline.FmtDOCX.MimeType(): true,
+	pipeline.FmtPPTX.MimeType(): true,
+	pipeline.FmtXLSX.MimeType(): true,
+	pipeline.FmtTXT.MimeType():  true,
+	pipeline.FmtMD.MimeType():   true,
+	pipeline.FmtHTML.MimeType(): true,
+}
+
 // atomAcquisitionLinks extracts one entry's acquisition links (the OPDS
-// rel or a direct pdf/epub mime type).
+// rel or a mime type from the format table).
 func atomAcquisitionLinks(e atomEntry) []opdsAcqLink {
 	var out []opdsAcqLink
 	for _, l := range e.Links {
 		if l.Rel == "http://opds-spec.org/acquisition" ||
 			strings.HasPrefix(l.Rel, "http://opds-spec.org/acquisition/") ||
-			l.Type == "application/pdf" || l.Type == "application/epub+zip" {
+			opdsMimes[l.Type] {
 			out = append(out, opdsAcqLink{Href: l.Href, MimeType: l.Type})
 		}
 	}
@@ -584,7 +637,7 @@ func (s *Server) handleOpdsSync(w http.ResponseWriter, r *http.Request) {
 		for _, e := range feed.Entries {
 			acqs := atomAcquisitionLinks(e)
 			for _, acq := range acqs {
-				if acq.MimeType == "application/pdf" || acq.MimeType == "application/epub+zip" {
+				if opdsMimes[acq.MimeType] {
 					refs = append(refs, opdsEntryRef{Title: e.Title, Href: acq.Href, MimeType: acq.MimeType})
 					break // one book = one best acquisition link
 				}

@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
-)
-
-// TwoTierParser orchestrates blueprint §4.2's two-tier flow with the 1.0
+) // TwoTierParser orchestrates blueprint §4.2's two-tier flow with the 1.0
 // retry ladder semantics layered on the caller side:
 //
 //	OCR gate (cheap, pdfcpu text layer) →
@@ -51,6 +49,15 @@ func (unavailableParser) Parse(context.Context, ParseRequest) (ParseResult, erro
 func (unavailableParser) Available() bool { return false }
 
 // Parse runs the two-tier flow for one shard.
+//
+// Routing (Workstream 2): PDF keeps the full gate → anydoc(0) → yield →
+// docling flow. EPUB skips the gate AND anydoc (docling parses EPUB
+// natively). DOCX/PPTX/XLSX skip the OCR gate (no pdfcpu page probe on a
+// non-PDF) but take the anydoc fast path (codes 1/2/3) with a docling
+// fallback. TXT/MD are pure-Go passthrough (file bytes are the markdown —
+// no CGO, so the CI stub lane works). HTML goes to docling directly (anydoc
+// has no html code). Non-PDF shards are single synthetic shards — the file
+// passed whole.
 func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResult, error) {
 	started := time.Now()
 	pages := req.PageEnd - req.PageStart + 1
@@ -61,14 +68,11 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 	// Gate first when the caller didn't already run it: scanned shards skip
 	// the anydoc attempt entirely (ocr_gate before Docling was 1.0's cheap
 	// ordering, and the blueprint keeps OCR off for the ~90% with a text
-	// layer). EPUB shards skip the gate AND the fast path entirely — the
-	// pdfcpu text-layer probe cannot open a zip container and docling
-	// parses EPUB natively.
+	// layer). Only PDF shards can run the gate — the pdfcpu text-layer
+	// probe cannot open zip or text containers.
 	needOCR := req.NeedOCR
 	var meanChars float64
-	if req.IsEpub {
-		needOCR = false
-	} else if !needOCR && req.PDFPath != "" {
+	if req.DocFormat == FmtPDF && !needOCR && req.PDFPath != "" {
 		verdict, err := NeedsOCR(req.PDFPath, req.PageStart, req.PageEnd, t.OCRMinCharsPerPage)
 		if err == nil {
 			needOCR = verdict.NeedsOCR
@@ -76,7 +80,52 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 		}
 	}
 
-	// Tier 1: anydoc in-process (born-digital only; skipped for EPUB).
+	// TXT/MD passthrough (tier 0): the file bytes ARE the markdown. Empty
+	// output falls through to docling below.
+	if req.DocFormat == FmtTXT || req.DocFormat == FmtMD {
+		if md, err := os.ReadFile(req.PDFPath); err == nil && YieldOK(string(md), pages, t.MinYieldCharsPerPage) {
+			return ParseResult{
+				Markdown:         string(md),
+				NeedsOCR:         false,
+				MeanCharsPerPage: meanChars,
+				DurationMS:       time.Since(started).Milliseconds(),
+				PeakRSSMB:        CurrentRSSMB(),
+				Engine:           "text",
+			}, nil
+		}
+		// empty / unreadable → docling fallback below (it accepts txt/md)
+		md, err := t.Docling.ConvertNamed(ctx, req.PDFPath, ParseSourceName(req.DocFormat), !req.TextOnly)
+		if err != nil {
+			return ParseResult{}, err
+		}
+		return ParseResult{
+			Markdown:         md,
+			NeedsOCR:         needOCR,
+			MeanCharsPerPage: meanChars,
+			DurationMS:       time.Since(started).Milliseconds(),
+			PeakRSSMB:        CurrentRSSMB(),
+			Engine:           "docling",
+		}, nil
+	}
+
+	// HTML: anydoc has no html code — docling-serve directly.
+	if req.DocFormat == FmtHTML {
+		md, err := t.Docling.ConvertNamed(ctx, req.PDFPath, ParseSourceName(FmtHTML), !req.TextOnly)
+		if err != nil {
+			return ParseResult{}, err
+		}
+		return ParseResult{
+			Markdown:         md,
+			NeedsOCR:         needOCR,
+			MeanCharsPerPage: meanChars,
+			DurationMS:       time.Since(started).Milliseconds(),
+			PeakRSSMB:        CurrentRSSMB(),
+			Engine:           "docling",
+		}, nil
+	}
+
+	// Tier 1: anydoc in-process — born-digital PDFs (code 0) and office
+	// docs (codes 1/2/3); skipped for EPUB (zip container).
 	if !req.SkipAnyDoc && !needOCR && t.AnyDoc.Available() {
 		res, err := t.AnyDoc.Parse(ctx, req)
 		if err == nil && YieldOK(res.Markdown, pages, t.MinYieldCharsPerPage) {
@@ -94,10 +143,10 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 	}
 
 	// Tier 2: docling-serve whole-shard fallback. Retry ladder ≥4 runs
-	// text-only (table structure off). EPUB shards carry their own upload
-	// filename so docling-serve's format sniffing sees the extension.
-	if req.IsEpub {
-		md, err := t.Docling.ConvertNamed(ctx, req.PDFPath, "source.epub", !req.TextOnly)
+	// text-only (table structure off). Every non-PDF shard carries its own
+	// source filename so docling-serve's format sniffing sees the extension.
+	if req.IsSynthetic() {
+		md, err := t.Docling.ConvertNamed(ctx, req.PDFPath, ParseSourceName(req.DocFormat), !req.TextOnly)
 		if err != nil {
 			return ParseResult{}, err
 		}

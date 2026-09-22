@@ -75,13 +75,15 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
 	}
 
-	// EPUB branch (PLAN.md item 19): pdfcpu would raise PDF_CORRUPT on a
-	// zip container, so the EPUB path skips PageCount/ExtractBookmarks
+	// Non-PDF branch (EPUB / office / text / HTML — Workstream 2): pdfcpu
+	// would raise PDF_CORRUPT on a zip container (and cannot probe text
+	// files at all), so every non-PDF path skips PageCount/ExtractBookmarks
 	// entirely and emits exactly ONE synthetic shard (idx=0, pages 1-1) —
-	// the parser routes it straight to docling-serve, which parses EPUB
-	// natively, and treats the whole book as one "page".
-	if doc.MimeType != nil && *doc.MimeType == "application/epub+zip" {
-		return splitEpubSingleShard(ctx, deps, tx, doc, tmpDir)
+	// the parser routes it by DocFormat (docling parses EPUB/HTML natively,
+	// office docs take the anydoc fast path or docling, text passes
+	// through), and treats the whole file as one "page".
+	if doc.MimeType == nil || *doc.MimeType != pipeline.FmtPDF.MimeType() {
+		return splitSingleShard(ctx, deps, tx, doc, tmpDir)
 	}
 
 	pageCount, err := pipeline.PageCount(localPath)
@@ -130,11 +132,11 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	return nil
 }
 
-// splitEpubSingleShard is the EPUB splitter tail: advance UPLOADED →
+// splitSingleShard is the non-PDF splitter tail: advance UPLOADED →
 // PARSING, write one synthetic shard (idx=0, page_start=1, page_end=1),
 // enqueue its ParseJob — identical to the PDF path's tail but with the
 // pdfcpu/bookmark steps skipped.
-func splitEpubSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Document, tmpDir string) error {
+func splitSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Document, tmpDir string) error {
 	docID := doc.ID
 	// Idempotency mirrors the PDF path's GetShard probe above.
 	already, err := deps.DB.GetShard(ctx, docID, 0)
@@ -167,7 +169,7 @@ func splitEpubSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.
 	if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
 		return err
 	}
-	slog.Info("split complete (epub, single shard)", "doc", docID)
+	slog.Info("split complete (single synthetic shard)", "doc", docID)
 	return nil
 }
 

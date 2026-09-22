@@ -160,16 +160,16 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	defer os.RemoveAll(tmpDir)
-	isEpub := doc.MimeType != nil && *doc.MimeType == "application/epub+zip"
-	sourceName := "source.pdf"
-	if isEpub {
-		sourceName = "source.epub"
-	}
+	// DocFormat from the doc's mime type — the shared format table is the
+	// single source of truth (Workstream 2). Unknown mime → PDF behavior.
+	docFormat := pipeline.FormatFromMime(derefStr(doc.MimeType))
+	sourceName := pipeline.ParseSourceName(docFormat)
 	sourcePath := filepath.Join(tmpDir, sourceName)
-	// PDF cache path: bypassed for EPUB (the cache dir holds .pdf files and
-	// the cache path derivation is doc-scoped, not mime-scoped).
+	// PDF cache path: bypassed for non-PDF docs (office/text docs are
+	// ≤64 MiB — always download; the cache dir holds .pdf files and the
+	// cache path derivation is doc-scoped, not mime-scoped).
 	cachePath := ""
-	if s.ParserPDFCacheDir != "" && !isEpub {
+	if s.ParserPDFCacheDir != "" && docFormat == pipeline.FmtPDF {
 		cachePath = pipeline.PDFCachePath(s.ParserPDFCacheDir, docID)
 	}
 	if cachePath != "" {
@@ -202,8 +202,8 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		Attempt:    shard.Attempts,
 		ShardPages: s.ShardPages,
 		TextOnly:   textOnly,
-		SkipAnyDoc: isEpub,
-		IsEpub:     isEpub,
+		SkipAnyDoc: docFormat == pipeline.FmtEPUB,
+		DocFormat:  docFormat,
 	})
 	if err != nil {
 		return err

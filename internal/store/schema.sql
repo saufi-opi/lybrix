@@ -217,6 +217,27 @@ CREATE TABLE IF NOT EXISTS embedding_models (
 ALTER TABLE embedding_models DROP COLUMN IF EXISTS is_default;
 DROP INDEX IF EXISTS uq_embedding_models_single_default;
 
+-- Reranker registry (WeKnora-parity cross-encoder reranking). Separate
+-- table from embedding_models on purpose: rerankers score text pairs, so
+-- there is no vector_dim and no HNSW — only a query-plane endpoint (the
+-- two-plane rule means rerank never runs at ingest). `openai` is the
+-- /v1/rerank-compatible family (Cohere, SiliconFlow, Jina).
+CREATE TABLE IF NOT EXISTS rerank_models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL CHECK (provider IN ('tei','openai')),
+    model_id TEXT NOT NULL,
+    query_url TEXT NOT NULL,        -- query-plane only; rerank never runs at ingest
+    api_key TEXT,                   -- openai-compatible only; write-only
+    truncate_chars INT NOT NULL DEFAULT 6000 CHECK (truncate_chars >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Per-collection reranker binding (optional — search reranks only when a
+-- binding or an explicit request override exists).
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS rerank_model_id UUID REFERENCES rerank_models(id);
+
 -- Collections binding. MANDATORY at creation from now on; the column stays
 -- nullable so pre-registry rows still exist, but a NULL binding resolves to
 -- no model (no dense leg for it, no ingest) until rebound.

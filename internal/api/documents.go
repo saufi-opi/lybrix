@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -212,10 +213,12 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusAccepted, map[string]any{"id": docID, "state": string(store.StateUploaded)})
 }
 
-// verifyRawObject streams the raw object once: sha256 + magic bytes + page
-// cap (R-15/R-21). PRD §6.1: the API — not the client — owns the dedupe
-// key; §11: reject non-PDFs and over-cap books at the door rather than
-// inside a parser.
+// verifyRawObject streams the raw object once: sha256 + format sniff +
+// per-format verification (R-15/R-21). PRD §6.1: the API — not the client —
+// owns the dedupe key; §11: reject non-ingestible bodies and over-cap books
+// at the door rather than inside a parser. The page-count probe only runs
+// for PDF (the cap is a page cap); every other format verifies as one
+// synthetic page.
 func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) (int, error) {
 	body, err := s.deps.S3.GetReader(ctx, s.deps.Settings.S3BucketRaw, rawKey)
 	if err != nil {
@@ -225,17 +228,61 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 	defer body.Close()
 
 	digest := sha256.New()
-	var head []byte
 	buf := make([]byte, 64*1024)
-	// first read decides the magic bytes
-	n, err := io.ReadFull(body, buf[:5])
+	// first read decides the format (the shared sniff table — Workstream 2)
+	n, err := io.ReadFull(body, buf[:64])
 	if err != nil && err != io.ErrUnexpectedEOF {
 		return 0, errObjectNotUploaded
 	}
-	head = buf[:n]
+	head := buf[:n]
 	digest.Write(head)
-	if string(head) != "%PDF-" {
+	format, ferr := pipeline.DetectFormat(head, rawKey)
+	if ferr != nil {
 		return 0, errObjectNotPDF
+	}
+	if format != pipeline.FmtPDF {
+		// non-PDF: stream the rest through the digest, then apply the
+		// same verification table as ingestFromStream (zip integrity /
+		// UTF-8 text / html markup). No page-count probe — pageCount = 1.
+		nonPdf := head
+		for {
+			n, err := body.Read(buf)
+			if n > 0 {
+				digest.Write(buf[:n])
+				nonPdf = append(nonPdf, buf[:n]...)
+				// bound memory: the 64 MiB ceiling mirrors ingestFromStream
+				if len(nonPdf) > nonPdfMaxBytes {
+					return 0, errTooLarge
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return 0, errObjectNotUploaded
+			}
+		}
+		if hex.EncodeToString(digest.Sum(nil)) != strings.ToLower(clientSHA) {
+			return 0, errSHAMismatch
+		}
+		// verify against a temp file (zip.OpenReader takes a path)
+		tmp, terr := os.CreateTemp("", "verify-")
+		if terr != nil {
+			return 0, terr
+		}
+		tmpPath := tmp.Name()
+		defer os.Remove(tmpPath)
+		if _, werr := tmp.Write(nonPdf); werr != nil {
+			tmp.Close()
+			return 0, werr
+		}
+		if cerr := tmp.Close(); cerr != nil {
+			return 0, cerr
+		}
+		if verr := verifyNonPDF(format, tmpPath); verr != nil {
+			return 0, errUnreadablePDF{msg: verr.Error()}
+		}
+		return 1, nil
 	}
 	pdfBytes := head
 	for {
@@ -273,7 +320,7 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 // typed verify errors map to distinct 400 details (documents.py parity).
 var (
 	errObjectNotUploaded = errors.New("object not uploaded")
-	errObjectNotPDF      = errors.New("uploaded object is not a PDF")
+	errObjectNotPDF      = errors.New("uploaded object is not an ingestible file")
 	errSHAMismatch       = errors.New("content_sha256 mismatch")
 	errTooLarge          = errors.New("uploaded object too large to verify")
 )

@@ -24,6 +24,7 @@ type ErrorCode string
 const (
 	CodePDFEncrypted       ErrorCode = "PDF_ENCRYPTED"
 	CodePDFCorrupt         ErrorCode = "PDF_CORRUPT"
+	CodeUnsupportedFormat  ErrorCode = "UNSUPPORTED_FORMAT"
 	CodeShardOOM           ErrorCode = "SHARD_OOM"
 	CodeShardTimeout       ErrorCode = "SHARD_TIMEOUT"
 	CodeOCRFailed          ErrorCode = "OCR_FAILED"
@@ -49,6 +50,9 @@ type ErrorSpec struct {
 var ErrorSpecs = map[ErrorCode]ErrorSpec{
 	CodePDFEncrypted: {CodePDFEncrypted, StageSplit, false, "Password required — prompt for upload replacement"},
 	CodePDFCorrupt:   {CodePDFCorrupt, StageSplit, false, "Terminal, offer delete"},
+	CodeUnsupportedFormat: {
+		CodeUnsupportedFormat, StageSplit, false, "Terminal — format not ingestible",
+	},
 	CodeShardOOM:     {CodeShardOOM, StageParse, true, "Auto retry ladder, show attempt count"},
 	CodeShardTimeout: {CodeShardTimeout, StageParse, true, "Auto"},
 	CodeOCRFailed:    {CodeOCRFailed, StageParse, true, "Auto, flags reduced quality"},

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/saufi-opi/lybrix/internal/config"
+	"github.com/saufi-opi/lybrix/internal/service"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
 
@@ -30,7 +31,10 @@ const partialNote = "source document parsed with holes (completeness < 1.0); " +
 	"nearby pages may be missing"
 
 // handleSearch is the business logic behind the `search` tool —
-// unit-testable against DB fixtures (search_impl parity).
+// unit-testable against DB fixtures (search_impl parity). rerank and
+// metadata_filter are the Workstream 1/4 additions: the resolution rule
+// mirrors the REST surface (explicit override > collection binding > none;
+// rerank failures degrade to RRF order, never fail the tool).
 func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, error) {
 	query, qerr := argString(args, "query")
 	if qerr != nil || strings.TrimSpace(query) == "" {
@@ -59,6 +63,32 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 	if len(key.Collections) > 0 {
 		scope = key.Collections
 	}
+
+	// Workstream 4: metadata_filter arrives as a JSON object string
+	// (LLM-friendly); a malformed payload is a tool error the model can
+	// self-correct.
+	metaFilter, metaArgs, ferr := parseMetadataFilterArg(args)
+	if ferr != nil {
+		return nil, ferr
+	}
+
+	// Workstream 1: rerank args — "rerank" bool + "rerank_model_id" string.
+	var rerankFlag *bool
+	if v, ok := args["rerank"].(bool); ok {
+		rerankFlag = &v
+	}
+	override := argStringOrEmpty(args, "rerank_model_id")
+
+	// Workstream 1e: resolve the rerank stage ONCE up front (explicit
+	// override > collection binding > none).
+	single := collection
+	reranker, rerr := resolveReranker(ctx, deps, service.RerankResolveRequest{
+		SingleCollection: single, Rerank: rerankFlag, RerankModelID: override,
+	})
+	if rerr != nil {
+		return nil, rerr
+	}
+
 	var (
 		hits []*store.SearchHit
 		err  error
@@ -71,7 +101,12 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 		if err != nil {
 			return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
 		}
-		hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, collection, scope, query, limit)
+		// candidate pool when a reranker resolves (Workstream 1e)
+		poolSize := limit
+		if reranker != nil && poolSize < deps.Settings.RerankCandidates {
+			poolSize = deps.Settings.RerankCandidates
+		}
+		hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, collection, scope, query, poolSize, metaFilter, metaArgs)
 	} else {
 		// No collection named → multi-collection grouped search across the
 		// key-accessible corpus: group by bound model, embed once per
@@ -95,9 +130,23 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 			if err != nil {
 				return nil, fmt.Errorf("query embedding unavailable: %s", err.Error())
 			}
-			hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, targets[0], scope, query, limit)
+			single = targets[0]
+			if reranker == nil {
+				// re-resolve against the discovered collection's binding
+				reranker, rerr = resolveReranker(ctx, deps, service.RerankResolveRequest{
+					SingleCollection: single, Rerank: rerankFlag, RerankModelID: override,
+				})
+				if rerr != nil {
+					return nil, rerr
+				}
+			}
+			poolSize := limit
+			if reranker != nil && poolSize < deps.Settings.RerankCandidates {
+				poolSize = deps.Settings.RerankCandidates
+			}
+			hits, err = deps.DB.HybridSearch(ctx, vec, model.VectorDim, targets[0], scope, query, poolSize, metaFilter, metaArgs)
 		} else {
-			hits, err = deps.DB.MultiHybridSearch(ctx, query, targets, scope, limit,
+			hits, err = deps.DB.MultiHybridSearch(ctx, query, targets, scope, limit, metaFilter, metaArgs,
 				func(m *store.EmbeddingModel) ([]float32, error) {
 					return deps.EmbedForModel(ctx, m, query)
 				})
@@ -106,6 +155,24 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 	if err != nil {
 		return nil, err
 	}
+
+	// Workstream 1: rerank stage (degrade to RRF order, never fail).
+	var rerankNoteText string
+	if reranker != nil && deps.RerankHits != nil {
+		reranked, status, rerr := deps.RerankHits(ctx, reranker, query, hits, limit)
+		switch {
+		case rerr != nil:
+			rerankNoteText = service.RerankNote(rerr.Error())
+		case status.Applied:
+			hits = reranked
+		default:
+			rerankNoteText = service.RerankNote(status.Reason)
+		}
+	}
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+
 	out := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		item := map[string]any{
@@ -118,13 +185,46 @@ func handleSearch(ctx context.Context, deps Deps, args map[string]any) (any, err
 			"doc_id":       h.DocID,
 			"chunk_id":     h.ChunkID,
 		}
+		if h.Reranked {
+			item["reranked"] = true
+		}
 		if h.Partial {
 			item["partial"] = true
 			item["note"] = partialNote
 		}
 		out = append(out, item)
 	}
+	if rerankNoteText != "" {
+		return map[string]any{"results": out, "rerank": rerankNoteText}, nil
+	}
 	return out, nil
+}
+
+// resolveReranker applies the shared resolution rule; a nil Deps hook means
+// rerank is unavailable (never an error — "off").
+func resolveReranker(ctx context.Context, deps Deps, req service.RerankResolveRequest) (*store.RerankModel, error) {
+	if deps.ResolveReranker == nil {
+		return nil, nil
+	}
+	return deps.ResolveReranker(ctx, req)
+}
+
+// parseMetadataFilterArg compiles the optional metadata_filter JSON object
+// string into the store's parameterized dialect.
+func parseMetadataFilterArg(args map[string]any) (string, []any, error) {
+	raw := argStringOrEmpty(args, "metadata_filter")
+	if raw == "" {
+		return "", nil, nil
+	}
+	var f map[string]any
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		return "", nil, fmt.Errorf("metadata_filter must be a JSON object: %s", err.Error())
+	}
+	filter, filterArgs, ferr := store.BuildMetadataFilter(f)
+	if ferr != nil {
+		return "", nil, ferr
+	}
+	return filter, filterArgs, nil
 }
 
 // handleGetChunkContext is the get_chunk_context impl (±window by seq).
@@ -281,6 +381,111 @@ func handleListCollections(ctx context.Context, deps Deps, _ map[string]any) (an
 		})
 	}
 	return out, nil
+}
+
+// handleListChunks is the list_chunks impl — bounded (page_size cap 200):
+// seq, is_parent, parent_id, pages, token_count, heading_path, and a
+// 500-char text preview per row.
+func handleListChunks(ctx context.Context, deps Deps, args map[string]any) (any, error) {
+	docID, err := argString(args, "doc_id")
+	if err != nil {
+		return nil, fmt.Errorf("doc_id is required")
+	}
+	doc, err := deps.DB.GetDocument(ctx, docID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("document %s not found", docID)
+	}
+	page := argIntOr(args, "page", 1)
+	pageSize := argIntOr(args, "page_size", 50)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	rows, total, err := deps.DB.ListDocChunks(ctx, docID, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		preview := r.Text
+		if len(preview) > 500 {
+			preview = preview[:500] + "…"
+		}
+		out = append(out, map[string]any{
+			"chunk_id":          r.ID,
+			"seq":               r.Seq,
+			"is_parent":         r.IsParent,
+			"parent_id":         r.ParentID,
+			"page_start":        r.PageStart,
+			"page_end":          r.PageEnd,
+			"token_count":       r.TokenCount,
+			"heading_path":      r.HeadingPath,
+			"header_breadcrumb": r.HeaderBreadcrumb,
+			"text_preview":      preview,
+		})
+	}
+	return map[string]any{
+		"doc_id":    docID,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"chunks":    out,
+	}, nil
+}
+
+// handlePreviewChunk is the preview_chunk impl: full text + token count +
+// breadcrumb + parent text + seq neighbours.
+func handlePreviewChunk(ctx context.Context, deps Deps, args map[string]any) (any, error) {
+	chunkID, err := argString(args, "chunk_id")
+	if err != nil {
+		return nil, fmt.Errorf("chunk_id is required")
+	}
+	chunk, parent, err := deps.DB.GetChunkWithParent(ctx, chunkID)
+	if err != nil {
+		return nil, err
+	}
+	if chunk == nil {
+		return nil, fmt.Errorf("chunk %s not found", chunkID)
+	}
+	neighbours, err := deps.DB.ChunkNeighbours(ctx, chunk.DocID, chunk.Seq, 1)
+	if err != nil {
+		return nil, err
+	}
+	nb := make([]map[string]any, 0, len(neighbours))
+	for _, n := range neighbours {
+		nb = append(nb, map[string]any{
+			"chunk_id":  n.ID,
+			"seq":       n.Seq,
+			"is_parent": n.IsParent,
+		})
+	}
+	parentText := ""
+	if parent != nil {
+		parentText = parent.Text
+	}
+	return map[string]any{
+		"chunk_id":          chunk.ID,
+		"doc_id":            chunk.DocID,
+		"seq":               chunk.Seq,
+		"is_parent":         chunk.IsParent,
+		"parent_id":         chunk.ParentID,
+		"page_start":        chunk.PageStart,
+		"page_end":          chunk.PageEnd,
+		"token_count":       chunk.TokenCount,
+		"heading_path":      chunk.HeadingPath,
+		"header_breadcrumb": chunk.HeaderBreadcrumb,
+		"text":              chunk.Text,
+		"parent_text":       parentText,
+		"neighbours":        nb,
+	}, nil
 }
 
 // --- argument helpers ------------------------------------------------------

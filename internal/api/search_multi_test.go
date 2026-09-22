@@ -35,10 +35,10 @@ func multiSearchDeps() (Deps, *int, *int) {
 			}
 			return make([]float32, 1024), nil
 		},
-		HybridSearch: func(_ context.Context, _ []float32, _ int, _ string, _ []string, _ string, _ int) ([]*store.SearchHit, error) {
+		HybridSearch: func(_ context.Context, _ []float32, _ int, _ string, _ []string, _ string, _ int, _ string, _ []any) ([]*store.SearchHit, error) {
 			return []*store.SearchHit{{ChunkID: "c-single", Score: 1.0}}, nil
 		},
-		MultiSearch: func(_ context.Context, _ string, collections, _ []string, _ int,
+		MultiSearch: func(_ context.Context, _ string, collections, _ []string, _ int, _ string, _ []any,
 			embedFn func(*store.EmbeddingModel) ([]float32, error)) ([]*store.SearchHit, error) {
 			// replicate the grouped contract: one embed call per unique model;
 			// empty collections = all (the two fixture collections)

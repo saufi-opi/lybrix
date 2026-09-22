@@ -84,5 +84,23 @@ export function useEmbeddingModels() {
   });
 }
 
+/** Chunk Inspector pagination (document detail → Chunk Inspector tab).
+ * Calls the new REST path through the session-gated /api/admin proxy. */
+export function useChunks(docId: string, page = 1, pageSize = 50) {
+  return useQuery({
+    queryKey: ["chunks", docId, page, pageSize],
+    queryFn: () => apiClient.chunks(docId, page, pageSize),
+  });
+}
+
+/** Reranker registry listing — the Models page's Rerankers tab and the
+ * collection reranker bind dialog. */
+export function useRerankModels() {
+  return useQuery({
+    queryKey: ["rerank-models"],
+    queryFn: () => apiClient.rerankModels(),
+  });
+}
+
 /** Re-exported for pages that still import row types from here. */
 export type { DocumentRow, ShardRow };

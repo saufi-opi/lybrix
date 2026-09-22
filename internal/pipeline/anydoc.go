@@ -21,10 +21,14 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 	"unsafe"
 )
+
+// readFile loads a shard's bytes off disk (the CGO lane's file-input path).
+func readFile(path string) ([]byte, error) { return os.ReadFile(path) }
 
 // AnyDocParser is the in-process conversion engine.
 type AnyDocParser struct{}
@@ -54,7 +58,10 @@ func (AnyDocParser) Parse(_ context.Context, req ParseRequest) (ParseResult, err
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	format := C.int(0) // 0 = pdf
+	format := C.int(req.DocFormat.AnydocCode())
+	if int(format) < 0 {
+		return ParseResult{}, fmt.Errorf("anydoc: format %d has no fast path", int(req.DocFormat))
+	}
 	var out *C.uchar
 	var outLen C.size_t
 	errBuf := (*C.char)(C.malloc(256))

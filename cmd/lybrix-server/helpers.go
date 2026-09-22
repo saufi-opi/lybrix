@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/saufi-opi/lybrix/internal/config"
 	"github.com/saufi-opi/lybrix/internal/errors"
 	"github.com/saufi-opi/lybrix/internal/pipeline"
 	"github.com/saufi-opi/lybrix/internal/queue"
@@ -72,6 +73,46 @@ func embedQueryFn(db *store.DB) func(ctx context.Context, collection, text strin
 // api and mcp expect for the multi-collection grouped search.
 func embedForModelAdapter() func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error) {
 	return embedForModelFn
+}
+
+// rerankSeedFrom projects the config rerank seed block onto the store seed
+// struct (RERANK_ENABLED=true gates the whole thing).
+func rerankSeedFrom(settings *config.Settings) store.RerankSeed {
+	return store.RerankSeed{
+		Enabled:  settings.RerankSeed.Enabled,
+		ModelID:  settings.RerankSeed.ModelID,
+		QueryURL: settings.RerankSeed.QueryURL,
+	}
+}
+
+// rerankResolver is the shared rerank resolution rule (plan §1e) injected
+// into both the REST and MCP Deps.
+func rerankResolver(db *store.DB) func(ctx context.Context, req service.RerankResolveRequest) (*store.RerankModel, error) {
+	return func(ctx context.Context, req service.RerankResolveRequest) (*store.RerankModel, error) {
+		return service.ResolveRerankModel(ctx, db, req)
+	}
+}
+
+// rerankHitsFn builds the cross-encoder stage: fetch the resolved row
+// fresh (so an edit/delete converges), build the client with the
+// write-only key, and run service.RerankHits. The key never leaves this
+// closure — no log, event, or response carries it.
+func rerankHitsFn(db *store.DB) func(ctx context.Context, rm *store.RerankModel, query string, hits []*store.SearchHit, topK int) ([]*store.SearchHit, service.RerankStatus, error) {
+	return func(ctx context.Context, rm *store.RerankModel, query string, hits []*store.SearchHit, topK int) ([]*store.SearchHit, service.RerankStatus, error) {
+		// re-fetch with the key: the resolved row carries has_api_key only
+		m, key, err := db.GetRerankModelWithKey(ctx, rm.ID)
+		if err != nil {
+			return hits, service.RerankStatus{Applied: false, Reason: err.Error()}, nil
+		}
+		if m == nil {
+			return hits, service.RerankStatus{Applied: false, Reason: "rerank model vanished"}, nil
+		}
+		client, err := pipeline.NewRerankClient(m.Provider, m.ModelID, m.QueryURL, key, m.TruncateChars)
+		if err != nil {
+			return hits, service.RerankStatus{Applied: false, Reason: err.Error()}, nil
+		}
+		return service.RerankHits(ctx, client, query, hits, topK)
+	}
 }
 
 // wrapHandler adapts service handlers onto the worker.Handler shape.

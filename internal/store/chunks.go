@@ -255,6 +255,52 @@ func (d *DB) DocChunkCountAt(ctx context.Context, docID string) (*int, error) {
 	return n, err
 }
 
+// ListDocChunks selects one seq-ordered page of a doc's chunks — parents
+// and children both (is_parent flags which) — plus the total row count for
+// pagination. pageSize is clamped to 200.
+func (d *DB) ListDocChunks(ctx context.Context, docID string, page, pageSize int) ([]*Chunk, int, error) {
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+	if page < 1 {
+		page = 1
+	}
+	var total int
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM chunks WHERE doc_id = $1`, docID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := d.Pool.Query(ctx, `SELECT `+chunkCols+` FROM chunks
+		WHERE doc_id = $1 ORDER BY seq LIMIT $2 OFFSET $3`,
+		docID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	chunks, err := collectChunks(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chunks, total, nil
+}
+
+// GetChunkWithParent fetches one chunk plus its parent row (nil when the
+// chunk is itself a parent or has no parent) — preview_chunk's data source.
+// Either id absent → (nil, nil, nil).
+func (d *DB) GetChunkWithParent(ctx context.Context, chunkID string) (*Chunk, *Chunk, error) {
+	c, err := d.GetChunk(ctx, chunkID)
+	if err != nil || c == nil {
+		return nil, nil, err
+	}
+	if c.ParentID == nil {
+		return c, nil, nil
+	}
+	p, err := d.GetChunk(ctx, *c.ParentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, p, nil
+}
+
 // EmbeddedChunksSince counts chunks embedded in [start, end) — the janitor
 // rollup's chunks_embedded input.
 func (d *DB) EmbeddedChunksSince(ctx context.Context, start, end time.Time) (int, error) {

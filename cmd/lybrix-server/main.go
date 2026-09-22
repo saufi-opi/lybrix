@@ -95,6 +95,7 @@ commands:
 // registry from the legacy EMBED_* env vars exactly once (empty-table
 // seed, idempotent) — every subcommand rides this so a `keys bootstrap`
 // run on a fresh database leaves the default row + seed-dim HNSW behind.
+// The rerank registry seeds the same way, gated on RERANK_ENABLED.
 func infra(ctx context.Context, settings *config.Settings) (*store.DB, redisClient, *objectstore.Client, error) {
 	db, err := store.NewPool(ctx, settings.DatabaseURL)
 	if err != nil {
@@ -103,6 +104,10 @@ func infra(ctx context.Context, settings *config.Settings) (*store.DB, redisClie
 	if err := db.SeedDefaultEmbeddingModel(ctx, seedFrom(settings)); err != nil {
 		db.Close()
 		return nil, nil, nil, fmt.Errorf("seed embedding model: %w", err)
+	}
+	if err := db.SeedDefaultRerankModel(ctx, rerankSeedFrom(settings)); err != nil {
+		db.Close()
+		return nil, nil, nil, fmt.Errorf("seed rerank model: %w", err)
 	}
 	r := queue.MustRedis(settings.RedisURL)
 	s3c, err := objectstore.New(ctx, settings.S3Endpoint, settings.S3AccessKey, settings.S3SecretKey)
@@ -122,17 +127,21 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 
 	apiDeps := api.Deps{
 		Settings: settings, DB: db, Redis: r, S3: s3c,
-		EmbedQuery:    embedQueryFn(db),
-		HybridSearch:  db.HybridSearch,
-		EmbedForModel: embedForModelAdapter(),
-		MultiSearch:   db.MultiHybridSearch,
+		EmbedQuery:      embedQueryFn(db),
+		HybridSearch:    db.HybridSearch,
+		EmbedForModel:   embedForModelAdapter(),
+		MultiSearch:     db.MultiHybridSearch,
+		ResolveReranker: rerankResolver(db),
+		RerankHits:      rerankHitsFn(db),
 	}
 	apiServer := api.New(apiDeps)
 
 	mcpDeps := mcp.Deps{
 		Settings: settings, DB: db,
-		EmbedQuery:    embedQueryFn(db),
-		EmbedForModel: embedForModelAdapter(),
+		EmbedQuery:      embedQueryFn(db),
+		EmbedForModel:   embedForModelAdapter(),
+		ResolveReranker: rerankResolver(db),
+		RerankHits:      rerankHitsFn(db),
 	}
 
 	// janitor goroutine rides along in serve mode (2.0 consolidation)

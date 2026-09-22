@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "lybrix control plane",
-    "description": "Document Ingestion & Retrieval Platform \u2014 PRD docs/prd.md",
+    "description": "Document Ingestion & Retrieval Platform — PRD docs/prd.md",
     "version": "0.1.0"
   },
   "paths": {
@@ -68,7 +68,7 @@
       "post": {
         "tags": ["documents"],
         "summary": "Commit",
-        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (\u00a76.1 backpressure).",
+        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (§6.1 backpressure).",
         "operationId": "commit_v1_documents__doc_id__commit_post",
         "parameters": [
           {
@@ -279,7 +279,7 @@
       "get": {
         "tags": ["documents"],
         "summary": "Get Shards",
-        "description": "Shard rows for the admin UI's shard grid (\u00a78.1).",
+        "description": "Shard rows for the admin UI's shard grid (§8.1).",
         "operationId": "get_shards_v1_documents__doc_id__shards_get",
         "parameters": [
           {
@@ -325,7 +325,7 @@
       "post": {
         "tags": ["documents"],
         "summary": "Retry",
-        "description": "Three retry scopes cost very different amounts (\u00a78.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
+        "description": "Three retry scopes cost very different amounts (§8.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
         "operationId": "retry_v1_documents__doc_id__retry_post",
         "parameters": [
           {
@@ -461,7 +461,7 @@
       "get": {
         "tags": ["collections"],
         "summary": "Collection Stats",
-        "description": "Per-collection: doc count, chunk count (\u00a78.1 Collections).",
+        "description": "Per-collection: doc count, chunk count (§8.1 Collections).",
         "operationId": "collection_stats_v1_collections__collection_id__stats_get",
         "parameters": [
           {
@@ -862,7 +862,7 @@
       "get": {
         "tags": ["events"],
         "summary": "Event Stream",
-        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5\u201350 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
+        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5–50 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
         "operationId": "event_stream_v1_events_stream_get",
         "parameters": [
           {
@@ -919,7 +919,7 @@
       "get": {
         "tags": ["system"],
         "summary": "Queues",
-        "description": "Depth + consumer lag per stream (PRD \u00a710.1).\n\nundelivered comes from streams.undelivered_count() \u2014 NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
+        "description": "Depth + consumer lag per stream (PRD §10.1).\n\nundelivered comes from streams.undelivered_count() — NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
         "operationId": "queues_v1_system_queues_get",
         "responses": {
           "200": {
@@ -955,7 +955,7 @@
       "get": {
         "tags": ["system"],
         "summary": "Get Metrics",
-        "description": "JSON counters, Prometheus-convertible shape (\u00a710.4).",
+        "description": "JSON counters, Prometheus-convertible shape (§10.4).",
         "operationId": "get_metrics_v1_system_metrics_get",
         "responses": {
           "200": {
@@ -1464,6 +1464,474 @@
           "404": {
             "description": "Collection not found",
             "content": {}
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rerank-models": {
+      "get": {
+        "tags": ["rerank-models"],
+        "summary": "List Rerank Models",
+        "operationId": "list_rerank_models_v1_rerank_models_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RerankModelOut"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["rerank-models"],
+        "summary": "Create Rerank Model",
+        "operationId": "create_rerank_model_v1_rerank_models_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankModelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankModelOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rerank-models/test": {
+      "post": {
+        "tags": ["rerank-models"],
+        "summary": "Test Rerank Model",
+        "operationId": "test_rerank_model_v1_rerank_models_test_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankModelCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankTestResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rerank-models/{model_id}": {
+      "post": {
+        "tags": ["rerank-models"],
+        "summary": "Update Rerank Model",
+        "operationId": "update_rerank_model_v1_rerank_models__model_id__post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankModelUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankModelOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["rerank-models"],
+        "summary": "Delete Rerank Model",
+        "operationId": "delete_rerank_model_v1_rerank_models__model_id__delete",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{collection_id}/reranker": {
+      "post": {
+        "tags": ["collections"],
+        "summary": "Bind Collection Reranker",
+        "operationId": "bind_collection_reranker_v1_collections__collection_id__reranker_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionRerankerBind"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chunks/{chunk_id}": {
+      "get": {
+        "tags": ["chunks"],
+        "summary": "Get Chunk",
+        "operationId": "get_chunk_v1_chunks__chunk_id__get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "chunk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Chunk Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/documents/{doc_id}/chunks": {
+      "get": {
+        "tags": ["documents"],
+        "summary": "List Document Chunks",
+        "operationId": "list_document_chunks_v1_documents__doc_id__chunks_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkList"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -2020,6 +2488,36 @@
             "minimum": 1.0,
             "title": "Top K",
             "default": 8
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank",
+            "description": "Re-score the candidate pool with the configured cross-encoder reranker"
+          },
+          "rerank_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Model Id",
+            "description": "Explicit reranker registry id — overrides the collection's bound reranker"
+          },
+          "metadata_filter": {
+            "type": "object",
+            "additionalProperties": true,
+            "title": "Metadata Filter",
+            "description": "Document-level filter: {\"author\"} (case-insensitive), {\"year_from\"/\"year_to\"} (metadata year range), other keys match metadata->>key exactly"
           }
         },
         "type": "object",
@@ -2711,6 +3209,460 @@
         "type": "object",
         "required": ["synced", "failed", "results"],
         "title": "OpdsSyncResult"
+      },
+      "RerankModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["tei", "openai"],
+            "title": "Provider"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "query_url": {
+            "type": "string",
+            "title": "Query Url"
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "title": "Has Api Key"
+          },
+          "truncate_chars": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Truncate Chars",
+            "default": 6000
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": ["id", "name", "provider", "model_id", "query_url"],
+        "title": "RerankModelOut"
+      },
+      "RerankModelCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["tei", "openai"],
+            "title": "Provider"
+          },
+          "model_id": {
+            "type": "string",
+            "title": "Model Id"
+          },
+          "query_url": {
+            "type": "string",
+            "title": "Query Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "truncate_chars": {
+            "type": "integer",
+            "minimum": 0,
+            "title": "Truncate Chars",
+            "default": 6000
+          }
+        },
+        "type": "object",
+        "required": ["name", "provider", "model_id", "query_url"],
+        "title": "RerankModelCreate"
+      },
+      "RerankModelUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["tei", "openai"]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "query_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "truncate_chars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncate Chars"
+          }
+        },
+        "type": "object",
+        "title": "RerankModelUpdate"
+      },
+      "RerankTestResult": {
+        "properties": {
+          "reachable": {
+            "type": "boolean",
+            "title": "Reachable"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": ["reachable", "detail"],
+        "title": "RerankTestResult"
+      },
+      "CollectionRerankerBind": {
+        "properties": {
+          "rerank_model_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Model Id",
+            "description": "null clears the binding"
+          }
+        },
+        "type": "object",
+        "title": "CollectionRerankerBind"
+      },
+      "ChunkOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "is_parent": {
+            "type": "boolean",
+            "title": "Is Parent"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "heading_path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path"
+          },
+          "header_breadcrumb": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Breadcrumb"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count"
+          },
+          "embedded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedded At"
+          }
+        },
+        "type": "object",
+        "required": ["id", "seq", "is_parent", "text", "token_count"],
+        "title": "ChunkOut"
+      },
+      "ChunkList": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          },
+          "chunks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChunkOut"
+            },
+            "title": "Chunks"
+          }
+        },
+        "type": "object",
+        "required": ["total", "page", "page_size", "chunks"],
+        "title": "ChunkList"
+      },
+      "ChunkDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "is_parent": {
+            "type": "boolean",
+            "title": "Is Parent"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "heading_path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path"
+          },
+          "header_breadcrumb": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Breadcrumb"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count"
+          },
+          "embedded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedded At"
+          },
+          "parent_text": {
+            "type": "string",
+            "title": "Parent Text"
+          },
+          "prev_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Id"
+          },
+          "next_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Id"
+          },
+          "neighbours": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChunkOut"
+            },
+            "title": "Neighbours"
+          }
+        },
+        "type": "object",
+        "title": "ChunkDetail"
       }
     }
   }

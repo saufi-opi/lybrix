@@ -8,13 +8,13 @@ import (
 
 // collectionCols covers the OpenAPI CollectionOut shape: the legacy
 // embedding_model / vector_dim columns (kept in sync FROM the bound
-// registry row) plus the binding id itself.
-const collectionCols = `id, name, embedding_model, vector_dim, embedding_model_id, created_at`
+// registry row), the embedding binding id, and the reranker binding id.
+const collectionCols = `id, name, embedding_model, vector_dim, embedding_model_id, rerank_model_id, created_at`
 
 func scanCollection(row pgx.Row) (*Collection, error) {
 	var c Collection
 	if err := row.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim,
-		&c.EmbeddingModelID, &c.CreatedAt); err != nil {
+		&c.EmbeddingModelID, &c.RerankModelID, &c.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &c, nil

@@ -306,7 +306,7 @@ func TestMultiDimRoundTrip(t *testing.T) {
 	}
 	// 768 query: only the 768 row participates (BM25 catches both docs'
 	// text, dense contributes only same-dim — assert the 768 chunk's doc wins)
-	hits, err := db.HybridSearch(ctx, vec768, 768, "", nil, "seven", 8)
+	hits, err := db.HybridSearch(ctx, vec768, 768, "", nil, "seven", 8, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestMultiDimRoundTrip(t *testing.T) {
 		t.Fatalf("768 search returned wrong doc: %s", hits[0].DocID)
 	}
 	// 1024 query likewise
-	hits, err = db.HybridSearch(ctx, vec1024, 1024, "", nil, "ten", 8)
+	hits, err = db.HybridSearch(ctx, vec1024, 1024, "", nil, "ten", 8, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestTypmodMigrationConvergence(t *testing.T) {
 		t.Fatal("1024 partial index must exist after migration")
 	}
 	// vectors intact + searchable via the partial index
-	if _, err := db.HybridSearch(ctx, make([]float32, 1024), 1024, "", nil, "x", 5); err != nil {
+	if _, err := db.HybridSearch(ctx, make([]float32, 1024), 1024, "", nil, "x", 5, "", nil); err != nil {
 		t.Fatalf("search over migrated column failed: %v", err)
 	}
 }
@@ -390,7 +390,7 @@ func TestDimMismatchBackstop(t *testing.T) {
 	ctx := context.Background()
 	big := make([]float32, 1536)
 	// empty corpus + matching filter shape: no rows, no error
-	if _, err := db.HybridSearch(ctx, big, 1536, "", nil, "x", 5); err != nil {
+	if _, err := db.HybridSearch(ctx, big, 1536, "", nil, "x", 5, "", nil); err != nil {
 		t.Fatalf("dim-filtered empty search must not error: %v", err)
 	}
 }
