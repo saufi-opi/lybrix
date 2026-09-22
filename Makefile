@@ -1,25 +1,36 @@
-# rag-platform Makefile — split-host: core on VM2, ingest on nsspq.
+# lybrix 2.0 Makefile — Go rewrite, split-host: core on VM2, ingest on nsspq.
 # Same .env on both hosts; profile picks the service set.
 
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
-GPU ?= 0
+GO ?= go
 
 .PHONY: help up-core up-ingest up down-core down-ingest down logs-core logs-ingest \
-        migrate test lint ps-core ps-ingest restart-core restart-ingest pull-core pull-ingest
+        test lint vet build ps-core ps-ingest restart-core restart-ingest pull-core pull-ingest \
+        keys-bootstrap
 
 help:
 	@echo "core (VM2):    make up-core / down-core / logs-core / ps-core / pull-core"
 	@echo "ingest (nsspq): make up-ingest / down-ingest / logs-ingest / ps-ingest / pull-ingest"
-	@echo "first boot:    make migrate (on VM2, after up-core started postgres)"
+	@echo "go:            make build / test / lint / vet"
+	@echo "first boot:    schema applies at serve boot (embedded); keys via: make keys-bootstrap"
+
+build:
+	$(GO) build ./...
+
+test:
+	$(GO) test ./...
+
+vet:
+	$(GO) vet ./...
+
+lint:
+	golangci-lint run
 
 up-core:
 	$(COMPOSE) --profile core up -d
 
 up-ingest:
 	$(COMPOSE) --profile ingest up -d
-
-migrate:
-	$(COMPOSE) --profile core run --rm migrate
 
 down-core:
 	$(COMPOSE) --profile core down
@@ -54,9 +65,5 @@ restart-core:
 restart-ingest:
 	$(COMPOSE) --profile ingest up -d --force-recreate
 
-test:
-	uv sync --locked --group dev --all-packages
-	uv run pytest tests/ -q
-
-lint:
-	uvx ruff check .
+keys-bootstrap:
+	$(COMPOSE) --profile core exec lybrix-server /app/lybrix-server keys bootstrap admin

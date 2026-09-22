@@ -59,3 +59,27 @@ exist precisely so the browser never holds a bearer key — that boundary is the
   CLAUDE.md and required after api schema changes.
 - shadcn primitives land in `components/ui/`; domain components (shard grid, progress bar,
   retry buttons) stay as custom components on top.
+
+---
+
+## 2.0 addendum (2026-09-21)
+
+The api behind this ADR is now the Go `lybrix-server` (`internal/api`,
+chi router) rather than the 1.0 FastAPI service, but the ADR's core
+decision is unchanged and reinforced: api and web remain separate services,
+and the browser's relationship to the api still runs through the
+session-gated proxies (`/api/admin/*`, `/api/playground`) that hold bearer
+keys server-side.
+
+What changed in 2.0 that touches this ADR:
+
+- The contract is still the checked-in `services/web/openapi.json`
+  snapshot (18 paths). The Go server embeds that exact file and serves it
+  byte-identical at `/openapi.json`, so `npm run generate-client` remains
+  deterministic and the client types do not move.
+- The error envelope remains FastAPI-style `{"detail": ...}`; the web SDK's
+  `throwOnError` handling and `detail` surfacing are untouched.
+- The MCP playground proxy target moves from the standalone `mcp` container
+  to the same `lybrix-server` container's :8430 listener (`MCP_API_URL` in
+  compose points at `http://lybrix-server:8430/mcp`). Key custody is
+  unchanged: the browser never sees it.

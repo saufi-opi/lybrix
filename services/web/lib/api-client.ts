@@ -31,22 +31,43 @@ export type ShardRow = ShardOut;
  * envelope — matches the old api<T>() contract of throwing on !res.ok. */
 const THROW = { throwOnError: true } as const;
 
+/** Read endpoints gated with require_scope("search") (R-21 hardening, review
+ * minor 2): browser calls to them ride the session-gated same-origin admin
+ * proxy /api/admin/v1/* (handler: app/api/admin/[...path]/route.ts — verifies
+ * the session cookie, attaches Bearer $API_ADMIN_KEY server-side; the same-
+ * origin rewrite carries no header). Server components keep the direct /v1/*
+ * paths via API_URL — their bearer key is held server-side. */
+const isBrowser = typeof window !== "undefined";
+
+/** Per-call override: baseUrl "" (same-origin) + a URL the generated client
+ * appends its path to — the SDK path constants are /v1/..., so we point the
+ * request at /api/admin/v1/... via a baseUrl swap. */
+function viaAdminProxy<T>(call: (baseUrl: string) => Promise<T>): Promise<T> {
+  if (!isBrowser) {
+    return call("");
+  }
+  return call("/api/admin");
+}
+
 export const apiClient = {
   documents: (params = "") => {
     const qs = new URLSearchParams(params.replace(/^\?/, ""));
-    return listDocumentsV1DocumentsGet({
-      query: Object.fromEntries(qs),
-      ...THROW,
-    }).then((r) => r.data as DocumentRow[]);
+    return viaAdminProxy((baseUrl) =>
+      listDocumentsV1DocumentsGet({
+        query: Object.fromEntries(qs),
+        ...THROW,
+        baseUrl,
+      }),
+    ).then((r) => r.data as DocumentRow[]);
   },
   document: (id: string) =>
-    getDocumentV1DocumentsDocIdGet({ path: { doc_id: id }, ...THROW }).then(
-      (r) => r.data as DocumentRow,
-    ),
+    viaAdminProxy((baseUrl) =>
+      getDocumentV1DocumentsDocIdGet({ path: { doc_id: id }, ...THROW, baseUrl }),
+    ).then((r) => r.data as DocumentRow),
   shards: (id: string) =>
-    getShardsV1DocumentsDocIdShardsGet({ path: { doc_id: id }, ...THROW }).then(
-      (r) => r.data as ShardRow[],
-    ),
+    viaAdminProxy((baseUrl) =>
+      getShardsV1DocumentsDocIdShardsGet({ path: { doc_id: id }, ...THROW, baseUrl }),
+    ).then((r) => r.data as ShardRow[]),
   health: () => healthV1SystemHealthGet(THROW).then((r) => r.data as Record<string, string>),
   queues: () =>
     queuesV1SystemQueuesGet(THROW).then(
@@ -65,7 +86,9 @@ export const apiClient = {
     }).then((r) => r.data as Record<string, unknown>[]);
   },
   collections: () =>
-    listCollectionsV1CollectionsGet(THROW).then((r) => r.data as Record<string, unknown>[]),
+    viaAdminProxy((baseUrl) => listCollectionsV1CollectionsGet({ ...THROW, baseUrl })).then(
+      (r) => r.data as Record<string, unknown>[],
+    ),
   retry: (id: string, scope: string) =>
     retryV1DocumentsDocIdRetryPost({
       path: { doc_id: id },

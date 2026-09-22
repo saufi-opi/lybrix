@@ -1,31 +1,32 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-dist/
-build/
+# go binaries
+/bin/
+/lybrix-server
+/lybrix-eval
 
-# uv
-# (uv.lock IS committed; only local venvs are ignored)
+# go build/test artifacts
+*.test
+*.out
 
-# Node
+# Node (web UI)
 node_modules/
 .next/
 *.tsbuildinfo
+
+# Python (legacy — none should exist post-2.0)
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
 
 # Env & secrets
 .env
 .env.local
 .env.*.local
 
-# Local data & caches
+# Local data
 /data/
-*.sqlite3
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
 
 # Editors / OS
 .DS_Store

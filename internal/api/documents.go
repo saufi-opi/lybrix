@@ -1,0 +1,486 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/saufi-opi/lybrix/internal/objectstore"
+	"github.com/saufi-opi/lybrix/internal/pipeline"
+	"github.com/saufi-opi/lybrix/internal/queue"
+	"github.com/saufi-opi/lybrix/internal/store"
+)
+
+// newUUID returns a random RFC-4122 v4 UUID string.
+func newUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b)
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+// TxT is the transaction handle type the store works against.
+type TxT = pgx.Tx
+
+// presignRequest mirrors OpenAPI PresignRequest.
+type presignRequest struct {
+	CollectionID string `json:"collection_id"`
+	ByteSize     int64  `json:"byte_size"`
+}
+
+// presignResponse mirrors OpenAPI PresignResponse.
+type presignResponse struct {
+	DocID     string `json:"doc_id"`
+	UploadURL string `json:"upload_url"`
+}
+
+// commitRequest mirrors OpenAPI CommitRequest.
+type commitRequest struct {
+	CollectionID  string         `json:"collection_id"`
+	ContentSHA256 string         `json:"content_sha256"`
+	Title         *string        `json:"title"`
+	Author        *string        `json:"author"`
+	Metadata      map[string]any `json:"metadata"`
+}
+
+// documentOut mirrors OpenAPI DocumentOut field-for-field.
+type documentOut struct {
+	ID           string    `json:"id"`
+	CollectionID *string   `json:"collection_id"`
+	Title        *string   `json:"title"`
+	Author       *string   `json:"author"`
+	PageCount    *int      `json:"page_count"`
+	ByteSize     *int64    `json:"byte_size"`
+	State        string    `json:"state"`
+	TotalShards  *int      `json:"total_shards"`
+	ShardsDone   int       `json:"shards_done"`
+	ShardsFailed int       `json:"shards_failed"`
+	Completeness *float64  `json:"completeness"`
+	ErrorCode    *string   `json:"error_code"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func toDocumentOut(d *store.Document) documentOut {
+	return documentOut{
+		ID:           d.ID,
+		CollectionID: d.CollectionID,
+		Title:        d.Title,
+		Author:       d.Author,
+		PageCount:    d.PageCount,
+		ByteSize:     d.ByteSize,
+		State:        string(d.State),
+		TotalShards:  d.TotalShards,
+		ShardsDone:   d.ShardsDone,
+		ShardsFailed: d.ShardsFailed,
+		Completeness: d.Completeness,
+		ErrorCode:    d.ErrorCode,
+		CreatedAt:    d.CreatedAt,
+		UpdatedAt:    d.UpdatedAt,
+	}
+}
+
+// shardOut mirrors OpenAPI ShardOut.
+type shardOut struct {
+	Idx        int     `json:"idx"`
+	PageStart  int     `json:"page_start"`
+	PageEnd    int     `json:"page_end"`
+	State      string  `json:"state"`
+	Attempts   int     `json:"attempts"`
+	NeedsOCR   bool    `json:"needs_ocr"`
+	DurationMS *int    `json:"duration_ms"`
+	PeakRSSMB  *int    `json:"peak_rss_mb"`
+	ErrorCode  *string `json:"error_code"`
+}
+
+// retryRequest mirrors OpenAPI RetryRequest.
+type retryRequest struct {
+	Scope string `json:"scope"`
+}
+
+func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
+	var body presignRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid JSON body")
+		return
+	}
+	docID := newUUID()
+	url, err := s.deps.S3.PresignPut(r.Context(), s.deps.Settings.S3BucketRaw,
+		objectstore.RawKey(docID), time.Hour)
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, "presign failed: "+err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, presignResponse{DocID: docID, UploadURL: url})
+}
+
+func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
+	docID := chi.URLParam(r, "doc_id")
+	if docID == "" || !isUUID(docID) {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid doc_id")
+		return
+	}
+	var body commitRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid JSON body")
+		return
+	}
+	if body.CollectionID == "" {
+		writeDetail(w, http.StatusUnprocessableEntity, "field required: collection_id")
+		return
+	}
+	if len(body.ContentSHA256) != 64 {
+		writeDetail(w, http.StatusUnprocessableEntity,
+			"content_sha256 must be exactly 64 characters")
+		return
+	}
+	if body.Metadata == nil {
+		body.Metadata = map[string]any{}
+	}
+
+	// Backpressure: if the parse backlog exceeds MAX_PARSE_BACKLOG, commit
+	// returns 429 with Retry-After (§6.1).
+	backlog, err := queue.QueueDepth(r.Context(), s.deps.Redis, queue.StreamParse)
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, "queue depth read failed: "+err.Error())
+		return
+	}
+	if backlog > int64(s.deps.Settings.MaxParseBacklog) {
+		w.Header().Set("Retry-After", "60")
+		writeDetail(w, http.StatusTooManyRequests,
+			"parse backlog "+strconv.FormatInt(backlog, 10)+" over cap; retry later")
+		return
+	}
+
+	if dup, err := s.deps.DB.FindDuplicate(r.Context(), body.CollectionID, body.ContentSHA256); err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if dup != nil {
+		writeDetail(w, http.StatusConflict, "duplicate document in collection")
+		return
+	}
+
+	// One streaming pass serves all three checks (R-15/R-21): the verified
+	// hash below is client-supplied but only reaches the row when it equals
+	// the server-computed value — otherwise the request 400s.
+	rawKey := objectstore.RawKey(docID)
+	pageCount, err := s.verifyRawObject(r.Context(), rawKey, body.ContentSHA256)
+	if err != nil {
+		writeDetail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	doc := &store.Document{
+		ID:            docID,
+		CollectionID:  &body.CollectionID,
+		Title:         body.Title,
+		Author:        body.Author,
+		SourceURI:     "s3://" + s.deps.Settings.S3BucketRaw + "/" + rawKey,
+		ContentSHA256: body.ContentSHA256,
+		State:         store.StateUploaded,
+		PageCount:     &pageCount,
+		Metadata:      body.Metadata,
+		UploadedBy:    keyName(KeyFromContext(r.Context())),
+	}
+	if err := s.deps.DB.InsertDocument(r.Context(), doc); err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	job := queue.SplitJob{
+		SchemaVersion: queue.SchemaVersion,
+		DocID:         docID,
+		SourceURI:     doc.SourceURI,
+	}
+	if _, err := queue.XAddJob(r.Context(), s.deps.Redis, queue.StreamSplit, job); err != nil {
+		writeDetail(w, http.StatusInternalServerError, "enqueue split failed: "+err.Error())
+		return
+	}
+	// 202 Accepted with {"id", "state"} — the commit contract.
+	WriteJSON(w, http.StatusAccepted, map[string]any{"id": docID, "state": string(store.StateUploaded)})
+}
+
+// verifyRawObject streams the raw object once: sha256 + magic bytes + page
+// cap (R-15/R-21). PRD §6.1: the API — not the client — owns the dedupe
+// key; §11: reject non-PDFs and over-cap books at the door rather than
+// inside a parser.
+func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) (int, error) {
+	body, err := s.deps.S3.GetReader(ctx, s.deps.Settings.S3BucketRaw, rawKey)
+	if err != nil {
+		// a skipped PUT reads as a client error, not a 500
+		return 0, errObjectNotUploaded
+	}
+	defer body.Close()
+
+	digest := sha256.New()
+	var head []byte
+	buf := make([]byte, 64*1024)
+	// first read decides the magic bytes
+	n, err := io.ReadFull(body, buf[:5])
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return 0, errObjectNotUploaded
+	}
+	head = buf[:n]
+	digest.Write(head)
+	if string(head) != "%PDF-" {
+		return 0, errObjectNotPDF
+	}
+	pdfBytes := head
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			digest.Write(buf[:n])
+			pdfBytes = append(pdfBytes, buf[:n]...)
+			// bound memory: page-count probe needs the whole PDF for pdfcpu,
+			// but an over-cap book would buffer forever — stop early past
+			// the cap threshold using a rough 40KB/page upper bound.
+			if len(pdfBytes) > s.deps.Settings.MaxDocumentPages*40*1024 {
+				return 0, errTooLarge
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, errObjectNotUploaded
+		}
+	}
+	if hex.EncodeToString(digest.Sum(nil)) != strings.ToLower(clientSHA) {
+		return 0, errSHAMismatch
+	}
+	pageCount, err := pdfPageCount(pdfBytes)
+	if err != nil {
+		return 0, errUnreadablePDF{msg: err.Error()}
+	}
+	if pageCount > s.deps.Settings.MaxDocumentPages {
+		return 0, errOverCap{pages: pageCount, cap: s.deps.Settings.MaxDocumentPages}
+	}
+	return pageCount, nil
+}
+
+// typed verify errors map to distinct 400 details (documents.py parity).
+var (
+	errObjectNotUploaded = errors.New("object not uploaded")
+	errObjectNotPDF      = errors.New("uploaded object is not a PDF")
+	errSHAMismatch       = errors.New("content_sha256 mismatch")
+	errTooLarge          = errors.New("uploaded object too large to verify")
+)
+
+type errUnreadablePDF struct{ msg string }
+
+func (e errUnreadablePDF) Error() string { return "unreadable PDF: " + e.msg }
+
+type errOverCap struct{ pages, cap int }
+
+func (e errOverCap) Error() string {
+	return strconv.Itoa(e.pages) + " pages over cap " + strconv.Itoa(e.cap)
+}
+
+func keyName(k *store.ApiKey) *string {
+	if k == nil || k.Name == nil {
+		return nil
+	}
+	return k.Name
+}
+
+func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var state *store.DocState
+	if v := q.Get("state"); v != "" {
+		st := store.DocState(v)
+		state = &st
+	}
+	var collection *string
+	if v := q.Get("collection"); v != "" {
+		collection = &v
+	}
+	var search *string
+	if v := q.Get("q"); v != "" {
+		search = &v
+	}
+	limit := 50
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := 0
+	if v := q.Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	docs, err := s.deps.DB.ListDocuments(r.Context(), state, collection, search, limit, offset)
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]documentOut, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, toDocumentOut(d))
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
+	doc, err := s.deps.DB.GetDocument(r.Context(), chi.URLParam(r, "doc_id"))
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if doc == nil {
+		writeDetail(w, http.StatusNotFound, "document not found")
+		return
+	}
+	WriteJSON(w, http.StatusOK, toDocumentOut(doc))
+}
+
+func (s *Server) handleGetShards(w http.ResponseWriter, r *http.Request) {
+	shards, err := s.deps.DB.GetShards(r.Context(), chi.URLParam(r, "doc_id"))
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]shardOut, 0, len(shards))
+	for _, sh := range shards {
+		out = append(out, shardOut{
+			Idx: sh.Idx, PageStart: sh.PageStart, PageEnd: sh.PageEnd,
+			State: string(sh.State), Attempts: sh.Attempts, NeedsOCR: sh.NeedsOCR,
+			DurationMS: sh.DurationMS, PeakRSSMB: sh.PeakRSSMB, ErrorCode: sh.ErrorCode,
+		})
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
+	docID := chi.URLParam(r, "doc_id")
+	var body retryRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid JSON body")
+		return
+	}
+	switch body.Scope {
+	case "shards", "embed", "full":
+	default:
+		writeDetail(w, http.StatusUnprocessableEntity,
+			"scope must be one of shards|embed|full")
+		return
+	}
+	doc, err := s.deps.DB.GetDocument(r.Context(), docID)
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if doc == nil {
+		writeDetail(w, http.StatusNotFound, "document not found")
+		return
+	}
+	ctx := r.Context()
+	switch body.Scope {
+	case "embed":
+		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateEmbedding, nil, nil)
+		})
+		if err != nil {
+			writeDetail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, err = queue.XAddJob(ctx, s.deps.Redis, queue.StreamEmbed, queue.EmbedJob{
+			SchemaVersion: queue.SchemaVersion, DocID: docID,
+		})
+	case "full":
+		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateSplitting, nil, nil)
+		})
+		if err != nil {
+			writeDetail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, err = queue.XAddJob(ctx, s.deps.Redis, queue.StreamSplit, queue.SplitJob{
+			SchemaVersion: queue.SchemaVersion, DocID: docID, SourceURI: doc.SourceURI,
+		})
+	default: // shards: requeue failed shards only
+		shards, err2 := s.deps.DB.FailedShards(ctx, docID)
+		if err2 != nil {
+			writeDetail(w, http.StatusInternalServerError, err2.Error())
+			return
+		}
+		if len(shards) == 0 {
+			writeDetail(w, http.StatusConflict, "no failed shards to retry")
+			return
+		}
+		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+			// Counter hygiene inside RequeueFailedShards: mark_shard_failed
+			// bumped shards_failed per failure; requeueing undoes those
+			// failures. Back to PARSING so the janitor's settled-book sweep
+			// and stuck-doc warnings see this book again (a stranded pending
+			// shard in a terminal-state doc is invisible to every recovery
+			// path — R-11).
+			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil)
+		})
+		if err != nil {
+			writeDetail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, sh := range shards {
+			_, err = queue.XAddJob(ctx, s.deps.Redis, queue.StreamParse, queue.ParseJob{
+				SchemaVersion: queue.SchemaVersion,
+				DocID:         docID,
+				Idx:           sh.Idx,
+				PageStart:     sh.PageStart,
+				PageEnd:       sh.PageEnd,
+				SourceURI:     doc.SourceURI,
+			})
+			if err != nil {
+				writeDetail(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+	}
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"id": docID, "retried": body.Scope})
+}
+
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !isHexDigit(byte(c)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// pdfPageCount delegates to the pipeline package's pdfcpu wrapper.
+func pdfPageCount(b []byte) (int, error) { return pipeline.PageCountBytes(b) }
