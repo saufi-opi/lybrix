@@ -63,6 +63,10 @@ func (d *DB) HybridSearch(ctx context.Context, queryVec []float32, dim int, coll
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
+	metaSQL := metaFilter
+	if metaSQL == "" {
+		metaSQL = "TRUE"
+	}
 	params := append([]any{pgvector.NewVector(queryVec), collection, pqTextArray(collectionScope), bm25Query, limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 WITH dense_matches AS (
@@ -104,7 +108,7 @@ LEFT JOIN chunks p ON p.id = COALESCE(d.parent_id, b.parent_id)
 JOIN documents doc ON doc.id = COALESCE(d.doc_id, b.doc_id)
 ORDER BY rrf_score DESC
 LIMIT $5`,
-		dim, float64(RRFK), metaFilter, metaFilter),
+		dim, float64(RRFK), metaSQL, metaSQL),
 		params...)
 	if err != nil {
 		return nil, mapDimErr(err)
@@ -286,6 +290,10 @@ func (d *DB) HybridDenseSearch(ctx context.Context, queryVec []float32, dim int,
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
+	metaSQL := metaFilter
+	if metaSQL == "" {
+		metaSQL = "TRUE"
+	}
 	params := append([]any{pqTextArray(collections), pqTextArray(scope), pgvector.NewVector(queryVec), limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
@@ -303,7 +311,7 @@ FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
 LEFT JOIN chunks p ON p.id = c.parent_id
 JOIN documents doc ON doc.id = c.doc_id
 ORDER BY c.dense_rank`,
-		dim, metaFilter, metaFilter, metaFilter), params...)
+		dim, metaSQL, metaSQL, metaSQL), params...)
 	if err != nil {
 		return nil, mapDimErr(err)
 	}
@@ -314,6 +322,10 @@ ORDER BY c.dense_rank`,
 // HybridBMSearch runs the sparse leg across all target collections: BM25
 // top-K over pg_search, filtered by collection set and key scope.
 func (d *DB) HybridBMSearch(ctx context.Context, collections, scope []string, bm25Query string, limit int, metaFilter string, metaArgs []any) ([]*SearchHit, error) {
+	metaSQL := metaFilter
+	if metaSQL == "" {
+		metaSQL = "TRUE"
+	}
 	params := append([]any{bm25Query, pqTextArray(collections), pqTextArray(scope), limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
@@ -329,7 +341,7 @@ FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
       LIMIT $4) c
 LEFT JOIN chunks p ON p.id = c.parent_id
 JOIN documents doc ON doc.id = c.doc_id
-ORDER BY c.bm25_rank`, metaFilter, metaFilter, metaFilter, metaFilter), params...)
+ORDER BY c.bm25_rank`, metaSQL, metaSQL, metaSQL, metaSQL), params...)
 	if err != nil {
 		return nil, mapDimErr(err)
 	}
