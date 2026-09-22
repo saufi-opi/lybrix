@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "lybrix control plane",
-    "description": "Document Ingestion & Retrieval Platform — PRD docs/prd.md",
+    "description": "Document Ingestion & Retrieval Platform \u2014 PRD docs/prd.md",
     "version": "0.1.0"
   },
   "paths": {
@@ -68,7 +68,7 @@
       "post": {
         "tags": ["documents"],
         "summary": "Commit",
-        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (§6.1 backpressure).",
+        "description": "Step 3: after the PUT, register the document and enqueue the split.\n\n409 on duplicate (dedupe by sha256 within a collection), 429 when the\nparse backlog is over the cap (\u00a76.1 backpressure).",
         "operationId": "commit_v1_documents__doc_id__commit_post",
         "parameters": [
           {
@@ -273,13 +273,67 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": ["documents"],
+        "summary": "Delete Document",
+        "description": "Single-doc delete: DB row removed, chunks/shards cascade; the raw\nMinIO object is left for janitor GC (an events row notes the orphan).",
+        "operationId": "delete_document_v1_documents__doc_id__delete",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/documents/{doc_id}/shards": {
       "get": {
         "tags": ["documents"],
         "summary": "Get Shards",
-        "description": "Shard rows for the admin UI's shard grid (§8.1).",
+        "description": "Shard rows for the admin UI's shard grid (\u00a78.1).",
         "operationId": "get_shards_v1_documents__doc_id__shards_get",
         "parameters": [
           {
@@ -325,7 +379,7 @@
       "post": {
         "tags": ["documents"],
         "summary": "Retry",
-        "description": "Three retry scopes cost very different amounts (§8.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
+        "description": "Three retry scopes cost very different amounts (\u00a78.3): shards =\nseconds, embed = ~30s reusing parsed JSON, full = minutes from source.",
         "operationId": "retry_v1_documents__doc_id__retry_post",
         "parameters": [
           {
@@ -461,7 +515,7 @@
       "get": {
         "tags": ["collections"],
         "summary": "Collection Stats",
-        "description": "Per-collection: doc count, chunk count (§8.1 Collections).",
+        "description": "Per-collection: doc count, chunk count (\u00a78.1 Collections).",
         "operationId": "collection_stats_v1_collections__collection_id__stats_get",
         "parameters": [
           {
@@ -479,7 +533,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStats"
+                }
               }
             }
           },
@@ -862,7 +918,7 @@
       "get": {
         "tags": ["events"],
         "summary": "Event Stream",
-        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5–50 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
+        "description": "SSE feed of recent events, polled from Postgres.\n\nv1 keeps this deliberately dumb: one query per poll tick, no broker\nfan-out. At 5\u201350 concurrent UI clients this is a rounding error on\nPostgres, and it removes a pub/sub dependency from the UI path.",
         "operationId": "event_stream_v1_events_stream_get",
         "parameters": [
           {
@@ -919,7 +975,7 @@
       "get": {
         "tags": ["system"],
         "summary": "Queues",
-        "description": "Depth + consumer lag per stream (PRD §10.1).\n\nundelivered comes from streams.undelivered_count() — NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
+        "description": "Depth + consumer lag per stream (PRD \u00a710.1).\n\nundelivered comes from streams.undelivered_count() \u2014 NULL-safe lag with\na live-count fallback (2026-09-12: XINFO lag=None after XDEL cleanup\ncollapsed to 0 here, and the main dashboard disagreed with the pipeline\npage). Errors propagate: a dead Redis must not read as an empty queue.",
         "operationId": "queues_v1_system_queues_get",
         "responses": {
           "200": {
@@ -955,7 +1011,7 @@
       "get": {
         "tags": ["system"],
         "summary": "Get Metrics",
-        "description": "JSON counters, Prometheus-convertible shape (§10.4).",
+        "description": "JSON counters, Prometheus-convertible shape (\u00a710.4).",
         "operationId": "get_metrics_v1_system_metrics_get",
         "responses": {
           "200": {
@@ -1945,6 +2001,178 @@
           }
         }
       }
+    },
+    "/v1/documents/batch": {
+      "post": {
+        "tags": ["documents"],
+        "summary": "Document Batch",
+        "description": "Batch delete or batch re-parse over doc_ids. Fail-closed scope\nchecks: every doc_id must resolve (422 otherwise) and every resolved\ncollection must fall within the key's allowlist (403 otherwise) before\nanything is applied \u2014 never partially.",
+        "operationId": "document_batch_v1_documents_batch_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentBatchResultList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{collection_id}/chunks": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "List Collection Chunks",
+        "description": "KB-wide paginated chunk browsing across all documents in the\ncollection, with an optional per-doc narrowing (Chunk Inspector, KB tab).",
+        "operationId": "list_collection_chunks_v1_collections__collection_id__chunks_get",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Collection Id"
+            }
+          },
+          {
+            "name": "doc_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/system/settings": {
+      "get": {
+        "tags": ["system"],
+        "summary": "System Settings",
+        "description": "Env-configured runtime constants (chunking, splitting, retry\nladder, backpressure, search caps) as a read-only projection of\nconfig.Settings \u2014 the KB Settings tab's chunking preview data source.",
+        "operationId": "system_settings_v1_system_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemSettings"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2511,7 +2739,7 @@
               }
             ],
             "title": "Rerank Model Id",
-            "description": "Explicit reranker registry id — overrides the collection's bound reranker"
+            "description": "Explicit reranker registry id \u2014 overrides the collection's bound reranker"
           },
           "metadata_filter": {
             "type": "object",
@@ -3663,6 +3891,192 @@
         },
         "type": "object",
         "title": "ChunkDetail"
+      },
+      "DocumentBatchRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["delete", "reparse"],
+            "title": "Action"
+          },
+          "doc_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Doc Ids"
+          }
+        },
+        "type": "object",
+        "required": ["action", "doc_ids"],
+        "title": "DocumentBatchRequest"
+      },
+      "DocumentBatchResult": {
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Doc Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": ["doc_id", "status"],
+        "title": "DocumentBatchResult"
+      },
+      "DocumentBatchResultList": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentBatchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": ["action", "results"],
+        "title": "DocumentBatchResultList"
+      },
+      "CollectionStats": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "embedding_model": {
+            "type": "string",
+            "title": "Embedding Model"
+          },
+          "doc_count": {
+            "type": "integer",
+            "title": "Doc Count"
+          },
+          "chunk_count": {
+            "type": "integer",
+            "title": "Chunk Count"
+          },
+          "byte_size": {
+            "type": "integer",
+            "title": "Byte Size"
+          },
+          "total_shards": {
+            "type": "integer",
+            "title": "Total Shards"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "embedding_model",
+          "doc_count",
+          "chunk_count",
+          "byte_size",
+          "total_shards"
+        ],
+        "title": "CollectionStats"
+      },
+      "SystemSettings": {
+        "properties": {
+          "parent_tokens": {
+            "type": "integer",
+            "title": "Parent Tokens"
+          },
+          "parent_hard_cap": {
+            "type": "integer",
+            "title": "Parent Hard Cap"
+          },
+          "child_tokens": {
+            "type": "integer",
+            "title": "Child Tokens"
+          },
+          "child_stride_tokens": {
+            "type": "integer",
+            "title": "Child Stride Tokens"
+          },
+          "shard_pages": {
+            "type": "integer",
+            "title": "Shard Pages"
+          },
+          "min_yield_chars_per_page": {
+            "type": "integer",
+            "title": "Min Yield Chars Per Page"
+          },
+          "shard_lease_seconds": {
+            "type": "integer",
+            "title": "Shard Lease Seconds"
+          },
+          "max_shard_attempts": {
+            "type": "integer",
+            "title": "Max Shard Attempts"
+          },
+          "max_parse_backlog": {
+            "type": "integer",
+            "title": "Max Parse Backlog"
+          },
+          "max_document_pages": {
+            "type": "integer",
+            "title": "Max Document Pages"
+          },
+          "embed_max_attempts": {
+            "type": "integer",
+            "title": "Embed Max Attempts"
+          },
+          "search_default_top_k": {
+            "type": "integer",
+            "title": "Search Default Top K"
+          },
+          "search_max_top_k": {
+            "type": "integer",
+            "title": "Search Max Top K"
+          },
+          "rerank_candidates": {
+            "type": "integer",
+            "title": "Rerank Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parent_tokens",
+          "parent_hard_cap",
+          "child_tokens",
+          "child_stride_tokens",
+          "shard_pages",
+          "min_yield_chars_per_page",
+          "shard_lease_seconds",
+          "max_shard_attempts",
+          "max_parse_backlog",
+          "max_document_pages",
+          "embed_max_attempts",
+          "search_default_top_k",
+          "search_max_top_k",
+          "rerank_candidates"
+        ],
+        "title": "SystemSettings"
       }
     }
   }

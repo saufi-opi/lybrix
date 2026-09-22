@@ -25,7 +25,7 @@ func TestOpenAPIRouteParity(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Paths) != 31 {
+	if len(doc.Paths) != 34 {
 		t.Fatalf("snapshot path count drift: %d", len(doc.Paths))
 	}
 	s := New(Deps{})
@@ -67,9 +67,14 @@ func TestRouteScopeTable(t *testing.T) {
 		{"GET", "/v1/documents/11111111-1111-1111-1111-111111111111", "search"},
 		{"GET", "/v1/documents/11111111-1111-1111-1111-111111111111/shards", "search"},
 		{"POST", "/v1/documents/11111111-1111-1111-1111-111111111111/retry", "admin"},
+		{"DELETE", "/v1/documents/11111111-1111-1111-1111-111111111111", "admin"},
+		// batch delete / reparse — "batch" must never read as a doc_id
+		{"POST", "/v1/documents/batch", "admin"},
 		{"GET", "/v1/collections", "search"},
 		{"POST", "/v1/collections", "admin"},
 		{"GET", "/v1/collections/books/stats", "search"},
+		// KB-wide chunk browsing — search scope
+		{"GET", "/v1/collections/books/chunks", "search"},
 		{"POST", "/v1/search", "search"},
 		{"POST", "/v1/keys", "admin"},
 		{"GET", "/v1/keys", "admin"},
@@ -103,6 +108,8 @@ func TestRouteScopeTable(t *testing.T) {
 		{"GET", "/v1/system/queues", ""},
 		{"GET", "/v1/system/pipeline", ""},
 		{"GET", "/v1/system/metrics", ""},
+		// system settings readout — search scope
+		{"GET", "/v1/system/settings", "search"},
 		{"GET", "/openapi.json", ""},
 	}
 	for _, c := range cases {

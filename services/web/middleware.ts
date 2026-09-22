@@ -19,8 +19,8 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Pages only; ignore static assets, icons, images, and API routes.
+  // Pages only; ignore static assets, icons, images, API routes, and rewritten v1 backend routes.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
+    "/((?!api|v1|_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
   ],
 };

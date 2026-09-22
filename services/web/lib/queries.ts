@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DocumentRow, ShardRow } from "@/lib/api-client";
 import { apiClient } from "@/lib/api-client";
 
@@ -104,3 +104,73 @@ export function useRerankModels() {
 
 /** Re-exported for pages that still import row types from here. */
 export type { DocumentRow, ShardRow };
+
+/* ===== WeKnora revamp hooks (Phase 3) ===================================== */
+
+/** KB detail header stats — byte_size + total_shards joined to the counts. */
+export function useCollectionStats(id: string) {
+  return useQuery({
+    queryKey: ["collection-stats", id],
+    queryFn: () => apiClient.collectionStats(id),
+  });
+}
+
+/** KB-wide chunk browser (Chunk Inspector tab) with optional doc narrowing. */
+export function useCollectionChunks(
+  collectionId: string,
+  docId: string | undefined,
+  page = 1,
+  pageSize = 50,
+) {
+  return useQuery({
+    queryKey: ["collection-chunks", collectionId, docId ?? null, page, pageSize],
+    queryFn: () => apiClient.collectionChunks(collectionId, docId, page, pageSize),
+  });
+}
+
+/** Env-configured runtime constants — chunking preview + retry-ladder strip. */
+export function useSystemSettings() {
+  return useQuery({
+    queryKey: ["system-settings"],
+    queryFn: () => apiClient.systemSettings(),
+  });
+}
+
+/** In-KB retrieval test — pinned single-collection search, run on demand
+ * (enabled:false keeps the query idle until the panel fires runSearch). */
+export function useSearchTest(collectionId: string, query: string, topK: number, rerank: boolean) {
+  return useQuery({
+    queryKey: ["search-test", collectionId, query, topK, rerank],
+    queryFn: () =>
+      apiClient.search({
+        query,
+        collection: collectionId,
+        top_k: topK,
+        rerank,
+      }),
+    enabled: false,
+  });
+}
+
+/** Batch delete / batch re-parse mutation helper — invalidates the KB's
+ * document + stats keys on success. */
+export function useBatchDocuments(collectionId: string) {
+  const qc = useQueryClient();
+  return async (action: "delete" | "reparse", docIds: string[]) => {
+    const res = await apiClient.batchDocuments(action, docIds);
+    await qc.invalidateQueries({ queryKey: ["documents"] });
+    await qc.invalidateQueries({ queryKey: ["collection-stats", collectionId] });
+    return res;
+  };
+}
+
+/** Single-doc delete mutation helper — same invalidations as batch. */
+export function useDeleteDocument(collectionId: string) {
+  const qc = useQueryClient();
+  return async (docId: string) => {
+    const res = await apiClient.deleteDocument(docId);
+    await qc.invalidateQueries({ queryKey: ["documents"] });
+    await qc.invalidateQueries({ queryKey: ["collection-stats", collectionId] });
+    return res;
+  };
+}

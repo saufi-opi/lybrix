@@ -295,6 +295,21 @@ func (d *DB) DeleteDocument(ctx context.Context, docID string) error {
 	return err
 }
 
+// DeleteDocumentsBatch removes several doc rows in one statement — the batch
+// delete path. chunks/shards cascade per row exactly like DeleteDocument;
+// unknown ids are simply not present, so the caller counts rows affected to
+// report per-doc outcomes.
+func (d *DB) DeleteDocumentsBatch(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := d.Pool.Exec(ctx, `DELETE FROM documents WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // --- chunk helpers used by documents.go callers ---------------------------
 
 // CountDocChunks counts chunks for one doc.

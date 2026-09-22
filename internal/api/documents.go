@@ -397,6 +397,175 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, toDocumentOut(doc))
 }
 
+// handleDeleteDocument: single-doc delete — DB row goes, chunks/shards
+// cascade (store.DeleteDocument); the MinIO object is left for janitor GC
+// with an events row noting the orphan (§ Phase 1: object left, log event).
+// Scope: admin (routeScope). Key collection scope: the doc's collection must
+// fall within the key's allowlist (keyScopeChunks pattern).
+func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	docID := chi.URLParam(r, "doc_id")
+	if docID == "" || !isUUID(docID) {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid doc_id")
+		return
+	}
+	doc, err := s.deps.DB.GetDocument(ctx, docID)
+	if err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if doc == nil {
+		writeDetail(w, http.StatusNotFound, "document not found")
+		return
+	}
+	if !keyAllowedCollection(w, KeyFromContext(ctx), doc.CollectionID) {
+		return
+	}
+	if err := s.deps.DB.DeleteDocument(ctx, docID); err != nil {
+		writeDetail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	title := "(untitled)"
+	if doc.Title != nil {
+		title = *doc.Title
+	}
+	_ = s.deps.DB.WriteEventPool(ctx, "info", "documents",
+		"document deleted: "+title+" (raw object left for janitor GC)", store.EventDocID(docID), nil, nil, nil, nil)
+	WriteJSON(w, http.StatusOK, map[string]any{"id": docID, "deleted": true})
+}
+
+// batchRequest mirrors OpenAPI DocumentBatchRequest — one body, two actions:
+// delete removes every named doc (cascade), reparse requeues each doc's
+// failed shards (handleRetry scope=shards logic per doc).
+type batchRequest struct {
+	Action string   `json:"action"`
+	DocIDs []string `json:"doc_ids"`
+}
+
+// batchResultOut is the per-doc outcome list of the batch response.
+type batchResultOut struct {
+	DocID  string `json:"doc_id"`
+	Status string `json:"status"` // ok | missing | error
+	Detail string `json:"detail,omitempty"`
+}
+
+// handleDocumentBatch: fail-closed multi-collection guard — resolve EVERY
+// doc_id's collection BEFORE mutating anything; an unknown id (404-able) is
+// a 422 for the whole request, an out-of-scope collection is a 403 for the
+// whole request. Never partially apply.
+func (s *Server) handleDocumentBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var body batchRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeDetail(w, http.StatusUnprocessableEntity, "invalid JSON body")
+		return
+	}
+	switch body.Action {
+	case "delete", "reparse":
+	default:
+		writeDetail(w, http.StatusUnprocessableEntity, "action must be one of delete|reparse")
+		return
+	}
+	if len(body.DocIDs) == 0 {
+		writeDetail(w, http.StatusUnprocessableEntity, "field required: doc_ids")
+		return
+	}
+	// malformed ids read as unknown docs — same 422, one pass
+	for _, id := range body.DocIDs {
+		if !isUUID(id) {
+			writeDetail(w, http.StatusUnprocessableEntity, "unknown doc_id: "+id)
+			return
+		}
+	}
+
+	// Resolve every doc up front (the fail-closed gate: one query per id is
+	// fine at batch sizes the UI sends — tens, not thousands).
+	docs := make([]*store.Document, 0, len(body.DocIDs))
+	for _, id := range body.DocIDs {
+		doc, err := s.deps.DB.GetDocument(ctx, id)
+		if err != nil {
+			writeDetail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if doc == nil {
+			writeDetail(w, http.StatusUnprocessableEntity, "unknown doc_id: "+id)
+			return
+		}
+		docs = append(docs, doc)
+	}
+	// Whole-batch collection scope check: EVERY collection must fall within
+	// the key's allowlist — stricter than the single-doc per-request guard.
+	if key := KeyFromContext(ctx); key != nil && len(key.Collections) > 0 {
+		for _, doc := range docs {
+			if doc.CollectionID != nil && !store.CollectionAllowed(key, *doc.CollectionID) {
+				writeDetail(w, http.StatusForbidden,
+					"key is not scoped to collection "+*doc.CollectionID)
+				return
+			}
+		}
+	}
+
+	out := make([]batchResultOut, 0, len(body.DocIDs))
+	switch body.Action {
+	case "delete":
+		for _, doc := range docs {
+			if err := s.deps.DB.DeleteDocument(ctx, doc.ID); err != nil {
+				out = append(out, batchResultOut{DocID: doc.ID, Status: "error", Detail: err.Error()})
+				continue
+			}
+			title := "(untitled)"
+			if doc.Title != nil {
+				title = *doc.Title
+			}
+			_ = s.deps.DB.WriteEventPool(ctx, "info", "documents",
+				"document batch-deleted: "+title+" (raw object left for janitor GC)",
+				store.EventDocID(doc.ID), nil, nil, nil, nil)
+			out = append(out, batchResultOut{DocID: doc.ID, Status: "ok"})
+		}
+	case "reparse": // handleRetry scope=shards logic per doc
+		for _, doc := range docs {
+			status, detail := s.batchReparseDoc(ctx, doc)
+			out = append(out, batchResultOut{DocID: doc.ID, Status: status, Detail: detail})
+		}
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"action": body.Action, "results": out})
+}
+
+// batchReparseDoc requeues one doc's failed shards — the retry handler's
+// scope=shards branch, lifted verbatim so batch and single-doc retry agree
+// on state transitions and counter hygiene.
+func (s *Server) batchReparseDoc(ctx context.Context, doc *store.Document) (string, string) {
+	shards, err := s.deps.DB.FailedShards(ctx, doc.ID)
+	if err != nil {
+		return "error", err.Error()
+	}
+	if len(shards) == 0 {
+		return "skipped", "no failed shards to retry"
+	}
+	err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+		// Same counter hygiene as handleRetry: shards_failed was bumped per
+		// failure; requeueing undoes those failures. Back to PARSING so the
+		// janitor's recovery sweeps see the book again.
+		return s.deps.DB.SetDocState(ctx, tx, doc.ID, store.StateParsing, nil, nil)
+	})
+	if err != nil {
+		return "error", err.Error()
+	}
+	for _, sh := range shards {
+		if _, err := queue.XAddJob(ctx, s.deps.Redis, queue.StreamParse, queue.ParseJob{
+			SchemaVersion: queue.SchemaVersion,
+			DocID:         doc.ID,
+			Idx:           sh.Idx,
+			PageStart:     sh.PageStart,
+			PageEnd:       sh.PageEnd,
+			SourceURI:     doc.SourceURI,
+		}); err != nil {
+			return "error", err.Error()
+		}
+	}
+	return "ok", ""
+}
+
 func (s *Server) handleGetShards(w http.ResponseWriter, r *http.Request) {
 	shards, err := s.deps.DB.GetShards(r.Context(), chi.URLParam(r, "doc_id"))
 	if err != nil {

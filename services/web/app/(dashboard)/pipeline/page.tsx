@@ -4,7 +4,7 @@
  *  in-flight jobs. Polls /v1/system/pipeline every 5s via usePipeline(). */
 
 import { cn } from "cn";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { usePipeline } from "@/lib/queries";
+import { useEvents, usePipeline, useSystemSettings } from "@/lib/queries";
 
 interface Lane {
   waiting: number | null;
@@ -160,6 +160,8 @@ function Stat({ num, label }: { num: React.ReactNode; label: React.ReactNode }) 
 
 export default function PipelinePage() {
   const { data: raw, error: queryError, isPending, isError } = usePipeline();
+  const { data: events } = useEvents("?limit=500");
+  const { data: sysSettings } = useSystemSettings();
   const [history, setHistory] = useState<number[]>([]);
   const lastDone = useRef<number | null>(null);
 
@@ -169,6 +171,19 @@ export default function PipelinePage() {
   // keeps `error` set, so capture it once as a plain string.
   const errMsg =
     queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+
+  // retry-ladder / DLQ strip inputs — same source the janitor writes:
+  // failed shards + quarantined jobs (stage=dlq) from the events feed.
+  const ladder = useMemo(() => {
+    const rows = (events ?? []) as Array<{
+      level: string;
+      stage: string | null;
+      code: string | null;
+    }>;
+    const dlq = rows.filter((e) => e.stage === "dlq").length;
+    const janitorWarns = rows.filter((e) => e.stage === "janitor" && e.level !== "info").length;
+    return { dlq, janitorWarns };
+  }, [events]);
 
   // Track shard throughput deltas between polls (same math as before).
   const done = data?.counts.shards_done ?? null;
@@ -200,7 +215,7 @@ export default function PipelinePage() {
     <>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="m-0 font-serif text-[21px] font-semibold tracking-[-0.005em]">
-          Pipeline live view
+          Pipeline &amp; Queues
         </h2>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-sheet-edge bg-sheet px-3 py-1 text-xs font-medium text-muted-foreground">
           {errMsg ? (
@@ -252,6 +267,35 @@ export default function PipelinePage() {
           num={etaH ? `~${etaH}h` : <span className="text-muted-foreground">—</span>}
           label="ETA at live rate"
         />
+      </div>
+
+      {/* ===== retry-ladder / DLQ strip (presentation only; janitor data) ===== */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-2 rounded border border-sheet-edge bg-sheet px-3 py-1.5 text-[12px]">
+          <span className="text-muted-foreground">retry ladder</span>
+          <span className="font-mono tabular-nums">
+            lease {sysSettings?.shard_lease_seconds ?? "—"}s · max{" "}
+            {sysSettings?.max_shard_attempts ?? "—"} attempts
+          </span>
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-2 rounded border px-3 py-1.5 text-[12px]",
+            ladder.dlq > 0 ? "border-redink bg-redink-wash" : "border-sheet-edge bg-sheet",
+          )}
+        >
+          <span className="text-muted-foreground">DLQ (quarantined)</span>
+          <span className="font-mono tabular-nums">{ladder.dlq}</span>
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-2 rounded border px-3 py-1.5 text-[12px]",
+            ladder.janitorWarns > 0 ? "border-warning bg-ochre-wash" : "border-sheet-edge bg-sheet",
+          )}
+        >
+          <span className="text-muted-foreground">janitor warnings</span>
+          <span className="font-mono tabular-nums">{ladder.janitorWarns}</span>
+        </span>
       </div>
 
       <Card className="mt-5">

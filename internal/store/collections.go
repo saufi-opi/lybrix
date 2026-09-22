@@ -84,6 +84,17 @@ func (d *DB) CollectionCounts(ctx context.Context, id string) (int, int, error) 
 	return docCount, chunkCount, err
 }
 
+// CollectionStatsAgg returns the extended stats readout: total raw bytes of
+// the collection's documents (NULL byte_size rows contribute 0) and the sum
+// of each doc's total_shards. The byte readout feeds the KB gallery cards;
+// the shard readout shows pipeline load per KB.
+func (d *DB) CollectionStatsAgg(ctx context.Context, id string) (byteSize int64, totalShards int64, err error) {
+	err = d.Pool.QueryRow(ctx, `SELECT COALESCE(sum(byte_size), 0),
+		COALESCE(sum(total_shards), 0) FROM documents WHERE collection_id = $1`, id).
+		Scan(&byteSize, &totalShards)
+	return byteSize, totalShards, err
+}
+
 // MCPDocCountPerCollection returns doc counts keyed by collection id — the
 // list_collections tool input.
 func (d *DB) MCPDocCountPerCollection(ctx context.Context) (map[string]int, error) {
