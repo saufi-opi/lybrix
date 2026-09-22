@@ -73,7 +73,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: lybrix-server
+          - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
           - name: web
@@ -101,7 +101,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: lybrix-server
+          - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
           - name: web
@@ -139,7 +139,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: lybrix-server
+          - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
           - name: web

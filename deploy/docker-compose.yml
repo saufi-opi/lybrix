@@ -44,7 +44,7 @@ x-ingest-env: &ingest-env
   EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
   EMBED_CTX_BUDGET: ${EMBED_CTX_BUDGET:-1900}
   EMBED_TRUNCATE_CHARS: ${EMBED_TRUNCATE_CHARS:-6000}
-  EMBED_QUERY_PREFIX: ${EMBED_QUERY_PREFIX:-search_query: }
+  EMBED_QUERY_PREFIX: "${EMBED_QUERY_PREFIX:-search_query: }"
   DOCLING_URL: http://docling-serve:5001
   ANYDOC_ENABLED: ${ANYDOC_ENABLED:-true}
   SHARD_PAGES: ${SHARD_PAGES:-20}
@@ -91,7 +91,7 @@ services:
 
   lybrix-server:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [core]
     command: ["serve"]
     environment:
@@ -184,7 +184,7 @@ services:
 
   lybrix-splitter:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["splitter"]
     environment: {<<: *ingest-env}
@@ -195,7 +195,7 @@ services:
 
   lybrix-parser:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["parser"]
     environment:
@@ -216,7 +216,7 @@ services:
 
   lybrix-parser-2:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["parser"]
     environment:
@@ -234,7 +234,7 @@ services:
 
   lybrix-parser-3:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["parser"]
     environment:
@@ -252,7 +252,7 @@ services:
 
   lybrix-parser-4:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["parser"]
     environment:
@@ -270,7 +270,7 @@ services:
 
   lybrix-embedder:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["embedder"]
     environment:
@@ -280,7 +280,7 @@ services:
 
   lybrix-janitor:
     <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/lybrix-server:edge
+    image: ghcr.io/saufi-opi/lybrix/server:edge
     profiles: [ingest]
     command: ["janitor"]
     environment: {<<: *ingest-env}
