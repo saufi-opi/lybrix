@@ -2,9 +2,6 @@ package pipeline
 
 import "context"
 
-// ctxAlias keeps the build-tag twins symmetric without duplicating imports.
-type ctxAlias = context.Context
-
 // ParseRequest is one shard-level parse unit (blueprint §4.2: a whole
 // 16–24 page shard is passed in memory — never per-page requests).
 type ParseRequest struct {

@@ -54,7 +54,9 @@ func TestXAddReadAckXdel(t *testing.T) {
 func TestUnparseableJobACKedAndDeleted(t *testing.T) {
 	r, _ := newTestRedis(t)
 	ctx := context.Background()
-	EnsureStreams(ctx, r, StreamParse)
+	if err := EnsureStreams(ctx, r, StreamParse); err != nil {
+		t.Fatal(err)
+	}
 	r.XAdd(ctx, &redis.XAddArgs{Stream: StreamParse, Values: map[string]any{"job": "{not json"}})
 	entries, err := ReadJobs(ctx, r, StreamParse, "c1", 1, 100)
 	if err != nil {
@@ -71,7 +73,9 @@ func TestUnparseableJobACKedAndDeleted(t *testing.T) {
 func TestUndeliveredCountFastPath(t *testing.T) {
 	r, _ := newTestRedis(t)
 	ctx := context.Background()
-	EnsureStreams(ctx, r, StreamParse)
+	if err := EnsureStreams(ctx, r, StreamParse); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 600; i++ { // > scan page 500 to exercise pagination
 		if _, err := XAddJob(ctx, r, StreamParse, ParseJob{SchemaVersion: 1, DocID: "d"}); err != nil {
 			t.Fatal(err)
@@ -96,7 +100,9 @@ func TestUndeliveredCountFastPath(t *testing.T) {
 func TestScanUndeliveredTail(t *testing.T) {
 	r, _ := newTestRedis(t)
 	ctx := context.Background()
-	EnsureStreams(ctx, r, StreamParse)
+	if err := EnsureStreams(ctx, r, StreamParse); err != nil {
+		t.Fatal(err)
+	}
 	var ids []string
 	for i := 0; i < 3; i++ {
 		id, err := XAddJob(ctx, r, StreamParse, ParseJob{SchemaVersion: 1, DocID: "d"})

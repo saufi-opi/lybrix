@@ -168,14 +168,8 @@ func splitSections(markdown string) []section {
 	return sections
 }
 
-func max(a, b int) int {
+func maxInt(a, b int) int {
 	if a > b {
-		return a
-	}
-	return b
-}
-func min(a, b int) int {
-	if a < b {
 		return a
 	}
 	return b
@@ -277,7 +271,6 @@ func ChunkHierarchical(markdown string, pages []int, tok Tokenizer) ([]ParentChu
 	return parents, children
 }
 
-func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }
 
 func pageAt(pages []int, sec section) *int {

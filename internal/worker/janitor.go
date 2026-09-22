@@ -49,11 +49,6 @@ type stats struct {
 	Rollup         int
 }
 
-func (s stats) any() bool {
-	return s.RequeuedLeases > 0 || s.Escalated > 0 || s.Reenqueued > 0 || s.EmbedSwept > 0 ||
-		s.Reclaimed > 0 || s.Quarantined > 0 || s.StuckWarned > 0 || s.Rollup > 0
-}
-
 // lastRollupBucket persists across passes within one process (1.0 module
 // global _last_bucket).
 var lastRollupBucket *time.Time

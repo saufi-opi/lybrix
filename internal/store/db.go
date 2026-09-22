@@ -55,7 +55,9 @@ func (d *DB) BootstrapSchema(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(918273645)"); err != nil {
 		return fmt.Errorf("schema advisory lock: %w", err)
 	}
-	defer conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(918273645)")
+	defer func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(918273645)")
+	}()
 	if _, err := conn.Exec(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema.sql: %w", err)
 	}

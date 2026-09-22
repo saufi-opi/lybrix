@@ -1,6 +1,7 @@
 package worker
 
-func intPtr(i int) *int { return &i }
+func intPtr(i int) *int       { return &i }
+func strPtr(s string) *string { return &s }
 
 // redisPendingExtArgsPtr builds the single-entry XPENDING lookup shape.
 func redisPendingExtArgsPtr(stream, entryID string) *pendingExtArgs {
