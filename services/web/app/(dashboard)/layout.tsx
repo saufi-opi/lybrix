@@ -16,6 +16,7 @@ const NAV = [
   { href: "/playground", label: "Playground" },
   { href: "/logs", label: "Logs" },
   { href: "/collections", label: "Collections" },
+  { href: "/models", label: "Models" },
   { href: "/keys", label: "API Keys" },
   { href: "/usage", label: "Usage" },
   { href: "/settings", label: "Settings" },

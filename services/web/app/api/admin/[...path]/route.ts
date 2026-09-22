@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 const API_URL = process.env.API_URL ?? "http://api:8000";
 
-async function forward(req: NextRequest, method: "GET" | "POST") {
+async function forward(req: NextRequest, method: "GET" | "POST" | "DELETE") {
   const user = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -38,4 +38,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   return forward(req, "POST");
+}
+
+export async function DELETE(req: NextRequest) {
+  return forward(req, "DELETE");
 }

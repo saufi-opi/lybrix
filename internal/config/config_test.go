@@ -7,8 +7,8 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaults failed validation: %v", err)
 	}
-	if s.EmbedDim != 1024 || s.EmbedBatchSize != 48 || s.EmbedCtxBudget != 1900 {
-		t.Fatalf("embedding defaults drifted: %+v", s)
+	if s.EmbedSeed.Dim != 1024 || s.EmbedSeed.ModelID != "BAAI/bge-m3" || s.EmbedSeed.Provider != "tei" {
+		t.Fatalf("embedding seed defaults drifted: %+v", s.EmbedSeed)
 	}
 	if s.ShardPages != 20 || s.OCRMinCharsPerPage != 20 || s.ParserRecycleAfter != 10 {
 		t.Fatalf("parsing defaults drifted: %+v", s)
@@ -35,18 +35,37 @@ func TestDefaults(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	s, err := fromEnv([]string{
-		"EMBED_BATCH_SIZE=16",     // compose ingest override
 		"MAX_PARSE_BACKLOG=20000", // compose core override
-		"EMBED_BACKEND=ollama",
+		"EMBED_BACKEND=ollama",    // seed-only var
+		"EMBED_DIM=768",           // seed-only var
 		"SEARCH_MAX_TOP_K=25",
 		"PARSER_RECYCLE_AFTER=5",
 	})
 	if err != nil {
 		t.Fatalf("env load failed: %v", err)
 	}
-	if s.EmbedBatchSize != 16 || s.MaxParseBacklog != 20000 || s.EmbedBackend != "ollama" ||
+	if s.MaxParseBacklog != 20000 || s.EmbedSeed.Provider != "ollama" || s.EmbedSeed.Dim != 768 ||
 		s.ParserRecycleAfter != 5 {
 		t.Fatalf("env overrides not applied: %+v", s)
+	}
+}
+
+// TestRetiredEmbedVarsNotRead proves the hard cut: the runtime embed knobs
+// are gone from the struct — only the seed block carries the legacy values.
+func TestRetiredEmbedVarsNotRead(t *testing.T) {
+	s, err := fromEnv([]string{
+		"EMBED_BATCH_SIZE=16",
+		"EMBED_CTX_BUDGET=999",
+		"EMBED_TRUNCATE_CHARS=99",
+		"EMBED_QUERY_PREFIX=zz",
+	})
+	if err != nil {
+		t.Fatalf("env load failed: %v", err)
+	}
+	// These fields no longer exist on Settings — compile-time proof. The
+	// seed must be untouched by the retired runtime knobs:
+	if s.EmbedSeed.Dim != 1024 {
+		t.Fatalf("retired vars leaked into the seed: %+v", s.EmbedSeed)
 	}
 }
 
@@ -54,14 +73,6 @@ func TestValidation(t *testing.T) {
 	// top_k ordering
 	if _, err := fromEnv([]string{"SEARCH_DEFAULT_TOP_K=30", "SEARCH_MAX_TOP_K=25"}); err == nil {
 		t.Fatal("expected validation error for default > max top_k")
-	}
-	// batch >= 1
-	if _, err := fromEnv([]string{"EMBED_BATCH_SIZE=0"}); err == nil {
-		t.Fatal("expected validation error for batch 0")
-	}
-	// backend vocabulary
-	if _, err := fromEnv([]string{"EMBED_BACKEND=foo"}); err == nil {
-		t.Fatal("expected validation error for bad backend")
 	}
 	// rerank requires url — env empties fall back to the 1.0 default URL,
 	// so the invariant is exercised directly on the struct.

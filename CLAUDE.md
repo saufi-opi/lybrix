@@ -12,13 +12,13 @@ Central design constraint driving everything: **a book is never a unit of work �
 
 ## 2.0 — Go rewrite (branch `feat/lybrix-2.0-revamp`)
 
-The 1.0 Python stack (FastAPI api, FastMCP mcp, four-entrypoint workers image, six shared libs, Qdrant) was replaced **in place** by a 100% Go backend per `LYBRIX_2.0_EVOLUTION_PLAN.md` + `PLAN.md`:
+The 1.0 Python stack (FastAPI api, FastMCP mcp, four-entrypoint workers image, six shared libs, Qdrant) was replaced **in place** by a 100% Go backend per `LYBRIX_2.0_EVOLUTION_PLAN.md`:
 
 - **One binary** (`cmd/lybrix-server`): `serve` (REST :8000 + MCP :8430 + janitor goroutine), `splitter`, `parser`, `embedder`, `janitor`, `keys bootstrap`, `migrate`. Plus `cmd/lybrix-eval` (golden-set harness; same `scripts/eval/datasets/seed.jsonl`, same rank metrics).
 - **ParadeDB replaces Qdrant**: PostgreSQL 17 + pgvector (HNSW, cosine, children only) + pg_search BM25, fused by weighted RRF in native SQL (`internal/store/search.go`; dense 1.0 / bm25 0.3, key-scope filter pushed into BOTH CTEs — never post-filter). `deploy/schema.sql` is embedded in the binary and applied idempotently at boot (advisory-lock guarded); the alembic chain is gone.
 - **Two-tier parsing**: `third_party/anydoc-go` CGO fast path (`-tags anydoc`, `LockOSThread` around every call, shard-level units only) with a clean `!anydoc` stub for CI; `docling-serve` HTTP fallback for scanned shards or yield < 50 chars/page. Retry ladder preserved: attempt 2 quarter-split, 3 single-page, ≥4 text-only.
 - **Hierarchical parent–child chunking** replaces flat 512-token windows: 384-token children (64-token stride) under 2048–4096-token parents, breadcrumb-prefixed at embed time only (stored text and chunk hashes stay stable), per-window page ranges (R-13).
-- **Next.js web console unchanged** — the Go server satisfies the checked-in OpenAPI snapshot at `services/web/openapi.json` (18 paths) and serves it byte-identical at `/openapi.json`. Error envelope is FastAPI-style `{"detail": …}`.
+- **Next.js web console unchanged** — the Go server satisfies the checked-in OpenAPI snapshot at `services/web/openapi.json` (25 paths, golden-tested against `internal/api/openapi_snapshot.json`) and serves it byte-identical at `/openapi.json`. Error envelope is FastAPI-style `{"detail": …}`.
 
 ## Commands
 
@@ -74,10 +74,14 @@ third_party/     anydoc-go — extern-C binding to the Firecrawl anydoc Rust cra
 deploy/          docker-compose (paradedb/redis/lybrix-server/web + ingest plane),
                  schema.sql, Dockerfile.lybrix, .env.example
 scripts/         build-anydoc-lib.sh, eval/ (seed.jsonl + results)
-services/web/    Next.js admin UI + MCP Playground (unchanged from 1.0)
+services/web/    Next.js admin UI + MCP Playground (models manager, tabbed upload hub)
 docs/            prd.md (source of truth), BACKLOG.md (incident ledger), adr/
 ```
 
 ### Status / milestone awareness
 
-2.0 implementation status: the full Go rewrite is in place — REST API (18 paths, OpenAPI golden-tested), MCP server (6 tools, bearer auth, per-method usage rows), splitter/parser (two-tier + retry ladder + PDF cache)/embedder (hierarchical chunking + TEI batches), runner + janitor (7 steps incl. DLQ quarantine and metrics rollup), ParadeDB schema with HNSW + pg_search BM25, and the Go eval harness. The anydoc `-tags anydoc` lane compiles; linking it requires the Rust static archive built on the ingest host. Remaining known gaps: the testcontainers store lane requires a docker socket (skips elsewhere); live E2E + resilience drills (kill-parser, Redis wipe, poison-job → DLQ) run per PLAN.md §4.3 after `make up-core && make up-ingest`. Check code + `docs/BACKLOG.md` before assuming a feature is real or missing.
+2.0 implementation status: the full Go rewrite is in place — REST API (25 paths, OpenAPI golden-tested), MCP server (6 tools, bearer auth, per-method usage rows), splitter/parser (two-tier + retry ladder + PDF cache; EPUB takes an explicit branch: single synthetic shard, docling-only, no sub-shard retry ladder)/embedder (hierarchical chunking + registry-driven batches), runner + janitor (7 steps incl. DLQ quarantine and metrics rollup), ParadeDB schema with per-dimension partial HNSW + pg_search BM25, and the Go eval harness. The anydoc `-tags anydoc` lane compiles; linking it requires the Rust static archive built on the ingest host. Remaining known gaps: the testcontainers store lane requires a docker socket (skips elsewhere); live E2E + resilience drills (kill-parser, Redis wipe, poison-job → DLQ) run after `make up-core && make up-ingest`. Check code + `docs/BACKLOG.md` before assuming a feature is real or missing.
+
+2.0.1 — dynamic model registry + multi-source ingestion (branch `feat/dynamic-model-providers`): a DB-backed `embedding_models` registry replaces the hardcoded embed env vars (TEI / Ollama / OpenAI-compatible providers; arbitrary 1–2000 dims; per-dim partial HNSW indexes via `EnsureDimIndex`). Collections bind a model **mandatorily at creation** (`POST /v1/collections` requires `embedding_model_id`) and can rebind via `POST /v1/collections/{id}/model` (metadata sync only — no automated re-embed migration runner in v1; stale-dim vectors are excluded from dense search until re-embedded). Multi-source ingestion: `/upload` is a tabbed hub — Local files (presign), Remote URL (`POST /v1/documents/fetch-url`, disk-streamed with dial-time SSRF enforcement), OPDS connector (`opds/browse` + `opds/sync`, Basic Auth, credentials never persisted). Embed env vars (`EMBED_BACKEND`, `EMBED_MODEL`, `EMBED_DIM`, `TEI_INGEST_URL`, `TEI_QUERY_URL`, `EMBED_BATCH_SIZE`, …) are **first-boot seed values only** — manage models in the UI afterwards.
+
+2.0.2 — WeKnora-style multi-collection search, default embedder retired (`internal/store/search.go`): search targets are grouped by their bound embedding model; the query is embedded **once per unique model** (`MultiHybridSearch`), each group contributes a dense leg at its own dimension, one BM25 leg spans all targets, and all legs fuse with weighted RRF (dense 1.0 / BM25 0.3, k=60 — same constants as single-collection `HybridSearch`). The key-scope allowlist is intersected **before** grouping so out-of-scope models are never embedded. The `is_default` column and `ErrModelDefault` are gone — the registry is a pure backend catalog; embed env vars only seed catalog rows at first boot.

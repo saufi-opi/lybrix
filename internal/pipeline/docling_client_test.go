@@ -90,11 +90,11 @@ func TestTeiClientBatchShape(t *testing.T) {
 		fmt.Fprint(w, `[[1,2],[3,4]]`)
 	}))
 	defer srv.Close()
-	c, err := NewTeiClient(srv.URL, "tei", "BAAI/bge-m3", 0)
+	c, err := NewEmbedClient(EmbedSpec{Provider: "tei", ModelID: "BAAI/bge-m3", IngestURL: srv.URL, QueryURL: srv.URL}, "ingest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	vecs, err := c.Embed(context.Background(), []string{"a", "b"})
+	vecs, err := c.Embed(context.Background(), []string{"a", "b"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +114,11 @@ func TestTeiClientOllamaShape(t *testing.T) {
 		fmt.Fprint(w, `{"embeddings":[[9,8]]}`)
 	}))
 	defer srv.Close()
-	c, err := NewTeiClient(srv.URL, "ollama", "BAAI/bge-m3", 0)
+	c, err := NewEmbedClient(EmbedSpec{Provider: "ollama", ModelID: "BAAI/bge-m3", IngestURL: srv.URL, QueryURL: srv.URL}, "ingest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	vecs, err := c.Embed(context.Background(), []string{"hello"})
+	vecs, err := c.Embed(context.Background(), []string{"hello"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +180,10 @@ func TestTeiClientUnavailableErrorType(t *testing.T) {
 		w.WriteHeader(503)
 	}))
 	defer srv.Close()
-	c, _ := NewTeiClient(srv.URL, "tei", "m", 0)
+	c, _ := NewEmbedClient(EmbedSpec{Provider: "tei", ModelID: "m", IngestURL: srv.URL, QueryURL: srv.URL}, "ingest")
 	c.maxRetries = 0
 	c.breakerThreshold = 100 // don't trip the breaker inside the ladder
-	_, err := c.Embed(context.Background(), []string{"x"})
+	_, err := c.Embed(context.Background(), []string{"x"}, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

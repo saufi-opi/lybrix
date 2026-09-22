@@ -11,7 +11,8 @@ import (
 
 // Golden test: walk the checked-in snapshot's paths and assert each route
 // exists with matching methods (contract discipline — the Go server is
-// pinned to services/web/openapi.json, 18 paths).
+// pinned to services/web/openapi.json, 25 paths: the original 18 plus the
+// model-registry (6), fetch-url and OPDS (3) operations).
 func TestOpenAPIRouteParity(t *testing.T) {
 	data, err := os.ReadFile("openapi_snapshot.json")
 	if err != nil {
@@ -23,7 +24,7 @@ func TestOpenAPIRouteParity(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Paths) != 18 {
+	if len(doc.Paths) != 25 {
 		t.Fatalf("snapshot path count drift: %d", len(doc.Paths))
 	}
 	s := New(Deps{})
@@ -73,6 +74,18 @@ func TestRouteScopeTable(t *testing.T) {
 		{"GET", "/v1/keys", "admin"},
 		{"POST", "/v1/keys/11111111-1111-1111-1111-111111111111/revoke", "admin"},
 		{"GET", "/v1/usage/summary", "admin"},
+		// model registry — six admin operations
+		{"GET", "/v1/models", "admin"},
+		{"POST", "/v1/models", "admin"},
+		{"POST", "/v1/models/test", "admin"},
+		{"POST", "/v1/models/11111111-1111-1111-1111-111111111111", "admin"},
+		{"DELETE", "/v1/models/11111111-1111-1111-1111-111111111111", "admin"},
+		{"POST", "/v1/collections/books/model", "admin"},
+		// multi-source ingestion — three ingest operations (fetch-url must
+		// resolve "ingest" above the matchDocSub bare-id "search" case)
+		{"POST", "/v1/documents/fetch-url", "ingest"},
+		{"POST", "/v1/connectors/opds/browse", "ingest"},
+		{"POST", "/v1/connectors/opds/sync", "ingest"},
 		{"GET", "/v1/events", ""},
 		{"GET", "/v1/events/stream", ""},
 		{"GET", "/v1/system/health", ""},

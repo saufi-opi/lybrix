@@ -91,11 +91,18 @@ commands:
 `)
 }
 
-// infra opens the DB pool + Redis client + S3 client.
+// infra opens the DB pool + Redis client + S3 client, and seeds the model
+// registry from the legacy EMBED_* env vars exactly once (empty-table
+// seed, idempotent) — every subcommand rides this so a `keys bootstrap`
+// run on a fresh database leaves the default row + seed-dim HNSW behind.
 func infra(ctx context.Context, settings *config.Settings) (*store.DB, redisClient, *objectstore.Client, error) {
 	db, err := store.NewPool(ctx, settings.DatabaseURL)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if err := db.SeedDefaultEmbeddingModel(ctx, seedFrom(settings)); err != nil {
+		db.Close()
+		return nil, nil, nil, fmt.Errorf("seed embedding model: %w", err)
 	}
 	r := queue.MustRedis(settings.RedisURL)
 	s3c, err := objectstore.New(ctx, settings.S3Endpoint, settings.S3AccessKey, settings.S3SecretKey)
@@ -115,12 +122,17 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 
 	apiDeps := api.Deps{
 		Settings: settings, DB: db, Redis: r, S3: s3c,
-		EmbedQuery: embedQueryFn(settings),
+		EmbedQuery:    embedQueryFn(db),
+		HybridSearch:  db.HybridSearch,
+		EmbedForModel: embedForModelAdapter(),
+		MultiSearch:   db.MultiHybridSearch,
 	}
 	apiServer := api.New(apiDeps)
 
 	mcpDeps := mcp.Deps{
-		Settings: settings, DB: db, EmbedQuery: embedQueryFn(settings),
+		Settings: settings, DB: db,
+		EmbedQuery:    embedQueryFn(db),
+		EmbedForModel: embedForModelAdapter(),
 	}
 
 	// janitor goroutine rides along in serve mode (2.0 consolidation)
@@ -214,6 +226,9 @@ func runMigrate(settings *config.Settings) error {
 		return err
 	}
 	defer db.Close()
+	if err := db.SeedDefaultEmbeddingModel(ctx, seedFrom(settings)); err != nil {
+		return fmt.Errorf("seed embedding model: %w", err)
+	}
 	fmt.Println("schema applied")
 	return nil
 }
@@ -233,10 +248,24 @@ func runKeys(settings *config.Settings, args []string) error {
 		return err
 	}
 	defer db.Close()
+	if err := db.SeedDefaultEmbeddingModel(ctx, seedFrom(settings)); err != nil {
+		return fmt.Errorf("seed embedding model: %w", err)
+	}
 	raw, err := bootstrapKey(ctx, db, name)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("admin key created (scopes: search, ingest, admin) — shown ONCE:\n%s\n", raw)
 	return nil
+}
+
+// seedFrom projects the config seed block onto the store seed struct.
+func seedFrom(settings *config.Settings) store.EmbeddingSeed {
+	return store.EmbeddingSeed{
+		Provider:  settings.EmbedSeed.Provider,
+		ModelID:   settings.EmbedSeed.ModelID,
+		Dim:       settings.EmbedSeed.Dim,
+		IngestURL: settings.EmbedSeed.IngestURL,
+		QueryURL:  settings.EmbedSeed.QueryURL,
+	}
 }

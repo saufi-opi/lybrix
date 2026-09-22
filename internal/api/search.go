@@ -4,13 +4,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/saufi-opi/lybrix/internal/store"
 )
 
-// searchRequest mirrors OpenAPI SearchRequest.
+// searchRequest mirrors OpenAPI SearchRequest. collection (single) is the
+// legacy field; collections (plural) searches multiple collections at once
+// — grouped by their bound embedding model and fused with RRF (2.0.2).
+// Both omitted → all collections.
 type searchRequest struct {
-	Query      string  `json:"query"`
-	Collection *string `json:"collection"`
-	TopK       int     `json:"top_k"`
+	Query       string   `json:"query"`
+	Collection  *string  `json:"collection"`
+	Collections []string `json:"collections"`
+	TopK        int      `json:"top_k"`
 }
 
 // searchHit is one /v1/search response item (search.py mapping).
@@ -48,10 +54,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		topK = s.deps.Settings.SearchMaxTopK
 	}
 
-	collection := ""
-	if body.Collection != nil {
-		collection = *body.Collection
-	}
 	// key-level scope is pushed INTO the search SQL (R-14) — no post-filter
 	// here: filtering after top_k truncation returned fewer than top_k
 	// results for scoped keys.
@@ -60,19 +62,40 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		scope = key.Collections
 	}
 
-	vec, err := s.deps.EmbedQuery(r.Context(),
-		s.deps.Settings.EmbedQueryPrefix+body.Query)
-	if err != nil {
-		// tei-query unavailable → 503 (search.py parity)
-		writeDetail(w, http.StatusServiceUnavailable, err.Error())
-		return
+	// Target set: explicit collections > single collection > all. A named
+	// single collection keeps the exact single-model path (one dense leg +
+	// BM25, the pre-multi-search shape); an empty target set — the default
+	// — routes to the grouped multi-model fusion across ALL collections
+	// (WeKnora multi-KB: the corpus, not one default model, is the target).
+	targets := body.Collections
+	if len(targets) == 0 && body.Collection != nil && *body.Collection != "" {
+		targets = []string{*body.Collection}
 	}
-	bm25 := body.Query
-	hits, err := s.deps.DB.HybridSearch(r.Context(), vec, collection, scope, bm25, topK)
+	var (
+		hits []*store.SearchHit
+		err  error
+	)
+	if len(targets) == 1 {
+		var vec []float32
+		var model *store.EmbeddingModel
+		vec, model, err = s.deps.EmbedQuery(r.Context(), targets[0], body.Query)
+		if err != nil {
+			// query embed unavailable → 503 (search.py parity)
+			writeDetail(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		hits, err = s.deps.HybridSearch(r.Context(), vec, model.VectorDim, targets[0], scope, body.Query, topK)
+	} else {
+		hits, err = s.deps.MultiSearch(r.Context(), body.Query, targets, scope, topK,
+			func(m *store.EmbeddingModel) ([]float32, error) {
+				return s.deps.EmbedForModel(r.Context(), m, body.Query)
+			})
+	}
 	if err != nil {
 		writeDetail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	out := make([]searchHit, 0, len(hits))
 	for _, h := range hits {
 		hp := h.HeadingPath

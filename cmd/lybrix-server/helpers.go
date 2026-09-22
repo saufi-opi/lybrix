@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/saufi-opi/lybrix/internal/config"
+	"github.com/saufi-opi/lybrix/internal/errors"
 	"github.com/saufi-opi/lybrix/internal/pipeline"
 	"github.com/saufi-opi/lybrix/internal/queue"
 	"github.com/saufi-opi/lybrix/internal/service"
@@ -22,23 +22,56 @@ type redisClient = queue.Cmdable2
 // txT aliases the pgx tx type for the handler shims.
 type txT = pgx.Tx
 
-// embedQueryFn builds the query-plane embedding fn (tei-query, with the
-// asymmetric prefix applied by the caller).
-func embedQueryFn(settings *config.Settings) func(ctx context.Context, text string) ([]float32, error) {
-	return func(ctx context.Context, text string) ([]float32, error) {
-		tei, err := pipeline.NewTeiClient(settings.TEIQueryURL, settings.EmbedBackend, settings.EmbedModel, settings.EmbedTruncateChars)
-		if err != nil {
-			return nil, err
-		}
-		vecs, err := tei.Embed(ctx, []string{text})
-		if err != nil {
-			return nil, err
-		}
-		if len(vecs) == 0 {
-			return nil, fmt.Errorf("empty embedding response")
-		}
-		return vecs[0], nil
+// embedForModelFn produces a query-plane embedding with one specific
+// registered model — the building block both search paths share. It applies
+// the model's asymmetric query prefix inside.
+func embedForModelFn(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error) {
+	client, err := pipeline.NewEmbedClient(pipeline.EmbedSpec{
+		Provider:      m.Provider,
+		ModelID:       m.ModelID,
+		IngestURL:     m.IngestURL,
+		QueryURL:      m.QueryURL,
+		TruncateChars: m.TruncateChars,
+	}, "query")
+	if err != nil {
+		return nil, err
 	}
+	vecs, err := client.Embed(ctx, []string{m.QueryPrefix + text}, m.VectorDim)
+	if err != nil {
+		return nil, err
+	}
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("empty embedding response")
+	}
+	return vecs[0], nil
+}
+
+// embedQueryFn builds the single-collection query-plane embedding fn: it
+// resolves the collection's bound model (the default fallback is retired —
+// 2.0.2), applies the model's asymmetric query prefix inside, and returns
+// the model alongside the vector so callers can forward its dim into
+// HybridSearch's dense CTE.
+func embedQueryFn(db *store.DB) func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error) {
+	return func(ctx context.Context, collection, text string) ([]float32, *store.EmbeddingModel, error) {
+		m, err := db.ResolveCollectionModel(ctx, collection)
+		if err != nil {
+			return nil, nil, err
+		}
+		if m == nil {
+			return nil, nil, errors.NewPlatformError(errors.CodeEmbedDimMismatch, "no embedding model configured")
+		}
+		vec, err := embedForModelFn(ctx, m, text)
+		if err != nil {
+			return nil, nil, err
+		}
+		return vec, m, nil
+	}
+}
+
+// embedForModelAdapter projects embedForModelFn onto the Deps shape both
+// api and mcp expect for the multi-collection grouped search.
+func embedForModelAdapter() func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error) {
+	return embedForModelFn
 }
 
 // wrapHandler adapts service handlers onto the worker.Handler shape.

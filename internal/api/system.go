@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -51,7 +52,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Redis.Ping(r.Context()).Err(); err != nil {
 		redisStatus = "down"
 	}
-	tei := checkURL(r.Context(), s.deps.Settings.TEIQueryURL)
+	// tei_query reflects the query-plane endpoints of ALL registered models
+	// — the catalog has no default row (2.0.2); degraded when any model's
+	// query endpoint is unreachable.
+	tei := "ok"
+	if models, err := s.deps.DB.ListEmbeddingModels(r.Context()); err != nil || len(models) == 0 {
+		tei = "down"
+	} else {
+		for _, m := range models {
+			if checkURL(r.Context(), m.QueryURL) != "ok" {
+				tei = "down"
+				break
+			}
+		}
+	}
 	status := "ok"
 	if pg != "ok" {
 		status = "degraded"
@@ -105,7 +119,6 @@ type laneOut struct {
 
 func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st := s.deps.Settings
 
 	// -- component health -------------------------------------------------
 	components := map[string]any{
@@ -118,9 +131,34 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Redis.Ping(ctx).Err(); err != nil {
 		components["redis"] = "down"
 	}
-	components["tei_query"] = checkURL(ctx, st.TEIQueryURL)
-	// embed backend: ollama (GPU offload) answers /api/tags, TEI answers /health
-	components["embed_backend"] = checkEmbedBackend(ctx, st.TEIIngestURL, st.EmbedBackend)
+	components["tei_query"] = "down"
+	components["embed_backend"] = "down"
+	components["embedding_model"] = ""
+	components["embed_provider"] = ""
+	// No default row exists (2.0.2): probe EVERY registered model's query
+	// endpoint for tei_query; embed_backend/embedding_model report the first
+	// reachable model (deterministic: registration order) as the exemplar —
+	// with N models the pipeline page shows one catalog, not one default.
+	if models, err := s.deps.DB.ListEmbeddingModels(ctx); err == nil && len(models) > 0 {
+		allQueryOK := true
+		for _, m := range models {
+			if checkURL(ctx, m.QueryURL) != "ok" {
+				allQueryOK = false
+				break
+			}
+		}
+		if allQueryOK {
+			components["tei_query"] = "ok"
+		}
+		for _, m := range models {
+			if checkEmbedModel(ctx, m) == "ok" {
+				components["embed_backend"] = "ok"
+				components["embedding_model"] = m.ModelID
+				components["embed_provider"] = m.Provider
+				break
+			}
+		}
+	}
 
 	// -- queue lanes -------------------------------------------------------
 	lanes := map[string]any{}
@@ -228,15 +266,27 @@ type queueGroupInfo struct {
 	LastDelivered string
 }
 
-// checkEmbedBackend probes the ingest-plane embed service: ollama answers
-// /api/tags, TEI answers /health.
-func checkEmbedBackend(ctx context.Context, baseURL, backend string) string {
+// checkEmbedModel probes one registered model's ingest-plane endpoint:
+// ollama answers /api/tags, openai answers GET /v1/models, TEI /health.
+func checkEmbedModel(ctx context.Context, m *store.EmbeddingModel) string {
 	client := &http.Client{Timeout: 2 * time.Second}
 	path := "/health"
-	if backend == "ollama" {
+	switch m.Provider {
+	case "ollama":
 		path = "/api/tags"
+	case "openai":
+		path = "/v1/models"
 	}
-	resp, err := client.Get(baseURL + path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(m.IngestURL, "/")+path, nil)
+	if err != nil {
+		return "down"
+	}
+	if m.Provider == "openai" && m.HasAPIKey {
+		// probe without the key: presence is enough for a reachability check;
+		// the key itself must never transit logs/probe paths unnecessarily.
+		_ = m
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "down"
 	}

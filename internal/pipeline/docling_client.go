@@ -60,10 +60,17 @@ type convertOptions struct {
 
 // Convert posts one whole shard PDF and returns its markdown.
 func (c *DoclingClient) Convert(ctx context.Context, pdfPath string, doTableStructure bool) (string, error) {
+	return c.ConvertNamed(ctx, pdfPath, "shard.pdf", doTableStructure)
+}
+
+// ConvertNamed is Convert with an explicit upload filename — EPUB shards
+// must arrive as *.epub or docling-serve's format sniffing fights the
+// extension.
+func (c *DoclingClient) ConvertNamed(ctx context.Context, path, filename string, doTableStructure bool) (string, error) {
 	if c.consecutiveFailed >= c.breakerThreshold {
 		return "", &ErrCircuitOpen{Failures: c.consecutiveFailed}
 	}
-	pdfBytes, err := os.ReadFile(pdfPath)
+	pdfBytes, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +89,7 @@ func (c *DoclingClient) Convert(ctx context.Context, pdfPath string, doTableStru
 		// docling-serve multipart: the file part first, then the options
 		// JSON as a "body" form field — the documented shape for
 		// /v1/convert/file.
-		fw, err := mw.CreateFormFile("files", "shard.pdf")
+		fw, err := mw.CreateFormFile("files", filename)
 		if err != nil {
 			return "", err
 		}

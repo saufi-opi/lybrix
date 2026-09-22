@@ -182,7 +182,17 @@ func TestKeyAuthValidityRules(t *testing.T) {
 func seedDoc(t *testing.T, db *DB) string {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := db.InsertCollection(ctx, "books", "Books", "BAAI/bge-m3", 1024); err != nil {
+	m := &EmbeddingModel{
+		Name: "seed-test-model", Provider: "tei", ModelID: "BAAI/bge-m3",
+		IngestURL: "http://127.0.0.1:8081", QueryURL: "http://127.0.0.1:8082",
+		VectorDim: 1024, QueryPrefix: "search_query: ",
+		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000,
+	}
+	inserted, err := db.InsertEmbeddingModel(ctx, m, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertCollection(ctx, "books", "Books", inserted); err != nil {
 		// idempotent on the testcontainers lane
 		if _, gerr := db.GetCollection(ctx, "books"); gerr != nil {
 			t.Fatal(err)

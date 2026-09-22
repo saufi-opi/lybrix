@@ -21,8 +21,17 @@ import (
 // attempt 2: quarter-split; attempt 3: single-page; attempt >=4: text-only.
 // A shard too small to split skips straight to text-only.
 // Returns "split"|"text_only".
+//
+// EPUB rule (PLAN.md item 19): a span-1 shard (every EPUB synthetic shard)
+// already fails both split conditions and falls through to text_only —
+// retries re-attempt the same single shard with docling backoff, and no
+// duplicate sub-shards are ever created. The explicit span-1 guard below
+// pins that contract against future threshold drift.
 func LadderAction(shard *store.Shard, shardPages int) string {
 	span := shard.PageEnd - shard.PageStart + 1
+	if span < 2 {
+		return "text_only" // single-page/EPUB synthetic shard: never split
+	}
 	if shard.Attempts == 2 && span >= 4*(maxInt(1, shardPages/4))/2 { // worth quarter-splitting
 		return "split"
 	}
@@ -151,9 +160,16 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	defer os.RemoveAll(tmpDir)
-	pdfPath := filepath.Join(tmpDir, "source.pdf")
+	isEpub := doc.MimeType != nil && *doc.MimeType == "application/epub+zip"
+	sourceName := "source.pdf"
+	if isEpub {
+		sourceName = "source.epub"
+	}
+	sourcePath := filepath.Join(tmpDir, sourceName)
+	// PDF cache path: bypassed for EPUB (the cache dir holds .pdf files and
+	// the cache path derivation is doc-scoped, not mime-scoped).
 	cachePath := ""
-	if s.ParserPDFCacheDir != "" {
+	if s.ParserPDFCacheDir != "" && !isEpub {
 		cachePath = pipeline.PDFCachePath(s.ParserPDFCacheDir, docID)
 	}
 	if cachePath != "" {
@@ -161,31 +177,33 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 			// Cache hit — PDFs are immutable per doc_id, no download needed.
 			// Copy (not hardlink/ln): tmpfs unlinking on recycle must never
 			// touch the cache.
-			if err := copyFileLocal(pdfPath, cachePath); err != nil {
+			if err := copyFileLocal(sourcePath, cachePath); err != nil {
 				return err
 			}
 			slog.Info("pdf cache HIT", "doc", docID)
 		} else {
-			if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), pdfPath); err != nil {
+			if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), sourcePath); err != nil {
 				return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
 			}
-			pipeline.StorePDFCache(s.ParserPDFCacheDir, docID, pdfPath)
+			pipeline.StorePDFCache(s.ParserPDFCacheDir, docID, sourcePath)
 			slog.Info("pdf cache MISS -> STORED", "doc", docID)
 		}
 	} else {
-		if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), pdfPath); err != nil {
+		if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), sourcePath); err != nil {
 			return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
 		}
 	}
 
 	started := time.Now()
 	result, err := deps.Parser.Parse(ctx, pipeline.ParseRequest{
-		PDFPath:    pdfPath,
+		PDFPath:    sourcePath,
 		PageStart:  pageStart,
 		PageEnd:    pageEnd,
 		Attempt:    shard.Attempts,
 		ShardPages: s.ShardPages,
 		TextOnly:   textOnly,
+		SkipAnyDoc: isEpub,
+		IsEpub:     isEpub,
 	})
 	if err != nil {
 		return err

@@ -24,6 +24,7 @@ x-core-store-env: &core-store-env
   S3_ENDPOINT: ${S3_PUBLIC_ENDPOINT}   # tailscale URL so presigned PUTs work cross-host
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  # TEI_QUERY_URL is a first-boot SEED value only (registry-managed after)
   TEI_QUERY_URL: ${TEI_QUERY_PUBLIC_URL}   # tei-query on ingest host (nsspq) over tailscale
   TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # embed-backend health probe
   DOCLING_URL: http://docling-serve:5001
@@ -36,15 +37,11 @@ x-ingest-env: &ingest-env
   S3_ENDPOINT: http://minio:9000   # minio runs on THIS host — parser pulls full PDFs per shard
   S3_ACCESS_KEY: ${MINIO_ROOT_USER}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}   # offload to GPU via .env
-  EMBED_BACKEND: ${EMBED_BACKEND:-tei}
-  EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
+  # TEI_INGEST_URL / TEI_QUERY_URL are first-boot SEED values only — the
+  # embedding model registry (UI-manageable) owns runtime config now.
+  TEI_INGEST_URL: ${TEI_INGEST_URL:-http://tei-ingest:80}
   TEI_MODEL: ${TEI_MODEL:-BAAI/bge-m3}
   TEI_QUERY_URL: http://tei-query:80
-  EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-16}
-  EMBED_CTX_BUDGET: ${EMBED_CTX_BUDGET:-1900}
-  EMBED_TRUNCATE_CHARS: ${EMBED_TRUNCATE_CHARS:-6000}
-  EMBED_QUERY_PREFIX: "${EMBED_QUERY_PREFIX:-search_query: }"
   DOCLING_URL: http://docling-serve:5001
   ANYDOC_ENABLED: ${ANYDOC_ENABLED:-true}
   SHARD_PAGES: ${SHARD_PAGES:-20}

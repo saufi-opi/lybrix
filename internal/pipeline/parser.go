@@ -61,10 +61,14 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 	// Gate first when the caller didn't already run it: scanned shards skip
 	// the anydoc attempt entirely (ocr_gate before Docling was 1.0's cheap
 	// ordering, and the blueprint keeps OCR off for the ~90% with a text
-	// layer).
+	// layer). EPUB shards skip the gate AND the fast path entirely — the
+	// pdfcpu text-layer probe cannot open a zip container and docling
+	// parses EPUB natively.
 	needOCR := req.NeedOCR
 	var meanChars float64
-	if !needOCR && req.PDFPath != "" {
+	if req.IsEpub {
+		needOCR = false
+	} else if !needOCR && req.PDFPath != "" {
 		verdict, err := NeedsOCR(req.PDFPath, req.PageStart, req.PageEnd, t.OCRMinCharsPerPage)
 		if err == nil {
 			needOCR = verdict.NeedsOCR
@@ -72,8 +76,8 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 		}
 	}
 
-	// Tier 1: anydoc in-process (born-digital only).
-	if !needOCR && t.AnyDoc.Available() {
+	// Tier 1: anydoc in-process (born-digital only; skipped for EPUB).
+	if !req.SkipAnyDoc && !needOCR && t.AnyDoc.Available() {
 		res, err := t.AnyDoc.Parse(ctx, req)
 		if err == nil && YieldOK(res.Markdown, pages, t.MinYieldCharsPerPage) {
 			res.NeedsOCR = false
@@ -90,7 +94,22 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 	}
 
 	// Tier 2: docling-serve whole-shard fallback. Retry ladder ≥4 runs
-	// text-only (table structure off).
+	// text-only (table structure off). EPUB shards carry their own upload
+	// filename so docling-serve's format sniffing sees the extension.
+	if req.IsEpub {
+		md, err := t.Docling.ConvertNamed(ctx, req.PDFPath, "source.epub", !req.TextOnly)
+		if err != nil {
+			return ParseResult{}, err
+		}
+		return ParseResult{
+			Markdown:         md,
+			NeedsOCR:         needOCR,
+			MeanCharsPerPage: meanChars,
+			DurationMS:       time.Since(started).Milliseconds(),
+			PeakRSSMB:        CurrentRSSMB(),
+			Engine:           "docling",
+		}, nil
+	}
 	md, err := t.Docling.Convert(ctx, req.PDFPath, !req.TextOnly)
 	if err != nil {
 		return ParseResult{}, err

@@ -74,5 +74,15 @@ export function useCollections() {
   });
 }
 
+/** Model registry listing — the /models page and the collection create
+ * dialog's model picker. Reads ride the admin proxy like every other
+ * browser-side /v1 call. */
+export function useEmbeddingModels() {
+  return useQuery({
+    queryKey: ["embedding-models"],
+    queryFn: () => apiClient.models(),
+  });
+}
+
 /** Re-exported for pages that still import row types from here. */
 export type { DocumentRow, ShardRow };

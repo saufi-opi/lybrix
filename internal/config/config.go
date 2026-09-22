@@ -29,17 +29,14 @@ type Settings struct {
 
 	S3BucketParsed string
 
-	// embedding plane (PRD §4.3: ingest and query TEIs never share one)
-	TEIIngestURL        string
-	TEIQueryURL         string
-	EmbedBackend        string // tei | ollama
-	EmbedModel          string
-	EmbedDim            int
-	EmbedBatchSize      int
-	EmbedCtxBudget      int
+	// embedding plane (PRD §4.3: ingest and query planes never share one
+	// server). The legacy EMBED_* / TEI_*_URL vars are retired to a
+	// first-boot SEED: they initialize the embedding_models registry row
+	// exactly once; afterwards models are managed in the UI. Runtime
+	// settings (batch size, prefix, truncation) live on the registry row.
+	EmbedSeed EmbedSeed
+	// EmbedConcurrency/MaxAttempts/RetryWindowSec stay process-level knobs.
 	EmbedConcurrency    int
-	EmbedTruncateChars  int
-	EmbedQueryPrefix    string
 	EmbedMaxAttempts    int
 	EmbedRetryWindowSec int
 
@@ -82,6 +79,16 @@ type Settings struct {
 
 	// misc
 	LogLevel string
+}
+
+// EmbedSeed is the first-boot registry seed (legacy env names read ONLY as
+// seed values when the embedding_models table is empty — hard cut).
+type EmbedSeed struct {
+	Provider  string
+	ModelID   string
+	Dim       int
+	IngestURL string
+	QueryURL  string
 }
 
 // SettingsError names the offending variable — same contract as 1.0's
@@ -144,24 +151,21 @@ func getduration(env map[string]string, key string, def time.Duration) time.Dura
 // DefaultSettings returns the struct pre-populated with 1.0 code defaults.
 func DefaultSettings() *Settings {
 	return &Settings{
-		DatabaseURL:          "postgres://rag:rag@localhost:5432/rag",
-		RedisURL:             "redis://localhost:6379/0",
-		S3Endpoint:           "http://localhost:9000",
-		S3AccessKey:          "minioadmin",
-		S3SecretKey:          "minioadmin",
-		S3BucketRaw:          "raw",
-		S3BucketParsed:       "parsed",
-		TEIIngestURL:         "http://localhost:8081",
-		TEIQueryURL:          "http://localhost:8082",
-		EmbedBackend:         "tei",
-		EmbedModel:           "BAAI/bge-m3",
-		EmbedDim:             1024,
-		EmbedBatchSize:       48,
-		EmbedCtxBudget:       1900,
+		DatabaseURL:    "postgres://rag:rag@localhost:5432/rag",
+		RedisURL:       "redis://localhost:6379/0",
+		S3Endpoint:     "http://localhost:9000",
+		S3AccessKey:    "minioadmin",
+		S3SecretKey:    "minioadmin",
+		S3BucketRaw:    "raw",
+		S3BucketParsed: "parsed",
+		EmbedSeed: EmbedSeed{
+			Provider:  "tei",
+			ModelID:   "BAAI/bge-m3",
+			Dim:       1024,
+			IngestURL: "http://localhost:8081",
+			QueryURL:  "http://localhost:8082",
+		},
 		EmbedConcurrency:     6,
-		EmbedTruncateChars:   6000,
-		EmbedQueryPrefix:     "search_query: ",
-		EmbedMaxAttempts:     5,
 		EmbedRetryWindowSec:  6 * 3600,
 		ShardPages:           20,
 		ParserSoftRSSMB:      6144,
@@ -213,17 +217,14 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.S3SecretKey = getenv(env, "S3_SECRET_KEY", s.S3SecretKey)
 	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", s.S3BucketRaw)
 	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", s.S3BucketParsed)
-	s.TEIIngestURL = getenv(env, "TEI_INGEST_URL", s.TEIIngestURL)
-	s.TEIQueryURL = getenv(env, "TEI_QUERY_URL", s.TEIQueryURL)
-	s.EmbedBackend = strings.ToLower(getenv(env, "EMBED_BACKEND", s.EmbedBackend))
-	s.EmbedModel = getenv(env, "EMBED_MODEL", s.EmbedModel)
-	s.EmbedDim = getint(env, "EMBED_DIM", s.EmbedDim)
-	s.EmbedBatchSize = getint(env, "EMBED_BATCH_SIZE", s.EmbedBatchSize)
-	s.EmbedCtxBudget = getint(env, "EMBED_CTX_BUDGET", s.EmbedCtxBudget)
+	// seed-only vars: legacy names initialize the registry once on an
+	// empty table, then the UI owns the values.
+	s.EmbedSeed.Provider = strings.ToLower(getenv(env, "EMBED_BACKEND", s.EmbedSeed.Provider))
+	s.EmbedSeed.ModelID = getenv(env, "EMBED_MODEL", s.EmbedSeed.ModelID)
+	s.EmbedSeed.Dim = getint(env, "EMBED_DIM", s.EmbedSeed.Dim)
+	s.EmbedSeed.IngestURL = getenv(env, "TEI_INGEST_URL", s.EmbedSeed.IngestURL)
+	s.EmbedSeed.QueryURL = getenv(env, "TEI_QUERY_URL", s.EmbedSeed.QueryURL)
 	s.EmbedConcurrency = getint(env, "EMBED_CONCURRENCY", s.EmbedConcurrency)
-	s.EmbedTruncateChars = getint(env, "EMBED_TRUNCATE_CHARS", s.EmbedTruncateChars)
-	s.EmbedQueryPrefix = getenv(env, "EMBED_QUERY_PREFIX", s.EmbedQueryPrefix)
-	s.EmbedMaxAttempts = getint(env, "EMBED_MAX_ATTEMPTS", s.EmbedMaxAttempts)
 	s.EmbedRetryWindowSec = getint(env, "EMBED_RETRY_WINDOW_S", s.EmbedRetryWindowSec)
 	s.ShardPages = getint(env, "SHARD_PAGES", s.ShardPages)
 	s.ParserSoftRSSMB = getint(env, "PARSER_SOFT_RSS_MB", s.ParserSoftRSSMB)
@@ -260,18 +261,9 @@ func fromEnv(environ []string) (*Settings, error) {
 }
 
 // Validate enforces the same invariants as the 1.0 pydantic validator.
+// The EMBED_BACKEND/EMBED_BATCH_SIZE branches are gone: those vars seed the
+// registry (validated there) instead of process config.
 func (s *Settings) Validate() error {
-	switch s.EmbedBackend {
-	case "tei", "ollama":
-	default:
-		return &SettingsError{"EMBED_BACKEND", `must be "tei" or "ollama"`}
-	}
-	if s.EmbedBatchSize < 1 {
-		return &SettingsError{"EMBED_BATCH_SIZE", "must be >= 1"}
-	}
-	if s.EmbedTruncateChars < 0 {
-		return &SettingsError{"EMBED_TRUNCATE_CHARS", "must be >= 0"}
-	}
 	if s.SearchDefaultTopK > s.SearchMaxTopK {
 		return &SettingsError{"SEARCH_DEFAULT_TOP_K",
 			fmt.Sprintf("(%d) must be <= SEARCH_MAX_TOP_K (%d)", s.SearchDefaultTopK, s.SearchMaxTopK)}

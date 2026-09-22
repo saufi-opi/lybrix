@@ -30,8 +30,14 @@ import (
 type Deps struct {
 	Settings *config.Settings
 	DB       *store.DB
-	// EmbedQuery produces a query-plane embedding (tei-query).
-	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
+	// EmbedQuery produces a query-plane embedding for one collection
+	// (resolves the bound model via the registry) and returns the model
+	// alongside the vector so tools forward its dim into HybridSearch.
+	EmbedQuery func(ctx context.Context, collection, text string) (vec []float32, model *store.EmbeddingModel, err error)
+	// EmbedForModel produces a query-plane embedding with a SPECIFIC
+	// registered model — the multi-collection grouped search calls it once
+	// per unique model (WeKnora multi-KB architecture; no default row).
+	EmbedForModel func(ctx context.Context, m *store.EmbeddingModel, text string) ([]float32, error)
 }
 
 type ctxKey string
@@ -94,7 +100,7 @@ ingested corpus with page-number citations. Use for "what does the
 library say about X" questions; returns top_k chunks with doc
 title, page range, and heading path for verification.`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("the search query")),
-		mcp.WithString("collection", mcp.Description("optional collection id to scope the search")),
+		mcp.WithString("collection", mcp.Description("optional collection id to scope the search; omitted searches ALL collections — grouped by each collection's bound embedding model, one query embedding per unique model, fused with RRF")),
 		mcp.WithNumber("top_k", mcp.Description("max results (default 8, capped at 25)")),
 	)
 }
