@@ -29,12 +29,17 @@ import (
 // Client wraps the S3 API client with the endpoint/credentials from settings.
 type Client struct {
 	api        *s3.Client
+	publicAPI  *s3.Client
 	uploader   *manager.Uploader
 	downloader *manager.Downloader
 }
 
 // New builds a path-style S3 client against MinIO (S3v4 signing).
 func New(ctx context.Context, endpoint, accessKey, secretKey string) (*Client, error) {
+	return NewWithPublicEndpoint(ctx, endpoint, endpoint, accessKey, secretKey)
+}
+
+func NewWithPublicEndpoint(ctx context.Context, endpoint, publicEndpoint, accessKey, secretKey string) (*Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
@@ -46,8 +51,17 @@ func New(ctx context.Context, endpoint, accessKey, secretKey string) (*Client, e
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
+	pubEndpoint := publicEndpoint
+	if pubEndpoint == "" {
+		pubEndpoint = endpoint
+	}
+	publicAPI := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(pubEndpoint)
+		o.UsePathStyle = true
+	})
 	return &Client{
 		api:        api,
+		publicAPI:  publicAPI,
 		uploader:   manager.NewUploader(api),
 		downloader: manager.NewDownloader(api),
 	}, nil
@@ -65,7 +79,11 @@ func ParsedKey(docID string, shardIdx int) string {
 // PresignPut returns a presigned PUT URL valid for expires.
 func (c *Client) PresignPut(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
 	req := &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
-	ps := s3.NewPresignClient(c.api)
+	clientToUse := c.api
+	if c.publicAPI != nil {
+		clientToUse = c.publicAPI
+	}
+	ps := s3.NewPresignClient(clientToUse)
 	out, err := ps.PresignPutObject(ctx, req, s3.WithPresignExpires(expires))
 	if err != nil {
 		return "", err

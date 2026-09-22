@@ -110,7 +110,7 @@ func infra(ctx context.Context, settings *config.Settings) (*store.DB, redisClie
 		return nil, nil, nil, fmt.Errorf("seed rerank model: %w", err)
 	}
 	r := queue.MustRedis(settings.RedisURL)
-	s3c, err := objectstore.New(ctx, settings.S3Endpoint, settings.S3AccessKey, settings.S3SecretKey)
+	s3c, err := objectstore.NewWithPublicEndpoint(ctx, settings.S3Endpoint, settings.S3PublicEndpoint, settings.S3AccessKey, settings.S3SecretKey)
 	if err != nil {
 		db.Close()
 		return nil, nil, nil, err

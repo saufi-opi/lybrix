@@ -22,7 +22,8 @@ type Settings struct {
 	// control plane
 	DatabaseURL string
 	RedisURL    string
-	S3Endpoint  string
+	S3Endpoint        string
+	S3PublicEndpoint  string
 	S3AccessKey string
 	S3SecretKey string
 	S3BucketRaw string
@@ -223,6 +224,7 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.DatabaseURL = getenv(env, "DATABASE_URL", s.DatabaseURL)
 	s.RedisURL = getenv(env, "REDIS_URL", s.RedisURL)
 	s.S3Endpoint = getenv(env, "S3_ENDPOINT", s.S3Endpoint)
+	s.S3PublicEndpoint = getenv(env, "S3_PUBLIC_ENDPOINT", s.S3Endpoint)
 	s.S3AccessKey = getenv(env, "S3_ACCESS_KEY", s.S3AccessKey)
 	s.S3SecretKey = getenv(env, "S3_SECRET_KEY", s.S3SecretKey)
 	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", s.S3BucketRaw)
