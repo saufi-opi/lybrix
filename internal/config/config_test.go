@@ -22,7 +22,7 @@ func TestDefaults(t *testing.T) {
 	if s.MCPPort != 8430 || s.APIPort != 8000 {
 		t.Fatalf("port defaults drifted: %+v", s)
 	}
-	if s.S3BucketRaw != "raw" || s.S3BucketParsed != "parsed" {
+	if s.S3BucketRaw != "files" || s.S3BucketParsed != "files" {
 		t.Fatalf("bucket defaults drifted: %+v", s)
 	}
 	if s.MinYieldCharsPerPage != 50 {

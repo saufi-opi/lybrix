@@ -49,6 +49,8 @@ type Deps struct {
 	// ResolveReranker implements the rerank resolution rule (explicit
 	// override > collection binding > none). Nil treated as never-rerank.
 	ResolveReranker func(ctx context.Context, req RerankResolveRequest) (*store.RerankModel, error)
+	// MCPHandler mounts the Model Context Protocol HTTP surface directly onto the router.
+	MCPHandler http.Handler
 }
 
 // Server is the assembled REST API.
@@ -132,6 +134,11 @@ func (s *Server) Router() http.Handler {
 	// OpenAPI snapshot: byte-identical contract keeps
 	// `npm run generate-client` deterministic.
 	r.Get("/openapi.json", s.handleOpenAPI)
+
+	// MCP: Model Context Protocol streamable HTTP surface mounted directly
+	if s.deps.MCPHandler != nil {
+		r.Mount("/mcp", s.deps.MCPHandler)
+	}
 
 	return r
 }

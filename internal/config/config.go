@@ -168,8 +168,8 @@ func DefaultSettings() *Settings {
 		S3Endpoint:     "http://localhost:9000",
 		S3AccessKey:    "minioadmin",
 		S3SecretKey:    "minioadmin",
-		S3BucketRaw:    "raw",
-		S3BucketParsed: "parsed",
+		S3BucketRaw:    "files",
+		S3BucketParsed: "files",
 		EmbedSeed: EmbedSeed{
 			Provider:  "tei",
 			ModelID:   "BAAI/bge-m3",
@@ -227,8 +227,11 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.S3PublicEndpoint = getenv(env, "S3_PUBLIC_ENDPOINT", s.S3Endpoint)
 	s.S3AccessKey = getenv(env, "S3_ACCESS_KEY", s.S3AccessKey)
 	s.S3SecretKey = getenv(env, "S3_SECRET_KEY", s.S3SecretKey)
-	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", s.S3BucketRaw)
-	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", s.S3BucketParsed)
+
+	// S3 bucket configuration (defaults to unified "files" bucket)
+	defaultBucket := getenv(env, "S3_BUCKET", getenv(env, "S3_BUCKET_NAME", "files"))
+	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", defaultBucket)
+	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", defaultBucket)
 	// seed-only vars: legacy names initialize the registry once on an
 	// empty table, then the UI owns the values.
 	s.EmbedSeed.Provider = strings.ToLower(getenv(env, "EMBED_BACKEND", s.EmbedSeed.Provider))
