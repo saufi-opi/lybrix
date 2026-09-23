@@ -74,10 +74,45 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	if len(children) == 0 && len(parents) == 0 {
 		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
 	}
-	// neighbour dedupe (shard-overlap residue) — hash-based, order kept.
-	children = pipeline.DropDuplicateNeighbours(children,
+	// Document-wide dedupe (BACKLOG R-24): keep the first occurrence of each
+	// hash across the whole doc (order preserved, seq renumbered). Non-
+	// adjacent repeats — boilerplate, footers, page furniture stitched across
+	// shard boundaries — previously reached COPY and aborted the tx.
+	parents = pipeline.DropDuplicateChunks(parents,
+		func(p pipeline.ParentChunk) string { return p.ChunkHash },
+		func(p *pipeline.ParentChunk, seq int) { p.Seq = seq })
+	children = pipeline.DropDuplicateChunks(children,
 		func(c pipeline.ChildChunk) string { return c.ChunkHash },
 		func(c *pipeline.ChildChunk, seq int) { c.Seq = seq })
+
+	// Cross-set dedupe, parent wins: chunk_hash is HashText over unprefixed
+	// text and the row id is derived from (doc_id, hash) with no is_parent
+	// component, so a parent and child with identical text would collide on
+	// chunks_pkey (a heading-less short section: parent text == child window
+	// text). Parents insert first, so the child is dropped here — before
+	// texts/chunkIDs are built — rather than being silently dropped by the
+	// insert fallback and having its vector written onto the parent row.
+	// (After parent dedupe children's ParentSeq values go stale; there is no
+	// consumer — LinkParentsByHash joins by seq proximity and dedupe
+	// preserves relative order, so its semantics survive.)
+	pHashes := make(map[string]struct{}, len(parents))
+	for _, p := range parents {
+		pHashes[p.ChunkHash] = struct{}{}
+	}
+	kept := children[:0] // in-place filter is safe: drops only, order preserved
+	nKept := 0
+	for _, c := range children {
+		if _, dup := pHashes[c.ChunkHash]; dup {
+			continue
+		}
+		c.Seq = nKept
+		nKept++
+		kept = append(kept, c)
+	}
+	children = kept
+	if len(children) == 0 && len(parents) == 0 {
+		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
+	}
 
 	// Idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING.
 	if err := deps.DB.InsertParents(ctx, tx, docID, docCollection(doc), toStoreParents(parents)); err != nil {

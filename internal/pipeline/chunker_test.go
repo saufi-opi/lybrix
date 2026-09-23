@@ -113,7 +113,7 @@ func TestChunkerNeighbourDedupe(t *testing.T) {
 		t := "same text same text"
 		return ChildChunk{Seq: seq, Text: t, ChunkHash: HashText(t)}
 	}
-	out := DropDuplicateNeighbours([]ChildChunk{mk(0), mk(1), mk(2)},
+	out := DropDuplicateChunks([]ChildChunk{mk(0), mk(1), mk(2)},
 		func(c ChildChunk) string { return c.ChunkHash },
 		func(c *ChildChunk, seq int) { c.Seq = seq })
 	if len(out) != 1 {
@@ -121,6 +121,62 @@ func TestChunkerNeighbourDedupe(t *testing.T) {
 	}
 	if out[0].Seq != 0 {
 		t.Fatalf("seq renumber drift: %d", out[0].Seq)
+	}
+}
+
+func TestChunkerDedupeNonAdjacent(t *testing.T) {
+	// BACKLOG R-24: non-adjacent repeats (repeated footers/boilerplate across
+	// shard boundaries) must drop too, not just neighbours — [a, b, a] → [a, b].
+	mk := func(seq int, text string) ChildChunk {
+		return ChildChunk{Seq: seq, Text: text, ChunkHash: HashText(text)}
+	}
+	a, b := "footer boilerplate", "real body content"
+	out := DropDuplicateChunks([]ChildChunk{mk(0, a), mk(1, b), mk(2, a)},
+		func(c ChildChunk) string { return c.ChunkHash },
+		func(c *ChildChunk, seq int) { c.Seq = seq })
+	if len(out) != 2 {
+		t.Fatalf("expected 2 chunks after non-adjacent dedupe, got %d", len(out))
+	}
+	if out[0].Text != a || out[1].Text != b {
+		t.Fatalf("order drift: %q, %q", out[0].Text, out[1].Text)
+	}
+}
+
+func TestChunkerDedupeSeqCompaction(t *testing.T) {
+	// seq is renumbered 0..n-1 over the kept set, gaps included.
+	mk := func(seq int, text string) ChildChunk {
+		return ChildChunk{Seq: seq, Text: text, ChunkHash: HashText(text)}
+	}
+	out := DropDuplicateChunks([]ChildChunk{
+		mk(0, "a"), mk(1, "b"), mk(2, "a"), mk(3, "c"), mk(4, "b"), mk(5, "d"),
+	}, func(c ChildChunk) string { return c.ChunkHash },
+		func(c *ChildChunk, seq int) { c.Seq = seq })
+	wantTexts := []string{"a", "b", "c", "d"}
+	if len(out) != len(wantTexts) {
+		t.Fatalf("expected %d chunks, got %d", len(wantTexts), len(out))
+	}
+	for i, c := range out {
+		if c.Seq != i {
+			t.Fatalf("seq compaction drift at %d: seq=%d", i, c.Seq)
+		}
+		if c.Text != wantTexts[i] {
+			t.Fatalf("order drift at %d: %q want %q", i, c.Text, wantTexts[i])
+		}
+	}
+}
+
+func TestChunkerDedupeEmptyInput(t *testing.T) {
+	out := DropDuplicateChunks[ChildChunk](nil,
+		func(c ChildChunk) string { return c.ChunkHash },
+		func(c *ChildChunk, seq int) { c.Seq = seq })
+	if len(out) != 0 {
+		t.Fatalf("expected empty output for nil input, got %d", len(out))
+	}
+	out = DropDuplicateChunks([]ChildChunk{},
+		func(c ChildChunk) string { return c.ChunkHash },
+		func(c *ChildChunk, seq int) { c.Seq = seq })
+	if len(out) != 0 {
+		t.Fatalf("expected empty output for empty input, got %d", len(out))
 	}
 }
 

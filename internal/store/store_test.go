@@ -143,6 +143,140 @@ func TestChunkDedupeUniqueConstraint(t *testing.T) {
 	}
 }
 
+// TestChunkIntraBatchDuplicate (BACKLOG R-24 §4.5/§4.6): two rows with the
+// same hash inside one call produce the same DeterministicChunkID — the
+// intra-batch filter must drop them, and no 25P02 may surface.
+func TestChunkIntraBatchDuplicate(t *testing.T) {
+	db := mustDB(t, "paradedb/paradedb:17")
+	ctx := context.Background()
+	doc := seedDoc(t, db)
+	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	err := db.Tx(ctx, func(tx txType) error {
+		if err := db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: hash, Text: "body", TokenCount: 2},
+			{Seq: 1, ChunkHash: hash, Text: "body", TokenCount: 2},
+		}); err != nil {
+			return err
+		}
+		return db.InsertParents(ctx, tx, doc, "books", []ParentChunk{
+			{Seq: 0, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
+			{Seq: 1, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
+		})
+	})
+	if err != nil {
+		t.Fatalf("intra-batch duplicate must be filtered, not aborted: %v", err)
+	}
+	n, err := db.CountDocChunks(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 children + 2 parents → 4 rows total
+	if n != 4 {
+		t.Fatalf("expected 4 chunk rows (2 child + 2 parent), got %d", n)
+	}
+}
+
+// TestChunkRedeliveryMidBatch (BACKLOG R-24 §4.7): a batch containing an
+// already-stored chunk plus fresh ones. COPY raises the unique violation,
+// the savepoint rollback must leave the tx usable, and the fresh rows must
+// land via the row-by-row fallback.
+func TestChunkRedeliveryMidBatch(t *testing.T) {
+	db := mustDB(t, "paradedb/paradedb:17")
+	ctx := context.Background()
+	doc := seedDoc(t, db)
+	oldHash := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	freshHash := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	err := db.Tx(ctx, func(tx txType) error {
+		if err := db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: oldHash, Text: "old", TokenCount: 1},
+		}); err != nil {
+			return err
+		}
+		// second call: COPY hits the pre-existing row mid-batch
+		return db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: oldHash, Text: "old", TokenCount: 1},
+			{Seq: 1, ChunkHash: freshHash, Text: "fresh", TokenCount: 1},
+		})
+	})
+	if err != nil {
+		t.Fatalf("mid-batch conflict must not abort the tx: %v", err)
+	}
+	n, err := db.CountDocChunks(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("fresh row lost after conflict rollback: %d chunks", n)
+	}
+}
+
+// TestChunkFallbackTxStillUsable (BACKLOG R-24 §4.9): after a forced COPY
+// failure the tx must survive a further Exec in the same transaction.
+func TestChunkFallbackTxStillUsable(t *testing.T) {
+	db := mustDB(t, "paradedb/paradedb:17")
+	ctx := context.Background()
+	doc := seedDoc(t, db)
+	hash := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	err := db.Tx(ctx, func(tx txType) error {
+		if err := db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: hash, Text: "dup", TokenCount: 1},
+		}); err != nil {
+			return err
+		}
+		// forces the savepoint path inside InsertChunks
+		if err := db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: hash, Text: "dup", TokenCount: 1},
+		}); err != nil {
+			return err
+		}
+		// same tx must still execute statements
+		_, err := tx.Exec(ctx, `SELECT 1`)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("tx must stay usable after COPY conflict: %v", err)
+	}
+}
+
+// TestChunkCrossSetCollision (BACKLOG R-24 §4.10): parent + child with the
+// identical hash in one tx → the parent row wins (inserted first), no child
+// row, no 25P02. ON CONFLICT (doc_id, chunk_hash) ignores is_parent, so the
+// child cannot coexist with the parent.
+func TestChunkCrossSetCollision(t *testing.T) {
+	db := mustDB(t, "paradedb/paradedb:17")
+	ctx := context.Background()
+	doc := seedDoc(t, db)
+	hash := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	err := db.Tx(ctx, func(tx txType) error {
+		if err := db.InsertParents(ctx, tx, doc, "books", []ParentChunk{
+			{Seq: 0, ChunkHash: hash, Text: "same text", TokenCount: 2},
+		}); err != nil {
+			return err
+		}
+		return db.InsertChunks(ctx, tx, doc, "books", []ChildChunk{
+			{Seq: 0, ChunkHash: hash, Text: "same text", TokenCount: 2},
+		})
+	})
+	if err != nil {
+		t.Fatalf("cross-set collision must not abort the tx: %v", err)
+	}
+	n, err := db.CountDocChunks(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("parent must win cross-set collision: %d rows", n)
+	}
+	var isParent bool
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT is_parent FROM chunks WHERE doc_id = $1`, doc).Scan(&isParent); err != nil {
+		t.Fatal(err)
+	}
+	if !isParent {
+		t.Fatal("surviving row must be the parent")
+	}
+}
+
 func TestKeyAuthValidityRules(t *testing.T) {
 	db := mustDB(t, "paradedb/paradedb:17")
 	ctx := context.Background()
