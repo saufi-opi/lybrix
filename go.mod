@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
+	github.com/firecrawl/anydoc/go v0.0.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mark3labs/mcp-go v1.1.0
@@ -17,6 +18,8 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 )
+
+replace github.com/firecrawl/anydoc/go => ./third_party/anydoc-go
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

@@ -8,8 +8,10 @@ import (
 )
 
 // Format is the ingestion format family (Workstream 2's shared table). The
-// anydoc fast path consumes the numeric codes directly: PDF=0 DOCX=1
-// PPTX=2 XLSX=3 TXT=4 (third_party/anydoc-go/include/anydoc.h).
+// anydoc fast path maps these onto the ABI's ANYDOC_FORMAT_* tags via
+// anydocFormatFor (anydoc.go) — never via numeric codes (the old in-file
+// table PDF=0…TXT=4 disagreed with the real ABI, where PDF=3 DOCX=1 PPTX=5
+// XLSX=8, and sent PDF as tag 0 = DOC; BACKLOG R-23).
 type Format int
 
 const (
@@ -25,26 +27,6 @@ const (
 
 // ErrUnsupportedFormat marks a sniffed-but-unknown body.
 var ErrUnsupportedFormat = fmt.Errorf("unsupported file type")
-
-// anydocCode is the CGO fast path's format code; -1 = not handled by anydoc.
-func (f Format) anydocCode() int {
-	switch f {
-	case FmtPDF:
-		return 0
-	case FmtDOCX:
-		return 1
-	case FmtPPTX:
-		return 2
-	case FmtXLSX:
-		return 3
-	case FmtTXT:
-		return 4
-	}
-	return -1
-}
-
-// AnydocCode exposes the CGO fast-path code (-1 = not anydoc-handled).
-func (f Format) AnydocCode() int { return f.anydocCode() }
 
 // MimeType is the wire mime type stored on documents rows / sent to MinIO.
 func (f Format) MimeType() string {

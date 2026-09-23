@@ -1,21 +1,46 @@
 # deploy/Dockerfile.lybrix — the one 2.0 image: lybrix-server + cmd/lybrix-eval.
 #
-# Default build compiles the anydoc package with the stub fallback (pure-Go,
-# CGO-free). -tags anydoc links the real Rust lib when
-# third_party/anydoc-go/lib/linux_amd64_gnu/libanydoc_go.a exists (ingest
-# host builds; see third_party/anydoc-go/README.md).
+# Default (WITH_ANYDOC=0): pure-Go stub build, CGO-free, no Rust toolchain.
+# WITH_ANYDOC=1: cargo builds libanydoc_go.a from third_party/anydoc-go
+# (pinned crate, scripts/build-anydoc-lib.sh), then the Go build runs with
+# CGO_ENABLED=1 -tags anydoc and links it. That image is ~1 GB larger and much
+# slower to build — build it into a separate tag (make build-anydoc) and keep
+# the default image slim.
+#
+# Layer order matters: go.mod carries `replace github.com/firecrawl/anydoc/go
+# => ./third_party/anydoc-go`, and `go mod download` resolves the whole module
+# graph — it fails ("reading ./third_party/anydoc-go/go.mod: no such file or
+# directory") if the replace target's go.mod is not on disk yet, even in the
+# default WITH_ANYDOC=0 lane where nothing imports the module. So the
+# binding's go.mod is copied BEFORE the download step.
 FROM golang:1.25-bookworm AS build
+ARG WITH_ANYDOC=0
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-COPY third_party/anydoc-go/include/ third_party/anydoc-go/include/
-RUN CGO_ENABLED=0 go build -o /out/lybrix-server ./cmd/lybrix-server \
- && CGO_ENABLED=0 go build -o /out/lybrix-eval ./cmd/lybrix-eval
+COPY third_party/ third_party/
+COPY scripts/build-anydoc-lib.sh scripts/build-anydoc-lib.sh
+RUN if [ "$WITH_ANYDOC" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        build-essential curl && rm -rf /var/lib/apt/lists/* \
+      && curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+      && . "$HOME/.cargo/env" \
+      && scripts/build-anydoc-lib.sh \
+      && CGO_ENABLED=1 go build -tags anydoc -o /out/lybrix-server ./cmd/lybrix-server \
+      && CGO_ENABLED=1 go build -o /out/lybrix-eval ./cmd/lybrix-eval ; \
+    else \
+      CGO_ENABLED=0 go build -o /out/lybrix-server ./cmd/lybrix-server \
+      && CGO_ENABLED=0 go build -o /out/lybrix-eval ./cmd/lybrix-eval ; \
+    fi
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+# libstdc++6: the anydoc static archive carries C++ symbols (-lstdc++ at link
+# time in third_party/anydoc-go/lib_linux_gnu.go); the slim runtime needs it
+# or the tagged binary fails to start. Harmless for the stub build.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/lybrix-server /app/lybrix-server
 COPY --from=build /out/lybrix-eval /app/lybrix-eval

@@ -100,6 +100,39 @@ func PageTextChars(path string, pageStart, pageEnd int) ([]int, error) {
 	return counts, nil
 }
 
+// SlicePDF writes the 1-based inclusive page range [pageStart, pageEnd] of
+// src into dst as a standalone PDF. Returns the number of pages written.
+// Uses pdfcpu's TrimFile: cheap structural copy of the page tree (text
+// layers, fonts, and resources are preserved), orders of magnitude cheaper
+// than any conversion pass. Validation is relaxed to match PageCountBytes.
+//
+// The range is validated here rather than left to TrimFile's page selection:
+// pdfcpu clamps out-of-range tokens instead of erroring (calcSelPages →
+// parsePageRange "Handle overflow gracefully", selectPages.go), so a stale
+// DB range past the real page count would otherwise produce a short or
+// empty slice. No fallback branch lives here: on a damaged real-world PDF
+// the error is returned and the call site degrades to whole-file parsing —
+// a shard never fails because of slicing (BACKLOG R-22).
+func SlicePDF(srcPath, dstPath string, pageStart, pageEnd int) (int, error) {
+	if pageStart < 1 || pageEnd < pageStart {
+		return 0, fmt.Errorf("slice: invalid page range %d-%d", pageStart, pageEnd)
+	}
+	total, err := PageCount(srcPath)
+	if err != nil {
+		return 0, err
+	}
+	if pageEnd > total {
+		return 0, fmt.Errorf("slice: page range %d-%d exceeds %d pages", pageStart, pageEnd, total)
+	}
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	sel := []string{fmt.Sprintf("%d-%d", pageStart, pageEnd)}
+	if err := api.TrimFile(srcPath, dstPath, sel, conf); err != nil {
+		return 0, err
+	}
+	return PageCount(dstPath)
+}
+
 // ClassifyPDFError maps pdfcpu open failures onto the 1.0 taxonomy:
 // encrypted → PDF_ENCRYPTED, everything else → PDF_CORRUPT.
 func ClassifyPDFError(err error) string {

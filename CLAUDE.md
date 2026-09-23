@@ -42,7 +42,7 @@ make up-ingest        # lybrix-splitter/parser×4/embedder/janitor + docling-ser
 make down-ingest      # stops consumers immediately
 ```
 
-Go is pinned to 1.23 (`go.mod`). Config lives in `.env` (copy from `deploy/.env.example`); every value is read by `internal/config` and nothing else touches the environment. Store tests boot `paradedb/paradedb:17` via testcontainers and **skip cleanly when no docker socket exists** — the CI lane is DB-free. Queue tests run on miniredis.
+Go is pinned to 1.25 (`go.mod`). Config lives in `.env` (copy from `deploy/.env.example`); every value is read by `internal/config` and nothing else touches the environment. Store tests boot `paradedb/paradedb:17` via testcontainers and **skip cleanly when no docker socket exists** — the CI lane is DB-free. Queue tests run on miniredis.
 
 Web UI (Next.js 15 App Router + Tailwind v4 + shadcn/ui, Biome lint — theme is "paper & press", dark-only, tokens in `app/globals.css`) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint`, and `npm run generate-client` — regenerate the typed API client (`lib/client/`, generated code, never hand-edit) from `openapi.json` after changing the API contract: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`. Server components call the api directly via `API_URL`; browser calls ride the same-origin rewrite (`next.config.mjs`, baked at build time). Mutating browser calls go through session-gated proxies that hold bearer keys server-side: `/api/admin/*` (admin key) and `/api/playground` (MCP playground → real MCP server via `lib/mcp-proxy.ts`). See `docs/adr/0003-web-stack.md` for why api and web stay separate services.
 
