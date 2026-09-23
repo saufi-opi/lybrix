@@ -12,7 +12,7 @@ import (
 // with SHARD_TIMEOUT and bumps shards_failed per doc. Returns the number
 // escalated plus per-doc counters for the events rows the janitor writes.
 func (d *DB) EscalateStuckShards(ctx context.Context, tx pgx.Tx, maxAttempts int) ([]EscalatedShard, error) {
-	rows, err := tx.Query(ctx, `UPDATE shards SET state = 'failed',
+	rows, err := tx.Query(ctx, `UPDATE shards SET state = 'failed', done_at = NOW(),
 			error_code = 'SHARD_TIMEOUT', error_detail = 'escalated after ' || attempts || ' attempts'
 		WHERE state = 'pending' AND attempts >= $1
 		RETURNING doc_id, idx, attempts`, maxAttempts)

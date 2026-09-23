@@ -229,6 +229,16 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.S3SecretKey = getenv(env, "S3_SECRET_KEY", s.S3SecretKey)
 	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", s.S3BucketRaw)
 	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", s.S3BucketParsed)
+	// S3_BUCKET is the legacy single-bucket alias: it fills BOTH buckets when
+	// the specific raw/parsed vars are not provided.
+	if v, ok := env["S3_BUCKET"]; ok && v != "" {
+		if _, ok := env["S3_BUCKET_RAW"]; !ok || env["S3_BUCKET_RAW"] == "" {
+			s.S3BucketRaw = v
+		}
+		if _, ok := env["S3_BUCKET_PARSED"]; !ok || env["S3_BUCKET_PARSED"] == "" {
+			s.S3BucketParsed = v
+		}
+	}
 	// seed-only vars: legacy names initialize the registry once on an
 	// empty table, then the UI owns the values.
 	s.EmbedSeed.Provider = strings.ToLower(getenv(env, "EMBED_BACKEND", s.EmbedSeed.Provider))
