@@ -27,6 +27,8 @@ incidents land here before any code change.
 | R-19 | P3 | fixed 2026-09-21 (c3893cc) | eval JSON reports `hit_at_{top_k}` carrying the hit@8 value; undercounts for top_k > 8 | run.py conflates judge's fixed hit@8 with run top_k | c3893cc |
 | R-20 | P3 | fixed 2026-09-21 (c3893cc) | `/pipeline` shows a dead Redis as empty lanes while `/queues` propagates | lanes loop `except Exception: pass` | c3893cc |
 | R-21 | P2 | fixed 2026-09-21 (94c4484) | non-PDF / over-cap PDFs are discovered inside a parser instead of rejected at commit | no magic-byte / page-count validation (PRD §11) | 94c4484 |
+| R-22 | P1 | fixed this round | every parser shard converts the ENTIRE PDF: a 300-page book with 16–24-page shards runs docling/anydoc over all 300 pages N times (~2.5 min/shard ⇒ 40–50 min of pure duplicated conversion) | `HandleParse` passes the full downloaded `sourcePath` as `ParseRequest.PDFPath` and both tiers (anydoc, docling) convert whatever file they are handed; the page range is metadata only | this commit |
+| R-23 | P1 | fixed this round | a `-tags anydoc` build cannot link: `internal/pipeline/anydoc.go` calls `C.anydoc_convert`/`C.anydoc_free_buffer` — symbols that do not exist in `third_party/anydoc-go/include/anydoc.h` (real ABI: `anydoc_to_markdown_bytes` + `anydoc_string_free`); `fileformat.go`'s format table (PDF=0…TXT=4) also disagrees with the real ABI tags (PDF=3, DOCX=1, PPTX=5, XLSX=8), so PDF would have been sent as tag 0 (= DOC) | hand-rolled CGO preamble drifted onto a nonexistent ABI while the complete, correct binding already sat in `third_party/anydoc-go/`; Dockerfile has no rust toolchain and no `WITH_ANYDOC` lane | this commit |
 
 ## 2.0 rewrite disposition (2026-09-21)
 

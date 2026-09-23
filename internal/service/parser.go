@@ -48,6 +48,26 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// shouldSlicePDF decides whether HandleParse cuts the shard's page range out
+// of the source PDF before parsing (BACKLOG R-22). Guards, in order:
+//
+//   - only real PDF shards slice — non-PDF shards are synthetic single
+//     shards, the whole file is their unit;
+//   - both range bounds must be known (0 means "no range in the job") and
+//     well-ordered (pageEnd >= pageStart, matching ParseJob.ValidatePages'
+//     invariant);
+//   - a shard spanning the entire document is passed through untouched
+//     (no pointless copy).
+func shouldSlicePDF(docFormat pipeline.Format, pageStart, pageEnd, totalPages int) bool {
+	if docFormat != pipeline.FmtPDF {
+		return false
+	}
+	if pageStart <= 0 || pageEnd < pageStart {
+		return false
+	}
+	return !(pageStart == 1 && pageEnd >= totalPages)
+}
+
 // SplitAndRequeue replaces a failing shard with finer sub-shards (ladder
 // attempts 2-3). The parent becomes SKIPPED; each sub-shard is a fresh
 // ParseJob. Port of parser.py _split_and_requeue.
@@ -194,11 +214,48 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		}
 	}
 
+	// Shard slicing (BACKLOG R-22): ParseRequest's page range is consumed by
+	// NO parser — docling and anydoc both convert whatever file they are
+	// handed end to end. For PDF shards that are not the whole document, cut
+	// pageStart..pageEnd out with pdfcpu first so each shard converts only
+	// its own pages. Non-PDF shards are synthetic single shards; the whole
+	// file is the unit (types.go IsSynthetic).
+	parsePath := sourcePath
+	reqStart, reqEnd := pageStart, pageEnd
+	if docFormat == pipeline.FmtPDF && pageStart > 0 && pageEnd >= pageStart {
+		totalPages, perr := pipeline.PageCount(sourcePath)
+		if perr != nil {
+			// PageCount failure = the PDF may be corrupt/encrypted; leave the
+			// request untouched and let the existing conversion/error paths
+			// classify it.
+			slog.Debug("page count failed; skipping slice", "err", perr, "doc", docID)
+		} else if shouldSlicePDF(docFormat, pageStart, pageEnd, totalPages) {
+			sliced := filepath.Join(tmpDir, fmt.Sprintf("shard-%d.pdf", idx))
+			n, serr := pipeline.SlicePDF(sourcePath, sliced, pageStart, pageEnd)
+			if serr == nil && n > 0 {
+				parsePath = sliced
+				// Renormalize: the slice IS pages 1..n now. The OCR gate inside
+				// TwoTierParser probes req.PDFPath at req.PageStart..req.PageEnd,
+				// so it must probe the slice.
+				reqStart, reqEnd = 1, n
+				slog.Info("pdf shard sliced",
+					"doc", docID, "shard", idx,
+					"pages", fmt.Sprintf("%d-%d/%d", pageStart, pageEnd, totalPages))
+			} else if serr != nil {
+				// Slice failure must not fail the shard — degrade to the 1.0
+				// behavior (whole-file conversion) and let the ladder handle a
+				// repeat failure.
+				slog.Warn("pdf slice failed; parsing whole file", "err", serr,
+					"doc", docID, "shard", idx)
+			}
+		}
+	}
+
 	started := time.Now()
 	result, err := deps.Parser.Parse(ctx, pipeline.ParseRequest{
-		PDFPath:    sourcePath,
-		PageStart:  pageStart,
-		PageEnd:    pageEnd,
+		PDFPath:    parsePath,
+		PageStart:  reqStart,
+		PageEnd:    reqEnd,
 		Attempt:    shard.Attempts,
 		ShardPages: s.ShardPages,
 		TextOnly:   textOnly,

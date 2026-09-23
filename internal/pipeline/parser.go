@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -174,7 +175,7 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 }
 
 func isUnavailable(err error) bool {
-	return err == ErrAnyDocUnavailable
+	return errors.Is(err, ErrAnyDocUnavailable)
 }
 
 // CurrentRSSMB reports peak RSS in MB — the 1.0 memory.py current_rss_mb
