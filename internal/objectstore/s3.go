@@ -68,13 +68,13 @@ func NewWithPublicEndpoint(ctx context.Context, endpoint, publicEndpoint, access
 	}, nil
 }
 
-// RawKey is the object key for an uploaded source PDF: s3://raw/{doc_id}.pdf.
-func RawKey(docID string) string { return docID + ".pdf" }
+// RawKey is the object key for an uploaded source PDF: s3://{bucket}/raw/{doc_id}.pdf.
+func RawKey(docID string) string { return "raw/" + docID + ".pdf" }
 
 // ParsedKey is the object key for a parsed shard markdown:
-// s3://parsed/{doc}/{idx}.md.
+// s3://{bucket}/parsed/{doc}/{idx}.md.
 func ParsedKey(docID string, shardIdx int) string {
-	return fmt.Sprintf("%s/%d.md", docID, shardIdx)
+	return fmt.Sprintf("parsed/%s/%d.md", docID, shardIdx)
 }
 
 // PresignPut returns a presigned PUT URL valid for expires.

@@ -86,6 +86,27 @@ services:
       interval: 10s
     networks: [internal]
 
+  caddy:
+    <<: *restart
+    image: caddy:2-alpine
+    profiles: [core]
+    ports:
+      - "${BIND_IP}:80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on:
+      - lybrix-server
+      - web
+    networks: [internal, traefik-public]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      - "traefik.http.routers.lybrix.rule=Host(`lybrix.loxikum.xyz`)"
+      - "traefik.http.routers.lybrix.entrypoints=web"
+      - "traefik.http.routers.lybrix.priority=100"
+      - "traefik.http.services.lybrix.loadbalancer.server.port=80"
+
   lybrix-server:
     <<: *restart
     image: ghcr.io/saufi-opi/lybrix/server:edge
@@ -103,19 +124,13 @@ services:
       paradedb: {condition: service_healthy}
       redis: {condition: service_healthy}
     healthcheck:
-      test: ["CMD-SHELL", "/app/lybrix-eval --version 2>/dev/null; wget -qO- http://127.0.0.1:8000/v1/system/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "/app/lybrix-eval --version 2>/dev/null; curl -fs http://127.0.0.1:8000/v1/system/health >/dev/null 2>&1 || exit 1"]
       interval: 15s
-    networks: [internal, traefik-public]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.lybrixapi.rule=Host(`lybrix.loxikum.xyz`) && (PathPrefix(`/v1`) || PathPrefix(`/openapi.json`))"
-      - "traefik.http.routers.lybrixapi.entrypoints=web"
-      - "traefik.http.routers.lybrixapi.priority=200"
-      - "traefik.http.services.lybrixapi.loadbalancer.server.port=8000"
-      - "traefik.http.routers.lybrixmcp.rule=Host(`lybrix.loxikum.xyz`) && PathPrefix(`/mcp`)"
-      - "traefik.http.routers.lybrixmcp.entrypoints=web"
-      - "traefik.http.routers.lybrixmcp.priority=200"
-      - "traefik.http.services.lybrixmcp.loadbalancer.server.port=8430"
+    networks:
+      internal:
+        aliases:
+          - api
+          - lybrix-server
 
   web:
     <<: *restart
@@ -123,7 +138,7 @@ services:
     profiles: [core]
     environment:
       API_URL: http://lybrix-server:8000
-      MCP_API_URL: http://lybrix-server:8430/mcp   # MCP playground proxy target (internal network)
+      MCP_API_URL: http://lybrix-server:8000/mcp   # MCP playground proxy target (internal network)
       MCP_API_KEY: ${MCP_API_KEY}   # playground proxy holds the key server-side; browser never sees it
       HOSTNAME: 0.0.0.0   # Next standalone: default HOSTNAME=container-id binds one iface only — traefik gets refused
       ADMIN_USER: ${ADMIN_USER:-admin}
@@ -133,13 +148,7 @@ services:
     depends_on: [lybrix-server]
     ports:
       - "${BIND_IP}:3000:3000"
-    networks: [internal, traefik-public]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.lybrixweb.rule=Host(`lybrix.loxikum.xyz`)"
-      - "traefik.http.routers.lybrixweb.entrypoints=web"
-      - "traefik.http.routers.lybrixweb.priority=100"
-      - "traefik.http.services.lybrixweb.loadbalancer.server.port=3000"
+    networks: [internal]
 
   # ------------- ingest (nsspq) -------------
 
@@ -357,7 +366,7 @@ services:
       start_period: 10m    # first boot downloads ~2.2GB model into hfcache
     networks: [ingestnet]
 
-volumes: {paradedbdata: {}, redisdata: {}, miniodata: {}, hfcache: {}}
+volumes: {paradedbdata: {}, redisdata: {}, miniodata: {}, hfcache: {}, caddydata: {}}
 networks:
   internal: {}
   ingestnet: {}

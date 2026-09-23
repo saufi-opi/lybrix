@@ -11,7 +11,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # API_URL is baked for server components; NEXT_PUBLIC_API_URL for the browser.
-ARG API_URL=http://api:8000
+ARG API_URL=http://lybrix-server:8000
 ENV API_URL=${API_URL}
 RUN npm run build
 

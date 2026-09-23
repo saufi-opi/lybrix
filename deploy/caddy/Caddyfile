@@ -1,22 +1,38 @@
-# deploy/caddy/Caddyfile — PRD §11: Caddy terminates TLS, single ingress.
+# deploy/caddy/Caddyfile — PRD §11: Caddy terminates TLS / reverse proxy, single ingress.
 # Only caddy publishes ports; every other service stays on internal networks.
 {
-	email {$ACME_EMAIL}
+	admin off
 }
 
-{$PUBLIC_HOST} {
-	# Admin UI
+:80 {
+	# Control-plane API (REST) & OpenAPI
+	handle /v1/* {
+		reverse_proxy lybrix-server:8000
+	}
+	handle /openapi.json {
+		reverse_proxy lybrix-server:8000
+	}
+
+	# MCP (Streamable HTTP)
+	handle /mcp* {
+		reverse_proxy lybrix-server:8000
+	}
+
+	# Storage: S3 Object Storage (unified "files" bucket)
+	handle /files/* {
+		reverse_proxy minio:9000
+	}
+
+	# Fallback legacy bucket routes for backward compatibility
+	handle /raw/* {
+		reverse_proxy minio:9000
+	}
+	handle /parsed/* {
+		reverse_proxy minio:9000
+	}
+
+	# Admin UI (Next.js)
 	handle {
 		reverse_proxy web:3000
-	}
-
-	# Control-plane API
-	handle /v1/* {
-		reverse_proxy api:8000
-	}
-
-	# MCP (streamable HTTP)
-	handle /mcp* {
-		reverse_proxy mcp:8430
 	}
 }
