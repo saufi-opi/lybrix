@@ -143,24 +143,6 @@ func (c *Client) GetText(ctx context.Context, bucket, key string) (string, error
 	return string(b), nil
 }
 
-func stringReader(s string) io.Reader { return io.NopCloser(newByteReader(s)) }
-
-type byteReader struct {
-	s string
-	i int
-}
-
-func newByteReader(s string) *byteReader { return &byteReader{s: s} }
-
-func (b *byteReader) Read(p []byte) (int, error) {
-	if b.i >= len(b.s) {
-		return 0, io.EOF
-	}
-	n := copy(p, b.s[b.i:])
-	b.i += n
-	return n, nil
-}
-
 // UploadFile streams a local file into an object — manager.Uploader takes
 // the multipart path automatically past its part threshold (>32 MiB), so
 // the API never buffers a whole large body in RAM.
