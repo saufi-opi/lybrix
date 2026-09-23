@@ -68,13 +68,13 @@ func NewWithPublicEndpoint(ctx context.Context, endpoint, publicEndpoint, access
 	}, nil
 }
 
-// RawKey is the object key for an uploaded source PDF: s3://raw/{doc_id}.pdf.
-func RawKey(docID string) string { return docID + ".pdf" }
+// RawKey is the object key for an uploaded source PDF: s3://{bucket}/raw/{doc_id}.pdf.
+func RawKey(docID string) string { return "raw/" + docID + ".pdf" }
 
 // ParsedKey is the object key for a parsed shard markdown:
-// s3://parsed/{doc}/{idx}.md.
+// s3://{bucket}/parsed/{doc}/{idx}.md.
 func ParsedKey(docID string, shardIdx int) string {
-	return fmt.Sprintf("%s/%d.md", docID, shardIdx)
+	return fmt.Sprintf("parsed/%s/%d.md", docID, shardIdx)
 }
 
 // PresignPut returns a presigned PUT URL valid for expires.
@@ -141,24 +141,6 @@ func (c *Client) GetText(ctx context.Context, bucket, key string) (string, error
 		return "", err
 	}
 	return string(b), nil
-}
-
-func stringReader(s string) io.Reader { return io.NopCloser(newByteReader(s)) }
-
-type byteReader struct {
-	s string
-	i int
-}
-
-func newByteReader(s string) *byteReader { return &byteReader{s: s} }
-
-func (b *byteReader) Read(p []byte) (int, error) {
-	if b.i >= len(b.s) {
-		return 0, io.EOF
-	}
-	n := copy(p, b.s[b.i:])
-	b.i += n
-	return n, nil
 }
 
 // UploadFile streams a local file into an object — manager.Uploader takes

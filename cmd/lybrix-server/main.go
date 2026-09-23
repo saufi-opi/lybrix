@@ -125,6 +125,15 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 	}
 	defer db.Close()
 
+	mcpDeps := mcp.Deps{
+		Settings: settings, DB: db,
+		EmbedQuery:      embedQueryFn(db),
+		EmbedForModel:   embedForModelAdapter(),
+		ResolveReranker: rerankResolver(db),
+		RerankHits:      rerankHitsFn(db),
+	}
+	mcpHandler := mcp.HTTPHandler(mcpDeps)
+
 	apiDeps := api.Deps{
 		Settings: settings, DB: db, Redis: r, S3: s3c,
 		EmbedQuery:      embedQueryFn(db),
@@ -133,16 +142,9 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 		MultiSearch:     db.MultiHybridSearch,
 		ResolveReranker: rerankResolver(db),
 		RerankHits:      rerankHitsFn(db),
+		MCPHandler:      mcpHandler,
 	}
 	apiServer := api.New(apiDeps)
-
-	mcpDeps := mcp.Deps{
-		Settings: settings, DB: db,
-		EmbedQuery:      embedQueryFn(db),
-		EmbedForModel:   embedForModelAdapter(),
-		ResolveReranker: rerankResolver(db),
-		RerankHits:      rerankHitsFn(db),
-	}
 
 	// janitor goroutine rides along in serve mode (2.0 consolidation)
 	jan := &worker.Janitor{
@@ -162,29 +164,39 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 		_ = jan.Run(ctx)
 	}()
 
-	// Two listeners: REST :8000 and MCP :8430 (never collapse them — the
-	// query plane hits MCP, the browser hits the API).
+	// Primary listener on APIPort serves both REST (:8000) and MCP (:8000/mcp).
+	// Optional separate MCP listener is retained for backward compatibility if configured differently.
 	apiSrv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", settings.APIHost, settings.APIPort),
 		Handler:           apiServer.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	mcpSrv := &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", settings.MCPHost, settings.MCPPort),
-		Handler:           mcp.HTTPHandler(mcpDeps), // /mcp + /health
-		ReadHeaderTimeout: 10 * time.Second,
+	var mcpSrv *http.Server
+	if settings.MCPPort != settings.APIPort && settings.MCPPort > 0 {
+		mcpSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", settings.MCPHost, settings.MCPPort),
+			Handler:           mcpHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
 	}
 	errCh := make(chan error, 2)
 	go func() { errCh <- apiSrv.ListenAndServe() }()
-	go func() { errCh <- mcpSrv.ListenAndServe() }()
-	fmt.Printf("lybrix-server serve: api on :%d, mcp on :%d\n", settings.APIPort, settings.MCPPort)
+	if mcpSrv != nil {
+		go func() { errCh <- mcpSrv.ListenAndServe() }()
+		fmt.Printf("lybrix-server serve: api on :%d, mcp on :%d & :%d/mcp\n", settings.APIPort, settings.MCPPort, settings.APIPort)
+	} else {
+		fmt.Printf("lybrix-server serve: unified api & mcp on :%d\n", settings.APIPort)
+	}
 
 	select {
 	case <-ctx.Done():
 		shCtx, cancel := context.WithTimeout(context.Background(), api.GracefulShutdownTimeout)
 		defer cancel()
 		_ = apiSrv.Shutdown(shCtx)
-		return mcpSrv.Shutdown(shCtx)
+		if mcpSrv != nil {
+			return mcpSrv.Shutdown(shCtx)
+		}
+		return nil
 	case err := <-errCh:
 		return err
 	}

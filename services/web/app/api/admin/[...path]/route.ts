@@ -7,7 +7,7 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-const API_URL = process.env.API_URL ?? "http://api:8000";
+const API_URL = process.env.API_URL ?? "http://lybrix-server:8000";
 
 async function forward(req: NextRequest, method: "GET" | "POST" | "DELETE") {
   const user = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);

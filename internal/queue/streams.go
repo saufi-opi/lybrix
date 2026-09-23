@@ -189,6 +189,7 @@ func ClaimStale(ctx context.Context, r redis.Cmdable, stream, consumer string, m
 		Group:    ConsumerGroup,
 		Consumer: consumer,
 		MinIdle:  time.Duration(minIdleMS) * time.Millisecond,
+		Start:    "0-0",
 		Count:    count,
 	}).Result()
 	if err != nil {
