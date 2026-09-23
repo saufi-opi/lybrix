@@ -304,8 +304,12 @@ func (j *Janitor) rollup(ctx context.Context, tx pgx.Tx, now time.Time) (int, er
 	pages := 0
 	failed := 0
 	for _, r := range rows {
-		durations = append(durations, r.DurationMS)
-		rss = append(rss, r.PeakRSSMB)
+		// latency percentiles are a DONE-shard metric — failed shards carry
+		// no real duration and would skew p50/p95 toward 0
+		if r.State == "done" {
+			durations = append(durations, r.DurationMS)
+			rss = append(rss, r.PeakRSSMB)
+		}
 		pages += r.PageEnd - r.PageStart + 1
 		if r.State == "failed" {
 			failed++

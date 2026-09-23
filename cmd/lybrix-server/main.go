@@ -155,6 +155,11 @@ func runServe(ctx context.Context, settings *config.Settings) error {
 			MaxShardAttempts: settings.MaxShardAttempts,
 		},
 	}
+	// A wiped Redis has no streams/groups — create them before the first
+	// pass or every requeue sweep would no-op against missing groups.
+	if err := queue.EnsureStreams(ctx, r); err != nil {
+		return err
+	}
 	go func() {
 		_ = jan.Run(ctx)
 	}()
@@ -235,6 +240,11 @@ func runJanitor(ctx context.Context, settings *config.Settings) error {
 			StuckMinutes:     settings.StuckMinutes,
 			MaxShardAttempts: settings.MaxShardAttempts,
 		},
+	}
+	// A wiped Redis has no streams/groups — create them before the first
+	// pass or every requeue sweep would no-op against missing groups.
+	if err := queue.EnsureStreams(ctx, r); err != nil {
+		return err
 	}
 	return jan.Run(ctx)
 }

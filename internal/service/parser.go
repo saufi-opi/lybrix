@@ -227,9 +227,11 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	}
 
 	// last shard settled → enqueue embed (§6.3 step 7). MarkShardDone
-	// increments shards_done via SQL; re-read the doc row before checking,
-	// otherwise the final shard appears missing.
-	fresh, err := deps.DB.GetDocument(ctx, docID)
+	// increments shards_done via SQL; re-read the doc row through the same tx
+	// before checking — a pool read cannot see the uncommitted increment, so
+	// the final shard would appear missing and embedding would wait for the
+	// janitor's next pass.
+	fresh, err := deps.DB.GetDocumentTx(ctx, tx, docID)
 	if err != nil {
 		return err
 	}

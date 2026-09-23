@@ -178,11 +178,12 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	// hash below is client-supplied but only reaches the row when it equals
 	// the server-computed value — otherwise the request 400s.
 	rawKey := objectstore.RawKey(docID)
-	pageCount, err := s.verifyRawObject(r.Context(), rawKey, body.ContentSHA256)
+	pageCount, format, err := s.verifyRawObject(r.Context(), rawKey, body.ContentSHA256)
 	if err != nil {
 		writeDetail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mimeType := format.MimeType()
 
 	doc := &store.Document{
 		ID:            docID,
@@ -193,6 +194,7 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		ContentSHA256: body.ContentSHA256,
 		State:         store.StateUploaded,
 		PageCount:     &pageCount,
+		MimeType:      &mimeType,
 		Metadata:      body.Metadata,
 		UploadedBy:    keyName(KeyFromContext(r.Context())),
 	}
@@ -219,11 +221,11 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 // at the door rather than inside a parser. The page-count probe only runs
 // for PDF (the cap is a page cap); every other format verifies as one
 // synthetic page.
-func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) (int, error) {
+func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) (int, pipeline.Format, error) {
 	body, err := s.deps.S3.GetReader(ctx, s.deps.Settings.S3BucketRaw, rawKey)
 	if err != nil {
 		// a skipped PUT reads as a client error, not a 500
-		return 0, errObjectNotUploaded
+		return 0, pipeline.FmtPDF, errObjectNotUploaded
 	}
 	defer body.Close()
 
@@ -232,13 +234,13 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 	// first read decides the format (the shared sniff table — Workstream 2)
 	n, err := io.ReadFull(body, buf[:64])
 	if err != nil && err != io.ErrUnexpectedEOF {
-		return 0, errObjectNotUploaded
+		return 0, pipeline.FmtPDF, errObjectNotUploaded
 	}
 	head := buf[:n]
 	digest.Write(head)
 	format, ferr := pipeline.DetectFormat(head, rawKey)
 	if ferr != nil {
-		return 0, errObjectNotPDF
+		return 0, pipeline.FmtPDF, errObjectNotPDF
 	}
 	if format != pipeline.FmtPDF {
 		// non-PDF: stream the rest through the digest, then apply the
@@ -252,37 +254,37 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 				nonPdf = append(nonPdf, buf[:n]...)
 				// bound memory: the 64 MiB ceiling mirrors ingestFromStream
 				if len(nonPdf) > nonPdfMaxBytes {
-					return 0, errTooLarge
+					return 0, format, errTooLarge
 				}
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				return 0, errObjectNotUploaded
+				return 0, format, errObjectNotUploaded
 			}
 		}
 		if hex.EncodeToString(digest.Sum(nil)) != strings.ToLower(clientSHA) {
-			return 0, errSHAMismatch
+			return 0, format, errSHAMismatch
 		}
 		// verify against a temp file (zip.OpenReader takes a path)
 		tmp, terr := os.CreateTemp("", "verify-")
 		if terr != nil {
-			return 0, terr
+			return 0, format, terr
 		}
 		tmpPath := tmp.Name()
 		defer os.Remove(tmpPath)
 		if _, werr := tmp.Write(nonPdf); werr != nil {
 			tmp.Close()
-			return 0, werr
+			return 0, format, werr
 		}
 		if cerr := tmp.Close(); cerr != nil {
-			return 0, cerr
+			return 0, format, cerr
 		}
 		if verr := verifyNonPDF(format, tmpPath); verr != nil {
-			return 0, errUnreadablePDF{msg: verr.Error()}
+			return 0, format, errUnreadablePDF{msg: verr.Error()}
 		}
-		return 1, nil
+		return 1, format, nil
 	}
 	pdfBytes := head
 	for {
@@ -294,27 +296,27 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 			// but an over-cap book would buffer forever — stop early past
 			// the cap threshold using a rough 40KB/page upper bound.
 			if len(pdfBytes) > s.deps.Settings.MaxDocumentPages*40*1024 {
-				return 0, errTooLarge
+				return 0, format, errTooLarge
 			}
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return 0, errObjectNotUploaded
+			return 0, format, errObjectNotUploaded
 		}
 	}
 	if hex.EncodeToString(digest.Sum(nil)) != strings.ToLower(clientSHA) {
-		return 0, errSHAMismatch
+		return 0, format, errSHAMismatch
 	}
 	pageCount, err := pdfPageCount(pdfBytes)
 	if err != nil {
-		return 0, errUnreadablePDF{msg: err.Error()}
+		return 0, format, errUnreadablePDF{msg: err.Error()}
 	}
 	if pageCount > s.deps.Settings.MaxDocumentPages {
-		return 0, errOverCap{pages: pageCount, cap: s.deps.Settings.MaxDocumentPages}
+		return 0, format, errOverCap{pages: pageCount, cap: s.deps.Settings.MaxDocumentPages}
 	}
-	return pageCount, nil
+	return pageCount, format, nil
 }
 
 // typed verify errors map to distinct 400 details (documents.py parity).
@@ -546,6 +548,9 @@ func (s *Server) batchReparseDoc(ctx context.Context, doc *store.Document) (stri
 		// Same counter hygiene as handleRetry: shards_failed was bumped per
 		// failure; requeueing undoes those failures. Back to PARSING so the
 		// janitor's recovery sweeps see the book again.
+		if _, err := s.deps.DB.RequeueFailedShards(ctx, tx, doc.ID); err != nil {
+			return err
+		}
 		return s.deps.DB.SetDocState(ctx, tx, doc.ID, store.StateParsing, nil, nil)
 	})
 	if err != nil {
@@ -621,7 +626,10 @@ func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
 		})
 	case "full":
 		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
-			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateSplitting, nil, nil)
+			// Full retry tears the doc back down to UPLOADED: chunks/shards go
+			// and every derived counter resets, so HandleSplit's GetShard(0)
+			// probe re-splits instead of no-oping on stale shard rows.
+			return s.deps.DB.ResetDocForFullRetry(ctx, tx, docID)
 		})
 		if err != nil {
 			writeDetail(w, http.StatusInternalServerError, err.Error())
@@ -647,6 +655,9 @@ func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
 			// and stuck-doc warnings see this book again (a stranded pending
 			// shard in a terminal-state doc is invisible to every recovery
 			// path — R-11).
+			if _, err := s.deps.DB.RequeueFailedShards(ctx, tx, docID); err != nil {
+				return err
+			}
 			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil)
 		})
 		if err != nil {

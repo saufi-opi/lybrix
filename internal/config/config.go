@@ -228,10 +228,11 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.S3AccessKey = getenv(env, "S3_ACCESS_KEY", s.S3AccessKey)
 	s.S3SecretKey = getenv(env, "S3_SECRET_KEY", s.S3SecretKey)
 
-	// S3 bucket configuration (defaults to unified "files" bucket)
+	// S3 bucket configuration (defaults to unified "files" bucket with S3_BUCKET fallback)
 	defaultBucket := getenv(env, "S3_BUCKET", getenv(env, "S3_BUCKET_NAME", "files"))
 	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", defaultBucket)
 	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", defaultBucket)
+
 	// seed-only vars: legacy names initialize the registry once on an
 	// empty table, then the UI owns the values.
 	s.EmbedSeed.Provider = strings.ToLower(getenv(env, "EMBED_BACKEND", s.EmbedSeed.Provider))

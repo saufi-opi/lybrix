@@ -39,6 +39,38 @@ func (d *DB) GetDocument(ctx context.Context, docID string) (*Document, error) {
 	return doc, err
 }
 
+// GetDocumentTx is GetDocument inside an existing transaction. The parser's
+// post-MarkShardDone settled check must read shards_done through the same tx
+// — a pool read cannot see the uncommitted increment, so BookSettled would
+// stay false until the janitor's next pass.
+func (d *DB) GetDocumentTx(ctx context.Context, tx pgx.Tx, docID string) (*Document, error) {
+	row := tx.QueryRow(ctx, `SELECT `+docCols+` FROM documents WHERE id = $1`, docID)
+	doc, err := scanDoc(row)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return doc, err
+}
+
+// ResetDocForFullRetry tears a doc back down to UPLOADED for a scope="full"
+// retry: its chunks and shards rows are deleted and every derived counter
+// and marker is cleared. In-flight parse jobs for the old shards hit
+// ClaimShard, find no row, and return nil — ACKed safely (no retry storm).
+func (d *DB) ResetDocForFullRetry(ctx context.Context, tx pgx.Tx, docID string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE doc_id = $1`, docID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM shards WHERE doc_id = $1`, docID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE documents SET state = 'uploaded',
+		total_shards = NULL, shards_done = 0, shards_failed = 0,
+		chunk_count = NULL, completeness = NULL, error_code = NULL,
+		error_detail = NULL, ready_at = NULL, updated_at = NOW()
+		WHERE id = $1`, docID)
+	return err
+}
+
 // FindDuplicate is upload dedupe: content_sha256 unique per collection (PRD §5).
 func (d *DB) FindDuplicate(ctx context.Context, collectionID, contentSha256 string) (*Document, error) {
 	row := d.Pool.QueryRow(ctx,
@@ -67,13 +99,16 @@ func (d *DB) SetDocStatePool(ctx context.Context, docID string, state DocState, 
 	return err
 }
 
-// InsertDocument registers a committed upload.
+// InsertDocument registers a committed upload. MimeType rides along: the
+// splitter routes on it (non-PDF → single synthetic shard), so a dropped
+// mime_type would default every doc to application/pdf and send EPUBs into
+// pdfcpu.
 func (d *DB) InsertDocument(ctx context.Context, doc *Document) error {
 	_, err := d.Pool.Exec(ctx, `INSERT INTO documents
-		(id, collection_id, title, author, source_uri, content_sha256, byte_size, state, metadata, uploaded_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		(id, collection_id, title, author, source_uri, content_sha256, byte_size, state, mime_type, metadata, uploaded_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		doc.ID, doc.CollectionID, doc.Title, doc.Author, doc.SourceURI,
-		doc.ContentSHA256, doc.ByteSize, doc.State, doc.Metadata, doc.UploadedBy)
+		doc.ContentSHA256, doc.ByteSize, doc.State, doc.MimeType, doc.Metadata, doc.UploadedBy)
 	return err
 }
 
@@ -244,7 +279,8 @@ func (d *DB) ClaimShard(ctx context.Context, tx pgx.Tx, docID string, idx int, w
 func (d *DB) MarkShardDone(ctx context.Context, tx pgx.Tx, docID string, idx, durationMS, peakRSSMB int, parsedURI string, needsOCR bool, meanChars *float64) error {
 	if _, err := tx.Exec(ctx, `UPDATE shards SET state = 'done', done_at = NOW(),
 		needs_ocr = $3, duration_ms = $4, peak_rss_mb = $5, parsed_uri = $6,
-		lease_until = NULL, mean_chars_per_page = $7
+		lease_until = NULL, mean_chars_per_page = $7,
+		error_code = NULL, error_detail = NULL
 		WHERE doc_id = $1 AND idx = $2`,
 		docID, idx, needsOCR, durationMS, peakRSSMB, parsedURI, meanChars); err != nil {
 		return err
