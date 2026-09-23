@@ -16,6 +16,20 @@ const chunkCols = `id, doc_id, collection_id, chunk_hash, parent_id, is_parent, 
 	page_start, page_end, heading_path, header_breadcrumb, text, token_count,
 	embedded_at, created_at`
 
+// chunkInsertColNames is the column list both inserters COPY/INSERT into;
+// kept in one place so the two paths can never drift.
+var chunkInsertColNames = []string{"id", "doc_id", "collection_id", "chunk_hash",
+	"parent_id", "is_parent", "seq", "page_start", "page_end", "heading_path",
+	"header_breadcrumb", "text", "token_count"}
+
+// chunkUpsertSQL is the row-by-row conflict-safe fallback for both
+// inserters (COPY carries no ON CONFLICT).
+const chunkUpsertSQL = `INSERT INTO chunks
+	(id, doc_id, collection_id, chunk_hash, parent_id, is_parent, seq,
+	 page_start, page_end, heading_path, header_breadcrumb, text, token_count)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	ON CONFLICT (doc_id, chunk_hash) DO NOTHING`
+
 func scanChunk(row pgx.Row) (*Chunk, error) {
 	var c Chunk
 	err := row.Scan(&c.ID, &c.DocID, &c.CollectionID, &c.ChunkHash, &c.ParentID,
@@ -67,13 +81,24 @@ type ParentChunk struct {
 // InsertChunks COPYs child chunks with ON CONFLICT (doc_id, chunk_hash) DO
 // NOTHING — re-delivered embed jobs (janitor requeue / PEL reclaim) are
 // normal, so the insert must be conflict-safe (1.0 R-fix).
+//
+// COPY carries no ON CONFLICT clause: a unique violation (re-delivered jobs,
+// pre-existing rows, or intra-batch duplicate hashes producing the same
+// DeterministicChunkID) aborts the tx. The COPY therefore runs inside a
+// savepoint; on failure we roll back to it so the row-by-row ON CONFLICT
+// fallback runs on a live tx instead of dying with 25P02 (BACKLOG R-24).
 func (d *DB) InsertChunks(ctx context.Context, tx pgx.Tx, docID, collectionID string, children []ChildChunk) error {
 	rows := make([][]any, 0, len(children))
+	seen := make(map[string]struct{}, len(children))
 	for _, c := range children {
 		id := c.ID
 		if id == "" {
 			id = DeterministicChunkID(docID, c.ChunkHash)
 		}
+		if _, dup := seen[id]; dup {
+			continue // same doc + same hash → same deterministic id
+		}
+		seen[id] = struct{}{}
 		rows = append(rows, []any{
 			id, docID, collectionID, c.ChunkHash, c.ParentID, false, c.Seq,
 			c.PageStart, c.PageEnd, c.HeadingPath, c.HeaderBreadcrumb,
@@ -83,36 +108,23 @@ func (d *DB) InsertChunks(ctx context.Context, tx pgx.Tx, docID, collectionID st
 	if len(rows) == 0 {
 		return nil
 	}
-	_, err := tx.CopyFrom(ctx,
-		pgx.Identifier{"chunks"},
-		[]string{"id", "doc_id", "collection_id", "chunk_hash", "parent_id", "is_parent",
-			"seq", "page_start", "page_end", "heading_path", "header_breadcrumb",
-			"text", "token_count"},
-		pgx.CopyFromRows(rows))
-	if err != nil {
-		// ON CONFLICT via COPY needs a fallback: fall back to row-by-row
-		// inserts with ON CONFLICT DO NOTHING.
-		for _, r := range rows {
-			if _, err := tx.Exec(ctx, `INSERT INTO chunks
-				(id, doc_id, collection_id, chunk_hash, parent_id, is_parent, seq,
-				 page_start, page_end, heading_path, header_breadcrumb, text, token_count)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-				ON CONFLICT (doc_id, chunk_hash) DO NOTHING`, r...); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return copyChunksWithFallback(ctx, tx, "insert_chunks", rows)
 }
 
 // InsertParents COPYs parent chunks (is_parent=true, no embedding).
+// Savepoint + intra-batch dedupe as InsertChunks (BACKLOG R-24).
 func (d *DB) InsertParents(ctx context.Context, tx pgx.Tx, docID, collectionID string, parents []ParentChunk) error {
 	rows := make([][]any, 0, len(parents))
+	seen := make(map[string]struct{}, len(parents))
 	for _, p := range parents {
 		id := p.ID
 		if id == "" {
 			id = DeterministicChunkID(docID, p.ChunkHash)
 		}
+		if _, dup := seen[id]; dup {
+			continue // same doc + same hash → same deterministic id
+		}
+		seen[id] = struct{}{}
 		rows = append(rows, []any{
 			id, docID, collectionID, p.ChunkHash, nil, true, p.Seq,
 			p.PageStart, p.PageEnd, p.HeadingPath, p.HeaderBreadcrumb,
@@ -122,19 +134,31 @@ func (d *DB) InsertParents(ctx context.Context, tx pgx.Tx, docID, collectionID s
 	if len(rows) == 0 {
 		return nil
 	}
+	return copyChunksWithFallback(ctx, tx, "insert_parents", rows)
+}
+
+// copyChunksWithFallback COPYs prepared chunk rows inside a savepoint and,
+// on COPY failure, rolls back to it then re-runs the rows one-by-one with
+// ON CONFLICT DO NOTHING. savepointName is `insert_parents` or
+// `insert_chunks` — distinct names so logs are unambiguous; the two
+// inserters run sequentially in the same embed tx and are never nested.
+func copyChunksWithFallback(ctx context.Context, tx pgx.Tx, savepointName string, rows [][]any) error {
+	if _, err := tx.Exec(ctx, `SAVEPOINT `+savepointName); err != nil {
+		return err
+	}
 	_, err := tx.CopyFrom(ctx,
 		pgx.Identifier{"chunks"},
-		[]string{"id", "doc_id", "collection_id", "chunk_hash", "parent_id", "is_parent",
-			"seq", "page_start", "page_end", "heading_path", "header_breadcrumb",
-			"text", "token_count"},
+		chunkInsertColNames,
 		pgx.CopyFromRows(rows))
 	if err != nil {
+		// ROLLBACK TO SAVEPOINT is legal in an aborted tx block and
+		// restores it, so the fallback actually runs (pgx terminates the
+		// CopyIn sub-protocol and syncs the connection before returning).
+		if _, rbErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT `+savepointName); rbErr != nil {
+			return rbErr
+		}
 		for _, r := range rows {
-			if _, err := tx.Exec(ctx, `INSERT INTO chunks
-				(id, doc_id, collection_id, chunk_hash, parent_id, is_parent, seq,
-				 page_start, page_end, heading_path, header_breadcrumb, text, token_count)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-				ON CONFLICT (doc_id, chunk_hash) DO NOTHING`, r...); err != nil {
+			if _, err := tx.Exec(ctx, chunkUpsertSQL, r...); err != nil {
 				return err
 			}
 		}

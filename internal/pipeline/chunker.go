@@ -432,20 +432,21 @@ func findWordSpan(lines []string, words []string) (int, int) {
 	return first, last
 }
 
-// DropDuplicateNeighbours keeps order and original seq; drops any chunk
-// whose hash equals the immediately preceding kept chunk's hash (the
-// residue of the splitter's 1-page overlap).
-func DropDuplicateNeighbours[T any](chunks []T, hash func(T) string, setSeq func(*T, int)) []T {
+// DropDuplicateChunks keeps the first occurrence of every chunk hash across
+// the whole document (order preserved, seq renumbered densely so
+// (doc_id, seq) stays contiguous). Adjacent dedupe is subsumed: any adjacent
+// duplicate was already seen (BACKLOG R-24).
+func DropDuplicateChunks[T any](chunks []T, hash func(T) string, setSeq func(*T, int)) []T {
 	out := []T{}
-	var prevHash string
+	seen := make(map[string]struct{}, len(chunks))
 	for i := range chunks {
 		h := hash(chunks[i])
-		if h == prevHash {
+		if _, dup := seen[h]; dup {
 			continue
 		}
+		seen[h] = struct{}{}
 		setSeq(&chunks[i], len(out))
 		out = append(out, chunks[i])
-		prevHash = h
 	}
 	return out
 }
