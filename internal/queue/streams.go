@@ -322,3 +322,95 @@ func scanUndeliveredTail(ctx context.Context, r redis.Cmdable, stream, lastDeliv
 		start = "(" + page[len(page)-1].ID
 	}
 }
+
+// PendingJobKeys returns the set of dedup keys holding an UNDELIVERED job
+// on stream — the caller-supplied-keyExtractor variant of the janitor
+// dedup scan.
+//
+// Precise semantics (the stream is never trimmed, so a full XRANGE would
+// see every job ever ACKed and wrongly suppress future re-enqueues):
+//  1. everything after the group's last-delivered-id (undelivered), plus
+//  2. the PEL (delivered-but-unacked) — claimed by a live worker or
+//     waiting for the reclaim step.
+//
+// keyOf is applied to each parsed job payload; an unparseable payload or a
+// keyOf returning false contributes nothing. Returns an error if the scan
+// itself fails — the caller MUST skip the sweep rather than blind-add
+// (blind re-adding is exactly how the 2026-09-11 doc.embed flood happened:
+// ~3.2k duplicate jobs).
+func PendingJobKeys(ctx context.Context, r redis.Cmdable, stream string, keyOf func(payload map[string]any) (string, bool)) (map[string]bool, error) {
+	groups, err := r.XInfoGroups(ctx, stream).Result()
+	if err != nil {
+		return nil, err
+	}
+	var lastDelivered string
+	found := false
+	for _, g := range groups {
+		if g.Name == ConsumerGroup {
+			lastDelivered = g.LastDeliveredID
+			found = true
+			break
+		}
+	}
+	keys := map[string]bool{}
+	if !found {
+		return keys, nil
+	}
+	if lastDelivered == "" {
+		lastDelivered = "0-0"
+	}
+	start := "(" + lastDelivered // exclusive: entries AT it are delivered
+	for {
+		page, err := r.XRange(ctx, stream, start, "+").Result()
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, msg := range page {
+			if key, ok := payloadKeyOf(msg.Values, keyOf); ok {
+				keys[key] = true
+			}
+		}
+		if len(page) < scanPageKeys {
+			break
+		}
+		start = "(" + page[len(page)-1].ID
+	}
+	// PEL: delivered but unacked (live claim or awaiting reclaim)
+	pel, err := r.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: stream, Group: ConsumerGroup, Start: "-", End: "+", Count: scanPageKeys,
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pel {
+		msgs, err := r.XRange(ctx, stream, p.ID, p.ID).Result()
+		if err != nil {
+			continue
+		}
+		for _, msg := range msgs {
+			if key, ok := payloadKeyOf(msg.Values, keyOf); ok {
+				keys[key] = true
+			}
+		}
+	}
+	return keys, nil
+}
+
+// payloadKeyOf unwraps the stream's {"job": "<json>"} envelope and applies
+// keyOf to the parsed payload.
+func payloadKeyOf(values map[string]any, keyOf func(payload map[string]any) (string, bool)) (string, bool) {
+	raw, _ := values["job"].(string)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload == nil {
+		return "", false
+	}
+	return keyOf(payload)
+}
+
+// scanPageKeys is the XRANGE page size for the dedup scan. Kept in the
+// queue package so the scan machinery here stays self-contained (the
+// janitor's scanPage constant is the same value).
+const scanPageKeys = 500
