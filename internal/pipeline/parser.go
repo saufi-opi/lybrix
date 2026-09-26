@@ -201,14 +201,22 @@ func StorePDFCache(cacheDir, docID, srcPath string) {
 	if cacheDir == "" {
 		return
 	}
+	// The cache is a pure optimization — never fail the shard over it.
+	// MkdirAll guards against a vanished/recreated mountpoint between
+	// jobs (volume provisioned lazily, container restarts) — ENOENT on
+	// the tmp write otherwise poisons every job of the doc (R-35).
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		slog.Warn("pdf cache mkdir failed (ignored)", "err", err, "dir", cacheDir)
+		return
+	}
 	dst := PDFCachePath(cacheDir, docID)
 	tmp := dst + ".tmp"
 	if err := copyFile(srcPath, tmp); err != nil {
-		slog.Warn("pdf cache store failed (ignored)", "err", err)
+		slog.Warn("pdf cache store failed (ignored)", "err", err, "dst", tmp, "src", srcPath)
 		return
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		slog.Warn("pdf cache store failed (ignored)", "err", err)
+		slog.Warn("pdf cache store failed (ignored)", "err", err, "tmp", tmp, "dst", dst)
 		_ = os.Remove(tmp)
 	}
 }
