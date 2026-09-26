@@ -1111,6 +1111,18 @@ export type SystemSettings = {
      */
     child_stride_tokens: number;
     /**
+     * Chunk Strategy
+     */
+    chunk_strategy: string;
+    /**
+     * Chunk Size
+     */
+    chunk_size: number;
+    /**
+     * Chunk Overlap
+     */
+    chunk_overlap: number;
+    /**
      * Shard Pages
      */
     shard_pages: number;
