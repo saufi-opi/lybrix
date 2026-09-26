@@ -76,9 +76,12 @@ jobs:
           - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
+            build-args: |
+              WITH_ANYDOC=1
           - name: web
             dockerfile: services/web/Dockerfile
             context: services/web
+            build-args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -89,6 +92,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
           push: false
           provenance: false
           sbom: false
@@ -104,9 +108,12 @@ jobs:
           - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
+            build-args: |
+              WITH_ANYDOC=1
           - name: web
             dockerfile: services/web/Dockerfile
             context: services/web
+            build-args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -124,6 +131,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
           push: true
           provenance: false
           sbom: false
@@ -142,9 +150,12 @@ jobs:
           - name: server
             dockerfile: deploy/Dockerfile.lybrix
             context: .
+            build-args: |
+              WITH_ANYDOC=1
           - name: web
             dockerfile: services/web/Dockerfile
             context: services/web
+            build-args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -175,6 +186,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
           push: true
           provenance: false
           sbom: false
