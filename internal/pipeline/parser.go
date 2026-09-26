@@ -211,7 +211,7 @@ func StorePDFCache(cacheDir, docID, srcPath string) {
 	}
 	dst := PDFCachePath(cacheDir, docID)
 	tmp := dst + ".tmp"
-	if err := copyFile(srcPath, tmp); err != nil {
+	if err := copyFile(tmp, srcPath); err != nil { // copyFile(dst, src): write the .tmp, read the source (R-35: args were swapped)
 		slog.Warn("pdf cache store failed (ignored)", "err", err, "dst", tmp, "src", srcPath)
 		return
 	}
