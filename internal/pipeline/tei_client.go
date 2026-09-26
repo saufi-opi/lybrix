@@ -102,9 +102,9 @@ func (c *EmbedClient) Embed(ctx context.Context, texts []string, expectedDim int
 	}
 	if c.spec.TruncateChars > 0 {
 		for i, t := range texts {
-			if len(t) > c.spec.TruncateChars {
-				texts[i] = t[:c.spec.TruncateChars]
-			}
+			// Rune-safe: a byte cut can split a multi-byte rune and emit
+			// invalid UTF-8 into the embed request.
+			texts[i] = TruncateRunes(t, c.spec.TruncateChars)
 		}
 	}
 	var payload any

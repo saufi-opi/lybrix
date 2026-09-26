@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/saufi-opi/lybrix/internal/config"
+	"github.com/saufi-opi/lybrix/internal/pipeline"
 	"github.com/saufi-opi/lybrix/internal/service"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
@@ -415,9 +416,11 @@ func handleListChunks(ctx context.Context, deps Deps, args map[string]any) (any,
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
+		// Rune-safe preview: a byte cut can split a multi-byte rune and emit
+		// invalid UTF-8 into the JSON response.
 		preview := r.Text
 		if len(preview) > 500 {
-			preview = preview[:500] + "…"
+			preview = pipeline.TruncateRunes(preview, 500) + "…"
 		}
 		out = append(out, map[string]any{
 			"chunk_id":          r.ID,
