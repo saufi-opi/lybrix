@@ -14,10 +14,10 @@ Central design constraint driving everything: **a book is never a unit of work �
 
 The 1.0 Python stack (FastAPI api, FastMCP mcp, four-entrypoint workers image, six shared libs, Qdrant) was replaced **in place** by a 100% Go backend per `LYBRIX_2.0_EVOLUTION_PLAN.md`:
 
-- **One binary** (`cmd/lybrix-server`): `serve` (REST :8000 + MCP :8430 + janitor goroutine), `splitter`, `parser`, `embedder`, `janitor`, `keys bootstrap`, `migrate`. Plus `cmd/lybrix-eval` (golden-set harness; same `scripts/eval/datasets/seed.jsonl`, same rank metrics).
+- **One binary** (`cmd/lybrix-server`): `serve` (REST :8000 + MCP :8430 + janitor goroutine), `splitter`, `parser`, `embedder`, `janitor`, `keys bootstrap`, `migrate`, `rechunk` (rebuild chunks from the parsed S3 markdown without re-parsing — the corpus-migration path for a chunker change). Plus `cmd/lybrix-eval` (golden-set harness; same `scripts/eval/datasets/seed.jsonl`, same rank metrics).
 - **ParadeDB replaces Qdrant**: PostgreSQL 17 + pgvector (HNSW, cosine, children only) + pg_search BM25, fused by weighted RRF in native SQL (`internal/store/search.go`; dense 1.0 / bm25 0.3, key-scope filter pushed into BOTH CTEs — never post-filter). `deploy/schema.sql` is embedded in the binary and applied idempotently at boot (advisory-lock guarded); the alembic chain is gone.
 - **Two-tier parsing**: `third_party/anydoc-go` CGO fast path (`-tags anydoc`, `LockOSThread` around every call, shard-level units only) with a clean `!anydoc` stub for CI; `docling-serve` HTTP fallback for scanned shards or yield < 50 chars/page. Retry ladder preserved: attempt 2 quarter-split, 3 single-page, ≥4 text-only.
-- **Hierarchical parent–child chunking** replaces flat 512-token windows: 384-token children (64-token stride) under 2048–4096-token parents, breadcrumb-prefixed at embed time only (stored text and chunk hashes stay stable), per-window page ranges (R-13).
+- **Hierarchical parent–child chunking** (`internal/chunker`) replaces flat 512-token windows: 384-rune children (76-rune overlap) under 2048-rune parents. Chunk text is a **verbatim slice of the stitched markdown** — tables, code fences, lists and paragraph breaks reach the index intact (R-26); protected regions are never split, an oversized table splits between rows, and a table's header row is re-injected into each following chunk. Heading breadcrumbs ride `ContextHeader`, prepended at embed time only, so stored text stays a clean source slice. Every parent and child carries a real page range derived from the stitch page map (R-27). Splitting is adaptive: a profiler picks heading → heuristic → legacy, and a validator falls through on a broken result.
 - **Next.js web console unchanged** — the Go server satisfies the checked-in OpenAPI snapshot at `services/web/openapi.json` (25 paths, golden-tested against `internal/api/openapi_snapshot.json`) and serves it byte-identical at `/openapi.json`. Error envelope is FastAPI-style `{"detail": …}`.
 
 ## Commands
@@ -67,8 +67,9 @@ cmd/             lybrix-server (serve/splitter/parser/embedder/janitor/keys/migr
 internal/        config, errors, logging, queue (Redis Streams), objectstore (MinIO),
                  store (pgx pool + schema + queries + RRF search), api (chi REST),
                  mcp (mcp-go, six tools), pipeline (splitter/gate/anydoc/docling/
-                 chunker/stitch/tei/embedder), service (worker handlers),
-                 worker (runner + janitor)
+                 stitch/tei/embedder), chunker (verbatim-slice hierarchical
+                 chunking: protected spans, table headers, strategy tiers),
+                 service (worker handlers), worker (runner + janitor)
 third_party/     anydoc-go — extern-C binding to the Firecrawl anydoc Rust crate
                  (staticlib via scripts/build-anydoc-lib.sh; stub build for CI)
 deploy/          docker-compose (paradedb/redis/lybrix-server/web + ingest plane),

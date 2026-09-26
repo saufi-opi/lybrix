@@ -2676,7 +2676,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "pattern": "^(shards|embed|full)$",
+            "pattern": "^(shards|embed|rechunk|full)$",
             "title": "Scope"
           }
         },
@@ -4018,6 +4018,18 @@
             "type": "integer",
             "title": "Child Stride Tokens"
           },
+          "chunk_strategy": {
+            "type": "string",
+            "title": "Chunk Strategy"
+          },
+          "chunk_size": {
+            "type": "integer",
+            "title": "Chunk Size"
+          },
+          "chunk_overlap": {
+            "type": "integer",
+            "title": "Chunk Overlap"
+          },
           "shard_pages": {
             "type": "integer",
             "title": "Shard Pages"
@@ -4065,6 +4077,9 @@
           "parent_hard_cap",
           "child_tokens",
           "child_stride_tokens",
+          "chunk_strategy",
+          "chunk_size",
+          "chunk_overlap",
           "shard_pages",
           "min_yield_chars_per_page",
           "shard_lease_seconds",

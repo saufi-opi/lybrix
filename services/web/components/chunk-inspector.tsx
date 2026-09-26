@@ -3,10 +3,12 @@
 /** Chunk Inspector table — extracted from document detail (Workstream 3) so
  * the doc-detail page and the KB-wide Chunk Inspector tab share it (Phase 3
  * Tab 2). Seq-ordered paginated chunk table: parent rows visually marked,
- * rows expand to full text, parent-child link jumps selection to the parent
- * row (or notes it as off-page). */
+ * rows expand to the chunk's formatted markdown in a full-width panel,
+ * parent-child link jumps selection to the parent row (or notes it as
+ * off-page). */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ChunkRow } from "@/lib/api-client";
+import { prepareChunkMarkdown } from "@/lib/markdown";
 
 const CHUNKS_PAGE_SIZE = 50;
 
@@ -63,59 +66,66 @@ export function ChunkTable({
           const isExpanded = expanded === c.id;
           const breadcrumb = (c.heading_path ?? []).join(" > ") || c.header_breadcrumb || "—";
           return (
-            <TableRow
-              key={c.id}
-              className={`cursor-pointer ${c.is_parent ? "bg-paper-deep/60 font-medium" : ""}`}
-              onClick={() => onToggle(isExpanded ? null : c.id)}
-            >
-              <TableCell className="tabular-nums">
-                {c.seq}
-                {c.is_parent && (
-                  <span
-                    className="ml-1.5 rounded-[2px] border border-press px-1 font-mono text-[0.62rem] font-semibold text-press-deep"
-                    title="parent chunk (breadcrumb carrier, not embedded)"
-                  >
-                    P
-                  </span>
-                )}
-              </TableCell>
-              <TableCell className="tabular-nums">
-                {c.page_start != null ? `${c.page_start}–${c.page_end ?? c.page_start}` : "—"}
-              </TableCell>
-              <TableCell className="tabular-nums">{c.token_count}</TableCell>
-              <TableCell className="max-w-[200px] truncate font-mono text-[11.5px] text-muted-foreground">
-                {breadcrumb}
-              </TableCell>
-              <TableCell className="max-w-[420px]">
-                {isExpanded ? (
-                  <div className="text-[12.5px] break-words whitespace-pre-wrap">
-                    {c.text}
-                    {c.parent_id && byId.has(c.parent_id) && (
-                      <p className="mt-2 text-[11.5px] text-muted-foreground">
-                        parent:{" "}
-                        <button
-                          type="button"
-                          className="font-mono text-press underline decoration-dotted"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggle(c.parent_id as string);
-                          }}
-                        >
-                          seq {byId.get(c.parent_id as string)?.seq}
-                        </button>
-                      </p>
-                    )}
-                    {c.parent_id && !byId.has(c.parent_id) && (
-                      <p className="mt-2 font-mono text-[11.5px] text-muted-foreground">
-                        parent {c.parent_id.slice(0, 8)}… (off-page)
-                      </p>
-                    )}
-                  </div>
-                ) : (
+            <Fragment key={c.id}>
+              <TableRow
+                className={`cursor-pointer ${c.is_parent ? "bg-paper-deep/60 font-medium" : ""}`}
+                onClick={() => onToggle(isExpanded ? null : c.id)}
+              >
+                <TableCell className="tabular-nums">
+                  {c.seq}
+                  {c.is_parent && (
+                    <span
+                      className="ml-1.5 rounded-[2px] border border-press px-1 font-mono text-[0.62rem] font-semibold text-press-deep"
+                      title="parent chunk (breadcrumb carrier, not embedded)"
+                    >
+                      P
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  {c.page_start != null ? `${c.page_start}–${c.page_end ?? c.page_start}` : "—"}
+                </TableCell>
+                <TableCell className="tabular-nums">{c.token_count}</TableCell>
+                <TableCell className="max-w-[200px] truncate font-mono text-[11.5px] text-muted-foreground">
+                  {breadcrumb}
+                </TableCell>
+                <TableCell className="max-w-[420px]">
+                  {/* Compact plain-text preview in both states; the rendered
+                   * markdown lives in the full-width panel below. */}
                   <span className="line-clamp-2 text-[12.5px] text-muted-foreground">{c.text}</span>
-                )}
-              </TableCell>
-            </TableRow>
+                </TableCell>
+              </TableRow>
+              {isExpanded && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0">
+                    {/* Full-width render surface: the chunk's verbatim markdown
+                     * (tables, fences, lists) formatted by the shared renderer.
+                     * This is its own row, so clicks here never reach the
+                     * chunk row's collapse handler. */}
+                    <div className="border-y border-sheet-edge bg-paper-deep/40 px-4 py-3">
+                      <Markdown>{prepareChunkMarkdown(c.text)}</Markdown>
+                      {c.parent_id && byId.has(c.parent_id) && (
+                        <p className="mt-3 text-[11.5px] text-muted-foreground">
+                          parent:{" "}
+                          <button
+                            type="button"
+                            className="font-mono text-press underline decoration-dotted"
+                            onClick={() => onToggle(c.parent_id as string)}
+                          >
+                            seq {byId.get(c.parent_id as string)?.seq}
+                          </button>
+                        </p>
+                      )}
+                      {c.parent_id && !byId.has(c.parent_id) && (
+                        <p className="mt-3 font-mono text-[11.5px] text-muted-foreground">
+                          parent {c.parent_id.slice(0, 8)}… (off-page)
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </Fragment>
           );
         })}
       </TableBody>

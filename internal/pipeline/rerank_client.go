@@ -74,10 +74,8 @@ func (c *RerankClient) Rerank(ctx context.Context, query string, texts []string)
 	if c.truncateChars > 0 {
 		clipped := make([]string, len(texts))
 		for i, t := range texts {
-			if len(t) > c.truncateChars {
-				t = t[:c.truncateChars]
-			}
-			clipped[i] = t
+			// Rune-safe: a byte cut can split a multi-byte rune.
+			clipped[i] = TruncateRunes(t, c.truncateChars)
 		}
 		texts = clipped
 	}

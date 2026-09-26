@@ -20,13 +20,13 @@ import (
 // pydantic Settings env names (case-insensitive env lookup).
 type Settings struct {
 	// control plane
-	DatabaseURL string
-	RedisURL    string
-	S3Endpoint        string
-	S3PublicEndpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3BucketRaw string
+	DatabaseURL      string
+	RedisURL         string
+	S3Endpoint       string
+	S3PublicEndpoint string
+	S3AccessKey      string
+	S3SecretKey      string
+	S3BucketRaw      string
 
 	S3BucketParsed string
 
@@ -43,6 +43,16 @@ type Settings struct {
 
 	// splitting (PRD §6.2)
 	ShardPages int
+
+	// chunking (PRD §6.4). ChunkStrategy is "auto" by default: the document
+	// profiler picks the splitting tier. Explicit values are "heading",
+	// "heuristic", "recursive"/"legacy". Sizes are rune counts; ChildChunkSize
+	// also sets the child overlap to a fifth of itself.
+	ChunkStrategy   string
+	ChunkSize       int
+	ChunkOverlap    int
+	ParentChunkSize int
+	ChildChunkSize  int
 
 	// parsing (PRD §6.3 memory discipline)
 	ParserSoftRSSMB      int // retained for compose parity; Go GC makes it a no-op
@@ -180,6 +190,11 @@ func DefaultSettings() *Settings {
 		EmbedConcurrency:     6,
 		EmbedRetryWindowSec:  6 * 3600,
 		ShardPages:           20,
+		ChunkStrategy:        "auto",
+		ChunkSize:            512,
+		ChunkOverlap:         80,
+		ParentChunkSize:      2048,
+		ChildChunkSize:       384,
 		ParserSoftRSSMB:      6144,
 		ParserRecycleAfter:   10,
 		ShardLeaseSeconds:    600,
@@ -243,6 +258,11 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.EmbedConcurrency = getint(env, "EMBED_CONCURRENCY", s.EmbedConcurrency)
 	s.EmbedRetryWindowSec = getint(env, "EMBED_RETRY_WINDOW_S", s.EmbedRetryWindowSec)
 	s.ShardPages = getint(env, "SHARD_PAGES", s.ShardPages)
+	s.ChunkStrategy = getenv(env, "CHUNK_STRATEGY", s.ChunkStrategy)
+	s.ChunkSize = getint(env, "CHUNK_SIZE", s.ChunkSize)
+	s.ChunkOverlap = getint(env, "CHUNK_OVERLAP", s.ChunkOverlap)
+	s.ParentChunkSize = getint(env, "PARENT_CHUNK_SIZE", s.ParentChunkSize)
+	s.ChildChunkSize = getint(env, "CHILD_CHUNK_SIZE", s.ChildChunkSize)
 	s.ParserSoftRSSMB = getint(env, "PARSER_SOFT_RSS_MB", s.ParserSoftRSSMB)
 	s.ParserRecycleAfter = getint(env, "PARSER_RECYCLE_AFTER", s.ParserRecycleAfter)
 	s.ShardLeaseSeconds = getint(env, "SHARD_LEASE_SECONDS", s.ShardLeaseSeconds)
@@ -290,6 +310,24 @@ func (s *Settings) Validate() error {
 	}
 	if s.ShardPages < 1 {
 		return &SettingsError{"SHARD_PAGES", "must be >= 1"}
+	}
+	switch s.ChunkStrategy {
+	case "", "auto", "heading", "heuristic", "recursive", "legacy":
+	default:
+		return &SettingsError{"CHUNK_STRATEGY",
+			"must be one of auto|heading|heuristic|recursive|legacy"}
+	}
+	if s.ChunkSize < 1 {
+		return &SettingsError{"CHUNK_SIZE", "must be >= 1"}
+	}
+	if s.ChunkOverlap < 0 {
+		return &SettingsError{"CHUNK_OVERLAP", "must be >= 0"}
+	}
+	if s.ParentChunkSize < 1 {
+		return &SettingsError{"PARENT_CHUNK_SIZE", "must be >= 1"}
+	}
+	if s.ChildChunkSize < 1 {
+		return &SettingsError{"CHILD_CHUNK_SIZE", "must be >= 1"}
 	}
 	return nil
 }

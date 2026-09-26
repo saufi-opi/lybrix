@@ -65,6 +65,8 @@ func main() {
 		runErr = runJanitor(ctx, settings)
 	case "migrate":
 		runErr = runMigrate(settings)
+	case "rechunk":
+		runErr = runRechunk(settings, os.Args[2:])
 	case "keys":
 		runErr = runKeys(settings, os.Args[2:])
 	default:
@@ -88,6 +90,8 @@ commands:
   janitor      standalone janitor loop
   keys         key management (keys bootstrap [name])
   migrate      apply schema.sql, exit
+  rechunk      rebuild chunks from parsed S3 markdown, no re-parse
+                 flags: [--doc <id>] [--limit N] [--dry-run]
 `)
 }
 
