@@ -352,15 +352,17 @@ This is why sharding pays off twice: it bounds memory _and_ it makes failure gra
 
 ### 6.4 Stage 3 — Embedder
 
-1.   Load all shard JSONs, stitch into one `DoclingDocument` (heading hierarchy must be reconciled across boundaries or every chunk after shard 1 loses its section context).
-2.   Chunk with `HybridChunker(max_tokens=512, tokenizer=<same as embedding model>)` over the **stitched** doc, not per shard.
-3.   Drop chunks whose hash duplicates a neighbour (handles the 1-page overlap).
-4.   Insert chunks into Postgres.
-5.   Embed in batches of 32–64 texts, max 6 concurrent requests, against `tei-ingest`.
-6.   Upsert to Qdrant with `chunk_hash` as point id.
-7.   Set doc state `ready` (or `partial` if `shards_failed > 0`), compute `completeness`.
+1.   Load all shard JSONs and stitch into one markdown document with a per-line page map (the heading hierarchy is reconciled across shard boundaries, or every chunk after shard 1 loses its section context).
+2.   Chunk over the **stitched** doc, not per shard, with the hierarchical chunker in `internal/chunker`: parents ≈2048 runes (context, not embedded) and children ≈384 runes with a 76-rune overlap (embedded). Chunk text is a **verbatim slice of the stitched markdown** — tables, fenced code, lists and paragraph breaks reach the index intact. Regions that must not be split (tables, code fences, LaTeX math, links/images) are protected: a table larger than the budget splits *between rows*, and a table's header row is re-injected into each following chunk so it stays self-describing.
+3.   Drop chunks whose hash duplicates any earlier chunk in the doc (handles the 1-page shard overlap and repeated boilerplate).
+4.   Insert chunks into Postgres with their page ranges (both parents and children), then embed children in batches of 32–64 texts, max 6 concurrent requests, against `tei-ingest`.
+5.   Set doc state `ready` (or `partial` if `shards_failed > 0`), compute `completeness`.
+
+The splitting tier is chosen per document (`CHUNK_STRATEGY=auto` by default): a profiler picks heading-aware, then heuristic, then a plain recursive splitter, and a validator falls through to the next tier when a tier's output looks broken.
 
 A 400-page book yields roughly 1,500–3,000 chunks. Never send them in a single HTTP call; TEI's dynamic batcher handles the packing, your job is to keep a steady stream of moderate requests in flight.
+
+**Re-chunking without re-parsing:** parsed shard markdown is retained in object storage, so a chunker change is applied to the existing corpus with `lybrix-server rechunk` (or `POST /v1/documents/{id}/retry` with `scope=rechunk`), which deletes the doc's chunk rows and re-runs only the stitch→chunk→embed tail. No OCR or conversion work is repeated.
 
 **Client resilience:** exponential backoff on 429/503, circuit breaker after 5 consecutive failures, jittered retry. If TEI is down, the embed job retries later — it must not fail the book and throw away the parse work you already paid for.
 
