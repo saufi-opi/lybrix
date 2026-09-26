@@ -67,7 +67,6 @@ func splitByHeuristicsImpl(text string, cfg SplitterConfig, _ *DocProfile) []Chu
 			// the oversize block via the legacy splitter.
 			if curEnd-chunkStart > 0 {
 				out = appendChunk(out, runes, chunkStart, curEnd, &seq)
-				chunkStart = curEnd
 			}
 			out = appendOversizeBlock(out, runes, curEnd, nextEnd, cfg, &seq)
 			curEnd, chunkStart = nextEnd, nextEnd

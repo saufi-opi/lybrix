@@ -22,10 +22,10 @@ var protectedPatterns = []*regexp.Regexp{
 	// Table header + separator row: "| A | B |\n| --- | --- |\n". Listed before
 	// the plain row pattern so that at a shared start offset the longer span
 	// wins overlap resolution and the header is kept whole.
-	regexp.MustCompile("(?m)[ ]*(?:\\|[^|\\n]*)+\\|[\\r\\n]+\\s*(?:\\|\\s*:?-{3,}:?\\s*)+\\|[\\r\\n]+"),
-	regexp.MustCompile("(?m)[ ]*(?:\\|[^|\\n]*)+\\|[\\r\\n]+"), // table rows
-	regexp.MustCompile("(?s)```(?:\\w+)?[\\r\\n].*?```"),       // fenced code blocks
-	regexp.MustCompile("`[^`\\r\\n]+`"),                        // inline code
+	regexp.MustCompile(`(?m)[ ]*(?:\|[^|\n]*)+\|[\r\n]+\s*(?:\|\s*:?-{3,}:?\s*)+\|[\r\n]+`),
+	regexp.MustCompile(`(?m)[ ]*(?:\|[^|\n]*)+\|[\r\n]+`), // table rows
+	regexp.MustCompile("(?s)```(?:\\w+)?[\\r\\n].*?```"),  // fenced code blocks
+	regexp.MustCompile("`[^`\\r\\n]+`"),                   // inline code
 }
 
 // span is a byte-offset range in the source text.
@@ -41,12 +41,11 @@ type span struct {
 // table's header+separator row whole — both the header pattern and the plain
 // row pattern match at that offset, and the longer one survives.
 func protectedSpans(text string) []span {
-	type match struct{ start, end int }
-	var all []match
+	var all []span
 	for _, pat := range protectedPatterns {
 		for _, loc := range pat.FindAllStringIndex(text, -1) {
 			if loc[1] > loc[0] {
-				all = append(all, match{loc[0], loc[1]})
+				all = append(all, span{loc[0], loc[1]})
 			}
 		}
 	}
@@ -73,7 +72,7 @@ func protectedSpans(text string) []span {
 	lastEnd := 0
 	for _, m := range all {
 		if m.start >= lastEnd {
-			result = append(result, span{m.start, m.end})
+			result = append(result, m)
 			lastEnd = m.end
 		}
 	}
@@ -223,7 +222,6 @@ func buildUnitsWithProtection(text string, protected []span, separators []string
 				runeOffset += partRuneLen
 			}
 			runePos = runeOffset
-			bytePos = p.start
 		}
 
 		protText := text[p.start:p.end]
