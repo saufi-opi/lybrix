@@ -515,6 +515,32 @@ func opdsAuthedGet(ctx context.Context, client *http.Client, rawURL, username, p
 	return client.Do(req)
 }
 
+// opdsResolveHref resolves an OPDS link href against the feed URL it came
+// from — feeds routinely emit relative acquisition/next links ("/opds/...",
+// "../files/x.pdf") which url.Parse accepts but http requests reject with
+// `unsupported protocol scheme` (R-34). Absolute http(s) hrefs pass through
+// unchanged; anything else resolves against base and only http(s) survives.
+func opdsResolveHref(base *url.URL, href string) string {
+	if strings.TrimSpace(href) == "" {
+		return "" // empty href would resolve to the feed itself — useless
+	}
+	ref, err := url.Parse(href)
+	if err != nil || ref == nil {
+		return "" // unparseable href → drop the link
+	}
+	if ref.Scheme == "http" || ref.Scheme == "https" {
+		return href
+	}
+	if base == nil {
+		return ""
+	}
+	resolved := base.ResolveReference(ref)
+	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+		return ""
+	}
+	return resolved.String()
+}
+
 func (s *Server) handleOpdsBrowse(w http.ResponseWriter, r *http.Request) {
 	var body opdsRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -553,6 +579,7 @@ func (s *Server) handleOpdsBrowse(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusBadRequest, "not an OPDS/Atom feed")
 		return
 	}
+	base, _ := url.Parse(target)
 	out := opdsBrowseResult{Entries: make([]opdsEntry, 0, len(feed.Entries))}
 	for _, e := range feed.Entries {
 		entry := opdsEntry{Title: e.Title, Summary: e.Summary}
@@ -562,11 +589,24 @@ func (s *Server) handleOpdsBrowse(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		entry.Acquisition = atomAcquisitionLinks(e)
+		for i := range entry.Acquisition {
+			entry.Acquisition[i].Href = opdsResolveHref(base, entry.Acquisition[i].Href)
+		}
+		// drop entries whose acquisition links all failed resolution
+		kept := entry.Acquisition[:0]
+		for _, a := range entry.Acquisition {
+			if a.Href != "" {
+				kept = append(kept, a)
+			}
+		}
+		entry.Acquisition = kept
 		out.Entries = append(out.Entries, entry)
 	}
 	for _, l := range feed.Links {
 		if l.Rel == "next" {
-			out.NextHref = &l.Href
+			if h := opdsResolveHref(base, l.Href); h != "" {
+				out.NextHref = &h
+			}
 		}
 	}
 	WriteJSON(w, http.StatusOK, out)
@@ -623,6 +663,7 @@ func (s *Server) handleOpdsSync(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusNotFound, "collection not found")
 		return
 	}
+	syncBase, _ := url.Parse(body.URL)
 
 	// selection omitted → every acquisition entry on the given feed page.
 	refs := body.Selection
@@ -637,12 +678,29 @@ func (s *Server) handleOpdsSync(w http.ResponseWriter, r *http.Request) {
 		for _, e := range feed.Entries {
 			acqs := atomAcquisitionLinks(e)
 			for _, acq := range acqs {
-				if opdsMimes[acq.MimeType] {
-					refs = append(refs, opdsEntryRef{Title: e.Title, Href: acq.Href, MimeType: acq.MimeType})
-					break // one book = one best acquisition link
+				if !opdsMimes[acq.MimeType] {
+					continue
 				}
+				href := opdsResolveHref(syncBase, acq.Href)
+				if href == "" {
+					continue
+				}
+				refs = append(refs, opdsEntryRef{Title: e.Title, Href: href, MimeType: acq.MimeType})
+				break // one book = one best acquisition link
 			}
 		}
+	} else {
+		// explicit selection: resolve each href the same way (R-34)
+		for i := range refs {
+			refs[i].Href = opdsResolveHref(syncBase, refs[i].Href)
+		}
+		filtered := refs[:0]
+		for _, ref := range refs {
+			if ref.Href != "" {
+				filtered = append(filtered, ref)
+			}
+		}
+		refs = filtered
 	}
 
 	client := ssrfGuardedClient()
