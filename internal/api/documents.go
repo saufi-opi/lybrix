@@ -246,7 +246,7 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 		// non-PDF: stream the rest through the digest, then apply the
 		// same verification table as ingestFromStream (zip integrity /
 		// UTF-8 text / html markup). No page-count probe — pageCount = 1.
-		nonPdf := head
+		nonPdf := append([]byte(nil), head...) // own copy: buf is reused by the loop below (R-33)
 		for {
 			n, err := body.Read(buf)
 			if n > 0 {
@@ -286,7 +286,7 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 		}
 		return 1, format, nil
 	}
-	pdfBytes := head
+	pdfBytes := append([]byte(nil), head...) // own copy: buf is reused by the loop below (R-33)
 	for {
 		n, err := body.Read(buf)
 		if n > 0 {
