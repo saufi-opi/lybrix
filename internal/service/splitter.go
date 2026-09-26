@@ -105,37 +105,30 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 
-	if err := deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil); err != nil {
+	pairs := toBoundPairs(bounds)
+	if err := commitSplit(ctx, deps, docID, pairs, pageCount); err != nil {
 		return err
 	}
-	totalShards := len(bounds)
-	if err := updateSplitMeta(ctx, tx, docID, totalShards, pageCount); err != nil {
-		return err
-	}
-	if _, err := deps.DB.InsertShards(ctx, tx, docID, toBoundPairs(bounds), 0); err != nil {
-		return err
-	}
-	for _, b := range bounds {
-		job := queue.ParseJob{
-			SchemaVersion: queue.SchemaVersion,
-			DocID:         docID,
-			Idx:           b.Idx,
-			PageStart:     b.PageStart,
-			PageEnd:       b.PageEnd,
-			SourceURI:     doc.SourceURI,
-		}
+	// Parse jobs are enqueued only after the shard rows are committed
+	// (R-32): an idle parser's ClaimShard sees 0 rows inside the runner's
+	// uncommitted tx, treats that as "someone else got it", and ACKs —
+	// destroying the job (XACK+XDEL). A crash between commit and enqueue is
+	// healed by the janitor's pendingShardSweep (R-32), never by re-enqueue
+	// on retry — the retry takes the idempotent branch above.
+	for _, job := range parseJobsFor(docID, doc.SourceURI, pairs) {
 		if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
 			return err
 		}
 	}
-	slog.Info("split complete", "doc", docID, "pages", pageCount, "shards", totalShards)
+	slog.Info("split complete", "doc", docID, "pages", pageCount, "shards", len(bounds))
 	return nil
 }
 
 // splitSingleShard is the non-PDF splitter tail: advance UPLOADED →
 // PARSING, write one synthetic shard (idx=0, page_start=1, page_end=1),
 // enqueue its ParseJob — identical to the PDF path's tail but with the
-// pdfcpu/bookmark steps skipped.
+// pdfcpu/bookmark steps skipped. Like the PDF path, the DB writes commit in
+// an inner transaction and the enqueue happens only afterwards (R-32).
 func splitSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Document, tmpDir string) error {
 	docID := doc.ID
 	// Idempotency mirrors the PDF path's GetShard probe above.
@@ -149,28 +142,53 @@ func splitSingleShard(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Docu
 		}
 		return nil
 	}
-	if err := deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil); err != nil {
+	if err := commitSplit(ctx, deps, docID, [][2]int{{1, 1}}, 1); err != nil {
 		return err
 	}
-	if err := updateSplitMeta(ctx, tx, docID, 1, 1); err != nil {
-		return err
-	}
-	if _, err := deps.DB.InsertShards(ctx, tx, docID, [][2]int{{1, 1}}, 0); err != nil {
-		return err
-	}
-	job := queue.ParseJob{
-		SchemaVersion: queue.SchemaVersion,
-		DocID:         docID,
-		Idx:           0,
-		PageStart:     1,
-		PageEnd:       1,
-		SourceURI:     doc.SourceURI,
-	}
-	if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
-		return err
+	// Same R-32 invariant as the PDF path: enqueue only after commit.
+	for _, job := range parseJobsFor(docID, doc.SourceURI, [][2]int{{1, 1}}) {
+		if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
+			return err
+		}
 	}
 	slog.Info("split complete (single synthetic shard)", "doc", docID)
 	return nil
+}
+
+// commitSplit performs the split's DB tail — UPLOADED → PARSING, split
+// metadata, one shard row per bound — inside its OWN transaction
+// (deps.DB.Tx), not the runner's. The runner's outer tx then commits
+// empty. This is the R-32 fix: ParseJobs must XADD only after these rows
+// are visible to other transactions, or an idle parser claims nothing,
+// acks the job, and the shard is stranded pending attempts=0 forever.
+func commitSplit(ctx context.Context, deps Deps, docID string, bounds [][2]int, pageCount int) error {
+	return deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+		if err := deps.DB.SetDocState(ctx, tx, docID, store.StateParsing, nil, nil); err != nil {
+			return err
+		}
+		if err := updateSplitMeta(ctx, tx, docID, len(bounds), pageCount); err != nil {
+			return err
+		}
+		_, err := deps.DB.InsertShards(ctx, tx, docID, bounds, 0)
+		return err
+	})
+}
+
+// parseJobsFor builds one ParseJob per bound — pure, so the enqueue payload
+// is testable without a DB.
+func parseJobsFor(docID, sourceURI string, bounds [][2]int) []queue.ParseJob {
+	jobs := make([]queue.ParseJob, len(bounds))
+	for i, b := range bounds {
+		jobs[i] = queue.ParseJob{
+			SchemaVersion: queue.SchemaVersion,
+			DocID:         docID,
+			Idx:           i,
+			PageStart:     b[0],
+			PageEnd:       b[1],
+			SourceURI:     sourceURI,
+		}
+	}
+	return jobs
 }
 
 // updateSplitMeta sets total_shards + page_count in one statement.
