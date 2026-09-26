@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/saufi-opi/lybrix/internal/pipeline"
+	"github.com/saufi-opi/lybrix/internal/chunker"
 	"github.com/saufi-opi/lybrix/internal/queue"
 	"github.com/saufi-opi/lybrix/internal/store"
 )
@@ -275,11 +275,18 @@ func (s *Server) handlePipeline(w http.ResponseWriter, r *http.Request) {
 // page (retry-ladder/DLQ strip) render. Read-only projection of
 // core.config.Settings; nothing here is writable from the UI.
 type settingsOut struct {
-	// chunking (hierarchical parent-child, § Phase 3 Tab 4 preview)
+	// chunking (hierarchical parent-child). Sizes are rune counts. ChildStride
+	// is the number of runes consecutive children share (the derived child
+	// overlap); the name is kept for wire compatibility with the settings tab.
 	ParentTokens int `json:"parent_tokens"`
 	ParentCap    int `json:"parent_hard_cap"`
 	ChildTokens  int `json:"child_tokens"`
 	ChildStride  int `json:"child_stride_tokens"`
+	// chunking strategy + flat-chunk sizing (new in the verbatim-markdown
+	// chunker: text is no longer flattened, so these are rune budgets).
+	ChunkStrategy string `json:"chunk_strategy"`
+	ChunkSize     int    `json:"chunk_size"`
+	ChunkOverlap  int    `json:"chunk_overlap"`
 	// splitting / parsing
 	ShardPages           int `json:"shard_pages"`
 	MinYieldCharsPerPage int `json:"min_yield_chars_per_page"`
@@ -298,10 +305,14 @@ type settingsOut struct {
 func (s *Server) handleSettingsSummary(w http.ResponseWriter, r *http.Request) {
 	st := s.deps.Settings
 	WriteJSON(w, http.StatusOK, settingsOut{
-		ParentTokens: pipeline.ParentBudgetTokens,
-		ParentCap:    pipeline.ParentHardCap,
-		ChildTokens:  pipeline.ChildWindowTokens,
-		ChildStride:  pipeline.ChildStrideTokens,
+		ParentTokens: st.ParentChunkSize,
+		ParentCap:    chunker.AbsoluteMaxSize(),
+		ChildTokens:  st.ChildChunkSize,
+		ChildStride:  st.ChildChunkSize / 5,
+
+		ChunkStrategy: st.ChunkStrategy,
+		ChunkSize:     st.ChunkSize,
+		ChunkOverlap:  st.ChunkOverlap,
 
 		ShardPages:           st.ShardPages,
 		MinYieldCharsPerPage: st.MinYieldCharsPerPage,

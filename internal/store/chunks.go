@@ -166,47 +166,6 @@ func copyChunksWithFallback(ctx context.Context, tx pgx.Tx, savepointName string
 	return nil
 }
 
-// LinkParents resolves children's parent_id by (doc_id, parent chunk_hash).
-// Children are prepared with their parent's hash (stable pre-insert); this
-// single UPDATE rewrites it to the parent row's id after both sides landed.
-func (d *DB) LinkParents(ctx context.Context, tx pgx.Tx, docID string, childParentHashes map[string]string) error {
-	for childID, parentHash := range childParentHashes {
-		if _, err := tx.Exec(ctx, `UPDATE chunks c SET parent_id = p.id
-			FROM chunks p
-			WHERE p.doc_id = $1 AND p.chunk_hash = $2 AND p.is_parent = TRUE
-			  AND c.id = $3`, docID, parentHash, childID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// LinkParentsByHash links every child of a doc to its parent row in one
-// statement: children carry their parent's token prefix in the breadcrumb
-// and the chunker guarantees a child's ParentHash; the join is by
-// (doc_id, parent chunk_hash) carried in a temp table.
-func (d *DB) LinkParentsByHash(ctx context.Context, tx pgx.Tx, docID string) error {
-	// Children's parent hash is stored transiently in the seq-time mapping;
-	// the single-statement form joins on the deterministic id derivation:
-	// a child's parent_id can be recomputed as the deterministic id of
-	// (doc_id, parent_hash) — but the hash itself isn't stored on the child.
-	// Instead: parents' seq == child.ParentSeq mapping is kept by the
-	// chunker; resolve by order of insertion.
-	_, err := tx.Exec(ctx, `UPDATE chunks c SET parent_id = p.id
-		FROM chunks p
-		WHERE p.doc_id = $1 AND p.is_parent = TRUE
-		  AND c.doc_id = $1 AND c.is_parent = FALSE
-		  AND c.parent_id IS NULL
-		  AND p.seq = (SELECT min(p2.seq) FROM chunks p2
-		               WHERE p2.doc_id = $1 AND p2.is_parent = TRUE
-		                 AND p2.seq >= (SELECT COALESCE(max(p3.seq),0)
-		                     FROM chunks p3 WHERE p3.doc_id = $1 AND p3.is_parent = TRUE
-		                       AND p3.seq <= c.seq))
-		AND c.parent_id IS NULL`, docID)
-	_ = err
-	return nil
-}
-
 // UpdateEmbeddingTx writes one chunk's vector inside an open transaction.
 func (d *DB) UpdateEmbeddingTx(ctx context.Context, tx pgx.Tx, chunkID string, vec []float32) error {
 	_, err := tx.Exec(ctx, `UPDATE chunks SET embedding = $2, embedded_at = NOW() WHERE id = $1`,

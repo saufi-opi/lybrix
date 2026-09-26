@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/saufi-opi/lybrix/internal/chunker"
 	"github.com/saufi-opi/lybrix/internal/errors"
 	"github.com/saufi-opi/lybrix/internal/objectstore"
 	"github.com/saufi-opi/lybrix/internal/pipeline"
@@ -70,39 +70,48 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	}
 
 	stitched := pipeline.Stitch(fetched, ranges)
-	parents, children := pipeline.ChunkHierarchical(stitched.Markdown, stitched.Pages, pipeline.WhitespaceTokenizer{})
+	// Hierarchical chunking over the stitched doc, with the stitch page map
+	// threaded through so every parent AND child carries a real page range
+	// (BACKLOG R-27). Chunk text is a verbatim markdown slice, so tables, code
+	// fences and lists survive to the index (BACKLOG R-26).
+	base := chunker.SplitterConfig{
+		ChunkSize:    s.ChunkSize,
+		ChunkOverlap: s.ChunkOverlap,
+		Separators:   chunker.DefaultSeparators,
+		Strategy:     s.ChunkStrategy,
+	}
+	parentCfg, childCfg := chunker.DeriveParentChildConfigs(base, s.ParentChunkSize, s.ChildChunkSize)
+	res := chunker.SplitParentChild(stitched.Markdown, stitched.Pages, parentCfg, childCfg)
+	parents, children := res.Parents, res.Children
 	if len(children) == 0 && len(parents) == 0 {
 		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
 	}
-	// Document-wide dedupe (BACKLOG R-24): keep the first occurrence of each
-	// hash across the whole doc (order preserved, seq renumbered). Non-
-	// adjacent repeats — boilerplate, footers, page furniture stitched across
-	// shard boundaries — previously reached COPY and aborted the tx.
-	parents = pipeline.DropDuplicateChunks(parents,
-		func(p pipeline.ParentChunk) string { return p.ChunkHash },
-		func(p *pipeline.ParentChunk, seq int) { p.Seq = seq })
-	children = pipeline.DropDuplicateChunks(children,
-		func(c pipeline.ChildChunk) string { return c.ChunkHash },
-		func(c *pipeline.ChildChunk, seq int) { c.Seq = seq })
 
-	// Cross-set dedupe, parent wins: chunk_hash is HashText over unprefixed
-	// text and the row id is derived from (doc_id, hash) with no is_parent
-	// component, so a parent and child with identical text would collide on
-	// chunks_pkey (a heading-less short section: parent text == child window
-	// text). Parents insert first, so the child is dropped here — before
-	// texts/chunkIDs are built — rather than being silently dropped by the
-	// insert fallback and having its vector written onto the parent row.
-	// (After parent dedupe children's ParentSeq values go stale; there is no
-	// consumer — LinkParentsByHash joins by seq proximity and dedupe
-	// preserves relative order, so its semantics survive.)
+	// Document-wide dedupe (BACKLOG R-24): keep the first occurrence of each
+	// hash across the whole doc (order preserved, seq renumbered). Non-adjacent
+	// repeats — boilerplate, footers, page furniture stitched across shard
+	// boundaries — previously reached COPY and aborted the tx.
+	parents = chunker.DropDuplicateChunks(parents,
+		func(p chunker.Chunk) string { return p.ChunkHash() },
+		func(p *chunker.Chunk, seq int) { p.Seq = seq })
+	children = chunker.DropDuplicateChunks(children,
+		func(c chunker.ChildChunk) string { return c.ChunkHash() },
+		func(c *chunker.ChildChunk, seq int) { c.Seq = seq })
+
+	// Cross-set dedupe, parent wins: chunk_hash is HashText over the text and the
+	// row id is derived from (doc_id, hash) with no is_parent component, so a
+	// parent and child with identical text would collide on chunks_pkey.
+	// Parents insert first, so the child is dropped here — before texts/chunkIDs
+	// are built — rather than being silently dropped by the insert fallback and
+	// having its vector written onto the parent row.
 	pHashes := make(map[string]struct{}, len(parents))
 	for _, p := range parents {
-		pHashes[p.ChunkHash] = struct{}{}
+		pHashes[p.ChunkHash()] = struct{}{}
 	}
 	kept := children[:0] // in-place filter is safe: drops only, order preserved
 	nKept := 0
 	for _, c := range children {
-		if _, dup := pHashes[c.ChunkHash]; dup {
+		if _, dup := pHashes[c.ChunkHash()]; dup {
 			continue
 		}
 		c.Seq = nKept
@@ -114,14 +123,57 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
 	}
 
+	// One monotone seq across both sets. The two dedupes above numbered parents
+	// and children independently, so their sequences collided; neighbour queries
+	// and REST prev/next match on seq without filtering is_parent and would
+	// otherwise return the wrong kind of chunk (BACKLOG R-28).
+	chunker.RenumberGlobal(parents, children)
+
+	// Resolve parent_id deterministically from the surviving parent set.
+	//
+	// The chunk id is UUIDv5(doc_id, chunk_hash), so a child's parent id is
+	// computable without a join — provided the parent actually survived dedupe.
+	// A child whose parent was dropped (identical text elsewhere in the doc) gets
+	// no parent rather than a dangling reference.
+	surviving := make(map[string]struct{}, len(parents))
+	for _, p := range parents {
+		surviving[p.ChunkHash()] = struct{}{}
+	}
+
+	// Delete this doc's existing chunks before rebuilding them.
+	//
+	// Chunk hashes are whitespace-normalized and the insert is ON CONFLICT DO
+	// NOTHING, so inserting over stale rows would silently skip the writes and
+	// leave the OLD text paired with a freshly computed embedding — the text and
+	// vector would disagree, and rows whose boundaries no longer exist would
+	// linger as searchable ghosts.
+	//
+	// This runs inside the same transaction as the inserts and the embedding
+	// writes, so a failure rolls the delete back and the previous chunks survive.
+	// That makes the handler idempotent on re-delivery (janitor requeue, PEL
+	// reclaim) and makes every retry scope safe — including `scope=embed`, which
+	// does not clear chunks itself.
+	if err := deps.DB.DeleteDocChunksTx(ctx, tx, docID); err != nil {
+		return err
+	}
+
 	// Idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING.
 	if err := deps.DB.InsertParents(ctx, tx, docID, docCollection(doc), toStoreParents(parents)); err != nil {
 		return err
 	}
-	if err := deps.DB.InsertChunks(ctx, tx, docID, docCollection(doc), toStoreChildren(children)); err != nil {
-		return err
+	storeChildren := toStoreChildren(children)
+	for i := range storeChildren {
+		parentHash := children[i].ParentHash
+		if parentHash == "" {
+			continue
+		}
+		if _, ok := surviving[parentHash]; !ok {
+			continue
+		}
+		id := deterministicUUID(docID, parentHash)
+		storeChildren[i].ParentID = &id
 	}
-	if err := deps.DB.LinkParentsByHash(ctx, tx, docID); err != nil {
+	if err := deps.DB.InsertChunks(ctx, tx, docID, docCollection(doc), storeChildren); err != nil {
 		return err
 	}
 
@@ -149,12 +201,12 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	// Child text passed to the embedder is breadcrumb-prefixed
 	// ("[Doc > Chapter > Section] " + text) per blueprint §5; stored text
 	// stays unprefixed.
+	// The embed text is the chunk's ContextHeader (heading breadcrumb, and any
+	// re-injected table header is already inside Content) prepended to the body.
+	// The stored text stays unprefixed, so read_pages and search return clean
+	// markdown while the vector still carries section context.
 	for _, c := range children {
-		if c.HeaderBreadcrumb != "" {
-			texts = append(texts, strings.Replace(c.HeaderBreadcrumb, "[ ", "[", 1)+c.Text)
-		} else {
-			texts = append(texts, c.Text)
-		}
+		texts = append(texts, c.EmbeddingContent())
 	}
 	batches, _ := pipeline.PlanBatches(texts, pipeline.WhitespaceTokenizer{}, m.CtxBudget, m.BatchSize)
 	chunkIDs := make([]string, len(children))
@@ -162,7 +214,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	// (doc_id, chunk_hash) — the same derivation InsertChunks used, so the
 	// embed step never needs a DB round-trip to find what it inserted.
 	for i, c := range children {
-		chunkIDs[i] = deterministicUUID(docID, c.ChunkHash)
+		chunkIDs[i] = deterministicUUID(docID, c.ChunkHash())
 	}
 	embedIdx := 0
 	for _, batch := range batches {
