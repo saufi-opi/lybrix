@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -223,4 +224,108 @@ func TestNewConsumerName(t *testing.T) {
 	if !strings.HasPrefix(n, "parser-") || len(n) != len("parser-")+8 {
 		t.Fatalf("consumer name drift: %s", n)
 	}
+}
+
+func TestPendingJobKeys(t *testing.T) {
+	// The parameterized dedup scan (R-32 sweep seam): undelivered tail +
+	// PEL, keyed by a caller-supplied extractor over the parsed payload.
+	// Table-driven over the delivered/undelivered mix.
+	sep := "|"
+	keyOf := func(payload map[string]any) (string, bool) {
+		docID, ok := payload["doc_id"].(string)
+		if !ok || docID == "" {
+			return "", false
+		}
+		f, ok := payload["idx"].(float64)
+		if !ok {
+			return "", false
+		}
+		return docID + sep + fmt.Sprintf("%d", int(f)), true
+	}
+	cases := []struct {
+		name       string
+		deliver    int // how many of the XADDed jobs to deliver into the PEL
+		want       map[string]bool
+		notWant    string
+		dontWantFn func(keys map[string]bool) bool
+	}{
+		{
+			name:    "all undelivered",
+			deliver: 0,
+			want: map[string]bool{
+				"aaaaaaaa-0000-0000-0000-000000000000" + sep + "0": true,
+				"aaaaaaaa-0000-0000-0000-000000000000" + sep + "1": true,
+				"bbbbbbbb-0000-0000-0000-000000000000" + sep + "0": true,
+			},
+			notWant: "cccccccc-0000-0000-0000-000000000000|0",
+		},
+		{
+			name:    "first delivered into PEL",
+			deliver: 1,
+			want: map[string]bool{
+				"aaaaaaaa-0000-0000-0000-000000000000" + sep + "0": true,
+				"aaaaaaaa-0000-0000-0000-000000000000" + sep + "1": true,
+				"bbbbbbbb-0000-0000-0000-000000000000" + sep + "0": true,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := newTestRedis(t)
+			ctx := context.Background()
+			if err := EnsureStreams(ctx, r, StreamParse); err != nil {
+				t.Fatal(err)
+			}
+			jobs := []ParseJob{
+				{SchemaVersion: 1, DocID: "aaaaaaaa-0000-0000-0000-000000000000", Idx: 0},
+				{SchemaVersion: 1, DocID: "aaaaaaaa-0000-0000-0000-000000000000", Idx: 1},
+				{SchemaVersion: 1, DocID: "bbbbbbbb-0000-0000-0000-000000000000", Idx: 0},
+			}
+			for _, j := range jobs {
+				if _, err := XAddJob(ctx, r, StreamParse, j); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.deliver > 0 {
+				if _, err := ReadJobs(ctx, r, StreamParse, "c1", tc.deliver, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+			keys, err := PendingJobKeys(ctx, r, StreamParse, keyOf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(keys) != len(tc.want) {
+				t.Fatalf("key set drift: %v", keys)
+			}
+			for k := range tc.want {
+				if !keys[k] {
+					t.Fatalf("missing key %s in %v", k, keys)
+				}
+			}
+			if tc.notWant != "" && keys[tc.notWant] {
+				t.Fatalf("foreign doc key present: %v", keys)
+			}
+		})
+	}
+
+	// A SplitJob-shaped payload (no idx) on the same stream yields no key —
+	// the extractor returns false and the entry contributes nothing.
+	t.Run("split job payload yields no key", func(t *testing.T) {
+		r, _ := newTestRedis(t)
+		ctx := context.Background()
+		if err := EnsureStreams(ctx, r, StreamParse); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := XAddJob(ctx, r, StreamParse, SplitJob{SchemaVersion: 1, DocID: "d1"}); err != nil {
+			t.Fatal(err)
+		}
+		keys, err := PendingJobKeys(ctx, r, StreamParse, keyOf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != 0 {
+			t.Fatalf("non-parse payload must yield no key: %v", keys)
+		}
+	})
 }

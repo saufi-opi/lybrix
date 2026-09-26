@@ -67,6 +67,43 @@ func (d *DB) NonTerminalDocs(ctx context.Context) ([]*Document, error) {
 	return out, rows.Err()
 }
 
+// StalePendingShard is one never-attempted shard under a non-terminal doc
+// — the parse-rescue sweep input (R-32).
+type StalePendingShard struct {
+	DocID     string
+	Idx       int
+	PageStart int
+	PageEnd   int
+	SourceURI string
+}
+
+// NeverAttemptedShards lists shards state='pending' AND attempts=0 under
+// non-terminal docs not updated within the caller's grace window.
+// attempts=0 is the never-claimed discriminator: lease-reaped pendings have
+// attempts > 0 and are the reaper/reclaim's business, not this sweep's.
+// Read-only, on the pool (no tx) — matches StuckDocs.
+func (d *DB) NeverAttemptedShards(ctx context.Context, olderThan time.Time) ([]StalePendingShard, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT s.doc_id, s.idx, s.page_start, s.page_end, d.source_uri
+		FROM shards s JOIN documents d ON d.id = s.doc_id
+		WHERE s.state = 'pending' AND s.attempts = 0
+		  AND d.state NOT IN ('ready','failed','archived','partial')
+		  AND d.updated_at < $1
+		ORDER BY s.doc_id, s.idx`, olderThan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StalePendingShard
+	for rows.Next() {
+		var s StalePendingShard
+		if err := rows.Scan(&s.DocID, &s.Idx, &s.PageStart, &s.PageEnd, &s.SourceURI); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // SettledParsingDocs lists docs in state=parsing whose shards all settled
 // (done+failed >= total) — the embed-rescue sweep input.
 func (d *DB) SettledParsingDocs(ctx context.Context) ([]*Document, error) {

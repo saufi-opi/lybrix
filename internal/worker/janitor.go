@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,9 +35,6 @@ type Settings struct {
 	ShardLeaseHint   int
 }
 
-// scanPage is the XRANGE page size for stream scans (janitor.py SCAN_PAGE).
-const scanPage = 500
-
 // stats is one janitor pass's counters (logged + visible in metrics).
 type stats struct {
 	RequeuedLeases int64
@@ -45,6 +43,7 @@ type stats struct {
 	EmbedSwept     int
 	Reclaimed      int
 	Quarantined    int
+	ParseRescued   int
 	StuckWarned    int
 	Rollup         int
 }
@@ -88,6 +87,10 @@ func (j *Janitor) Pass(ctx context.Context) (map[string]int, error) {
 		if txErr != nil {
 			return txErr
 		}
+		st.ParseRescued, txErr = j.pendingShardSweep(ctx, tx, now)
+		if txErr != nil {
+			return txErr
+		}
 		st.StuckWarned, txErr = j.stuckWarn(ctx, tx, now)
 		if txErr != nil {
 			return txErr
@@ -105,6 +108,7 @@ func (j *Janitor) Pass(ctx context.Context) (map[string]int, error) {
 		"embed_swept":     st.EmbedSwept,
 		"reclaimed":       st.Reclaimed,
 		"quarantined":     st.Quarantined,
+		"parse_rescued":   st.ParseRescued,
 		"stuck_warned":    st.StuckWarned,
 		"rollup":          st.Rollup,
 	}, nil
@@ -267,6 +271,112 @@ func (j *Janitor) embedSweep(ctx context.Context, tx pgx.Tx, docs []*store.Docum
 	return n, nil
 }
 
+// shardSweepGrace is how long a doc's updated_at must be in the past before
+// pendingShardSweep considers its shards. Not a correctness need — the
+// per-shard dedup makes the sweep idempotent, and a duplicate that slips
+// through races benignly (second ClaimShard matches 0 rows and ACKs) — but
+// a noise filter: it keeps the sweep out of the split's commit→enqueue
+// window and bounds events-row chatter.
+const shardSweepGrace = 2 * time.Minute
+
+// parseJobKeyOf is THE single parse-job dedup key derivation — both the
+// Redis-payload side (parseJobKey) and the DB-row side (the sweep, from
+// store.StalePendingShard) call this one helper, so a format change cannot
+// desynchronize the two (an R-1-class blind-add hazard).
+func parseJobKeyOf(docID string, idx int) string {
+	return docID + "|" + strconv.Itoa(idx)
+}
+
+// parseJobKey extracts the dedup key from a parsed stream payload — the
+// Redis-payload side of the sweep's key derivation. Unparseable payload or
+// a missing field ⇒ ("", false) (same spirit as the old jobDocID).
+func parseJobKey(payload map[string]any) (string, bool) {
+	docID, ok := payload["doc_id"].(string)
+	if !ok || docID == "" {
+		return "", false
+	}
+	f, ok := payload["idx"].(float64) // JSON numbers decode as float64
+	if !ok {
+		return "", false
+	}
+	return parseJobKeyOf(docID, int(f)), true
+}
+
+// missingParseJobs is the rescue decision, pure: for each never-attempted
+// shard, emit a ParseJob unless its dedup key already sits on doc.parse
+// (undelivered or in the PEL). The sweep body is a thin wrapper around
+// this — it is the only DB-free coverage of the decision.
+func missingParseJobs(shards []store.StalePendingShard, queued map[string]bool) []queue.ParseJob {
+	var out []queue.ParseJob
+	for _, s := range shards {
+		if queued[parseJobKeyOf(s.DocID, s.Idx)] {
+			continue // a parse job is already waiting — never double-add
+		}
+		out = append(out, queue.ParseJob{
+			SchemaVersion: queue.SchemaVersion,
+			DocID:         s.DocID,
+			Idx:           s.Idx,
+			PageStart:     s.PageStart,
+			PageEnd:       s.PageEnd,
+			SourceURI:     s.SourceURI,
+		})
+	}
+	return out
+}
+
+// pendingShardSweep is the 8th janitor step (R-32): shards stranded
+// state='pending' attempts=0 under non-terminal docs — a parser that
+// destroyed the front of doc.parse before the split tx committed (the R-32
+// race), a crash between the split commit and the XADDs, or the parser
+// ladder's resplit variant — get their ParseJobs re-enqueued. Deduped per
+// (doc_id, idx) against undelivered + PEL entries; a Redis scan failure
+// skips the sweep entirely (fail-open, never blind re-add — the
+// 2026-09-11 doc.embed flood is the regression this forbids). Runs after
+// reclaim, so re-added PEL entries are visible to the dedup scan.
+func (j *Janitor) pendingShardSweep(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+	shards, err := j.DB.NeverAttemptedShards(ctx, now.Add(-shardSweepGrace))
+	if err != nil {
+		return 0, fmt.Errorf("never-attempted shard query failed: %w", err)
+	}
+	if len(shards) == 0 {
+		return 0, nil
+	}
+	queued, err := queue.PendingJobKeys(ctx, j.Redis, queue.StreamParse, parseJobKey)
+	if err != nil {
+		slog.Warn("pendingShardSweep skipped: doc.parse scan failed (no blind re-add)", "err", err)
+		return 0, nil
+	}
+	jobs := missingParseJobs(shards, queued)
+	if len(jobs) == 0 {
+		return 0, nil
+	}
+	rescuedByDoc := map[string]bool{}
+	for _, job := range jobs {
+		if _, err := queue.XAddJob(ctx, j.Redis, queue.StreamParse, job); err != nil {
+			return 0, err
+		}
+		rescuedByDoc[job.DocID] = true
+	}
+	for docID := range rescuedByDoc {
+		_ = store.WriteEvent(ctx, tx, "warn", "janitor",
+			fmt.Sprintf("%d never-attempted shard(s) re-enqueued — R-32 rescue", countJobs(jobs, docID)),
+			strPtr(docID), nil, strPtr("PARSE_RESCUE"), nil, nil)
+	}
+	return len(jobs), nil
+}
+
+// countJobs counts the seam's jobs belonging to one doc (events rows are
+// per affected doc, not per shard).
+func countJobs(jobs []queue.ParseJob, docID string) int {
+	n := 0
+	for _, j := range jobs {
+		if j.DocID == docID {
+			n++
+		}
+	}
+	return n
+}
+
 // stuckWarn: stuck-document warning (§6.6) — informational only.
 func (j *Janitor) stuckWarn(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
 	cutoff := now.Add(-time.Duration(j.Settings.StuckMinutes) * time.Minute)
@@ -356,87 +466,25 @@ func pct(sorted []int, p int) *int {
 	return &v
 }
 
-// PendingJobDocIDs returns doc_ids holding an UNDELIVERED job on stream.
+// PendingJobDocIDs returns doc_ids holding an UNDELIVERED job on stream —
+// a thin wrapper over queue.PendingJobKeys with the doc_id extractor, so
+// there is exactly one scan implementation (R-1/R-6 semantics preserved
+// verbatim, including "error ⇒ caller MUST skip, never blind-add").
 //
-// Precise semantics (stream is never trimmed, so a full XRANGE would see
-// every job ever ACKed and wrongly suppress future re-enqueues):
-//  1. everything after the group's last-delivered-id (undelivered), plus
-//  2. the PEL (delivered-but-unacked) — claimed by a live worker or
-//     waiting for the reclaim step, which runs BEFORE the requeue sweeps
-//     in every pass.
-//
-// Returns an error if the scan itself fails — the caller MUST skip the
-// sweep rather than blind-add (blind re-adding is exactly how the
-// 2026-09-11 doc.embed flood happened: ~3.2k duplicate jobs).
+// Ordering note: queue.PendingJobKeys sees the PEL, which includes entries
+// re-added by the janitor's own reclaim step. Pass's real order is
+// requeueSweep BEFORE reclaim — so the split requeue dedup scan does NOT
+// include entries re-added by this pass's reclaim (they land after it);
+// only the sweeps that run after reclaim (embedSweep, pendingShardSweep)
+// see those re-added entries in their dedup sets.
 func PendingJobDocIDs(ctx context.Context, r redis.Cmdable, stream string) (map[string]bool, error) {
-	groups, err := r.XInfoGroups(ctx, stream).Result()
-	if err != nil {
-		return nil, err
-	}
-	var lastDelivered string
-	found := false
-	for _, g := range groups {
-		if g.Name == queue.ConsumerGroup {
-			lastDelivered = g.LastDeliveredID
-			found = true
-			break
+	return queue.PendingJobKeys(ctx, r, stream, func(payload map[string]any) (string, bool) {
+		s, ok := payload["doc_id"].(string)
+		if !ok || s == "" {
+			return "", false
 		}
-	}
-	ids := map[string]bool{}
-	if !found {
-		return ids, nil
-	}
-	if lastDelivered == "" {
-		lastDelivered = "0-0"
-	}
-	start := "(" + lastDelivered // exclusive: entries AT it are delivered
-	for {
-		page, err := r.XRange(ctx, stream, start, "+").Result()
-		if err != nil {
-			return nil, err
-		}
-		if len(page) == 0 {
-			break
-		}
-		for _, msg := range page {
-			if docID := jobDocID(msg.Values); docID != "" {
-				ids[docID] = true
-			}
-		}
-		if len(page) < scanPage {
-			break
-		}
-		start = "(" + page[len(page)-1].ID
-	}
-	// PEL: delivered but unacked (live claim or awaiting reclaim)
-	pel, err := r.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: stream, Group: queue.ConsumerGroup, Start: "-", End: "+", Count: scanPage,
-	}).Result()
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range pel {
-		msgs, err := r.XRange(ctx, stream, p.ID, p.ID).Result()
-		if err != nil {
-			continue
-		}
-		for _, msg := range msgs {
-			if docID := jobDocID(msg.Values); docID != "" {
-				ids[docID] = true
-			}
-		}
-	}
-	return ids, nil
-}
-
-func jobDocID(values map[string]any) string {
-	raw, _ := values["job"].(string)
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return ""
-	}
-	s, _ := payload["doc_id"].(string)
-	return s
+		return s, true
+	})
 }
 
 // Run loops the janitor pass at JANITOR_INTERVAL_S.
