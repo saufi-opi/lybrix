@@ -1,11 +1,9 @@
 # deploy/Dockerfile.lybrix — the one 2.0 image: lybrix-server + cmd/lybrix-eval.
 #
-# Default (WITH_ANYDOC=0): pure-Go stub build, CGO-free, no Rust toolchain.
-# WITH_ANYDOC=1: cargo builds libanydoc_go.a from third_party/anydoc-go
+# Default (WITH_ANYDOC=1): cargo builds libanydoc_go.a from third_party/anydoc-go
 # (pinned crate, scripts/build-anydoc-lib.sh), then the Go build runs with
-# CGO_ENABLED=1 -tags anydoc and links it. That image is ~1 GB larger and much
-# slower to build — build it into a separate tag (make build-anydoc) and keep
-# the default image slim.
+# CGO_ENABLED=1 -tags anydoc and links it.
+# Set WITH_ANYDOC=0 for pure-Go stub build (CGO-free, no Rust toolchain).
 #
 # Layer order matters: go.mod carries `replace github.com/firecrawl/anydoc/go
 # => ./third_party/anydoc-go`, and `go mod download` resolves the whole module
@@ -14,7 +12,7 @@
 # default WITH_ANYDOC=0 lane where nothing imports the module. So the
 # binding's go.mod is copied BEFORE the download step.
 FROM golang:1.25-bookworm AS build
-ARG WITH_ANYDOC=0
+ARG WITH_ANYDOC=1
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod
