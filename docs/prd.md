@@ -470,7 +470,7 @@ Next.js app, server components against the control-plane API. Auth via session c
 *   Header: metadata, state, completeness, timings per stage.
 *   **Shard grid** — the most useful widget in the product. One cell per shard, coloured by state, tooltip showing page range, attempts, duration, peak RSS. A book with a red cell at shard 14 tells the operator exactly where to look in one glance.
 *   Click a shard → its events, its error, "retry this shard" button.
-*   Tabs: Chunks (paginated preview with page refs), Events (filterable log), Raw (links to source PDF and parsed JSON in MinIO).
+*   Tabs: Chunks (paginated chunk table with page refs; a row expands to a full-width panel that renders the chunk's markdown — tables, fenced code, lists and headings — since chunk text is a verbatim slice of the parsed markdown), Events (filterable log), Raw (links to source PDF and parsed JSON in MinIO).
 *   Actions: retry failed shards, re-embed (skips parsing), reprocess from scratch, archive, delete.
 
 **4. Upload**

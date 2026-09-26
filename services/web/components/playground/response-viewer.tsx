@@ -1,14 +1,16 @@
 "use client";
 
 /** Playground response viewer: Rendered tab (tool result rendered per shape
- * — search hits as chunk cards with page citations, read_pages as markdown,
- * get_document as a metadata card) and Raw JSON tab (pretty-printed mono).
- * Every result carries the citation triple (PRD §7.2), so the rendered
- * search treatment shows doc_title + page range prominently. */
+ * — search hits as chunk cards with page citations, read_pages/preview_chunk
+ * as formatted markdown, get_document as a metadata card) and Raw JSON tab
+ * (pretty-printed mono). Every result carries the citation triple (PRD §7.2),
+ * so the rendered search treatment shows doc_title + page range prominently. */
 
+import { Markdown } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { prepareChunkMarkdown } from "@/lib/markdown";
 
 interface CallResponse {
   result: unknown;
@@ -122,10 +124,8 @@ function Rendered({
                 {h.heading_path.join(" › ")}
               </span>
             )}
-            {typeof h.text === "string" && (
-              <p className="mt-1 mb-0 font-mono text-xs leading-normal text-muted-foreground whitespace-pre-wrap">
-                {h.text}
-              </p>
+            {typeof h.text === "string" && h.text && (
+              <Markdown className="mt-1.5">{prepareChunkMarkdown(h.text)}</Markdown>
             )}
             {h.partial && h.note && (
               <p className="mt-1.5 mb-0 text-[11px] text-warning">△ {h.note}</p>
@@ -153,9 +153,9 @@ function Rendered({
             {r.truncated_to ? ` (cap ${r.truncated_to})` : ""}
           </span>
         </div>
-        <pre className="max-h-[420px] overflow-auto rounded-lg border border-sheet-edge bg-rail p-3 font-mono text-xs leading-normal whitespace-pre-wrap">
-          {r.markdown ?? "(empty)"}
-        </pre>
+        <Markdown className="max-h-[420px] overflow-auto rounded-lg border border-sheet-edge bg-sheet p-3">
+          {prepareChunkMarkdown(r.markdown ?? "")}
+        </Markdown>
       </div>
     );
   }
@@ -191,6 +191,54 @@ function Rendered({
             </Badge>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (toolName === "preview_chunk" && value !== null && typeof value === "object") {
+    const c = value as {
+      chunk_id?: string;
+      seq?: number;
+      is_parent?: boolean;
+      page_start?: number | null;
+      page_end?: number | null;
+      heading_path?: string[] | null;
+      token_count?: number;
+      text?: string;
+      parent_text?: string;
+    };
+    const breadcrumb = (c.heading_path ?? []).join(" › ");
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+          <span className="font-mono text-xs text-muted-foreground">seq {c.seq ?? "—"}</span>
+          {typeof c.page_start === "number" && (
+            <span className="font-mono text-xs text-muted-foreground">
+              pp. {c.page_start}
+              {typeof c.page_end === "number" && c.page_end !== c.page_start
+                ? `–${c.page_end}`
+                : ""}
+            </span>
+          )}
+          {c.is_parent && <Badge variant="outline">parent</Badge>}
+          {typeof c.token_count === "number" && (
+            <span className="font-mono text-xs text-muted-foreground">{c.token_count} tokens</span>
+          )}
+        </div>
+        {breadcrumb && (
+          <span className="font-mono text-[11px] text-muted-foreground">{breadcrumb}</span>
+        )}
+        <Markdown className="max-h-[420px] overflow-auto rounded-lg border border-sheet-edge bg-sheet p-3">
+          {prepareChunkMarkdown(c.text ?? "")}
+        </Markdown>
+        {c.parent_text && (
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-[11px] text-muted-foreground">parent context</span>
+            <Markdown className="max-h-[240px] overflow-auto rounded-lg border border-sheet-edge bg-paper-deep/40 p-3">
+              {prepareChunkMarkdown(c.parent_text)}
+            </Markdown>
+          </div>
+        )}
       </div>
     );
   }

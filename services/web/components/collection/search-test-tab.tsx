@@ -5,9 +5,9 @@
  * expansion. Hit styling follows the playground's ResponseViewer patterns
  * (mono scores, bordered result rows). */
 
-import { cn } from "cn";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { useState } from "react";
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { SearchHitRow } from "@/lib/api-client";
 import { apiClient } from "@/lib/api-client";
+import { prepareChunkMarkdown } from "@/lib/markdown";
 
 function HitRow({ hit, index }: { hit: SearchHitRow; index: number }) {
   const [open, setOpen] = useState(false);
@@ -62,16 +63,21 @@ function HitRow({ hit, index }: { hit: SearchHitRow; index: number }) {
               {breadcrumb}
             </span>
           )}
-          <span
-            className={cn(
-              "mt-1 block text-[12.5px] text-muted-foreground",
-              open ? "whitespace-pre-wrap break-words" : "line-clamp-2",
-            )}
-          >
-            {hit.text}
-          </span>
+          {/* Collapsed preview stays inside the button (plain text, keeps the
+           * whole row clickable). The expanded markdown is a sibling below —
+           * a rendered table/pre cannot legally live inside a <button>. */}
+          {hit.text && !open && (
+            <span className="mt-1 block text-[12.5px] text-muted-foreground line-clamp-2">
+              {hit.text}
+            </span>
+          )}
         </span>
       </button>
+      {hit.text && open && (
+        <div className="px-3 pb-3">
+          <Markdown>{prepareChunkMarkdown(hit.text)}</Markdown>
+        </div>
+      )}
     </div>
   );
 }
