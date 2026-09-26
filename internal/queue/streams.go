@@ -7,10 +7,10 @@ package queue
 
 import (
 	"context"
-	"strings"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
