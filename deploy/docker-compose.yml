@@ -284,14 +284,13 @@ services:
     mem_limit: 3g
     networks: [ingestnet]
 
-  lybrix-janitor:
-    <<: *restart
-    image: ghcr.io/saufi-opi/lybrix/server:edge
-    profiles: [ingest]
-    command: ["janitor"]
-    environment: {<<: *ingest-env}
-    mem_limit: 512m
-    networks: [ingestnet]
+  # lybrix-janitor (standalone) is deliberately NOT a compose service:
+  # `serve` already runs the janitor as a goroutine, and two concurrent
+  # passes against the same Postgres+Redis duplicate `events` rows from
+  # stuckWarn and race on the metrics_rollup minute bucket (BACKLOG R-25).
+  # The binary keeps its `janitor` subcommand as a manual ops escape hatch
+  # (e.g. draining a backlog while `serve` is down):
+  #   docker compose --profile ingest run --rm lybrix-parser janitor
 
   tei-ingest:
     <<: *restart

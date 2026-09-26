@@ -24,11 +24,10 @@ never share an embedding server, so a backfill can't destroy query p99.
 
 | Service | Role |
 | --- | --- |
-| `lybrix-server serve` | One binary: REST control plane (:8000) + six-tool MCP server (:8430) + janitor goroutine |
+| `lybrix-server serve` | One binary: REST control plane (:8000) + six-tool MCP server (:8430) + janitor goroutine (lease reaper, retry escalation, PEL reclaim + DLQ, stuck detection, metrics rollup). The `janitor` subcommand exists for manual ops runs only — not a compose service (BACKLOG R-25) |
 | `lybrix-splitter` | Chapter-aligned page-range sharding via pdfcpu |
 | `lybrix-parser` | Two-tier: **anydoc** CGO fast path (born-digital, sub-100ms/shard) → **docling-serve** HTTP fallback (scanned/<50 chars/page) |
 | `lybrix-embedder` | Stitch → hierarchical parent-child chunk (384-token children under 2048–4096-token parents) → TEI/Ollama batches → ParadeDB |
-| `lybrix-janitor` | Lease reaper, retry escalation, PEL reclaim + DLQ, stuck detection, metrics rollup |
 | `docling-serve` | Containerized layout analysis + OCR fallback |
 | `web` | Next.js admin UI: dashboard, shard grid, upload, logs, retry tiers (unchanged contract) |
 | `tei-ingest` / `tei-query` | HuggingFace TEI — separate batch budgets per plane |
