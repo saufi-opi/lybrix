@@ -35,9 +35,6 @@ type Settings struct {
 	ShardLeaseHint   int
 }
 
-// scanPage is the XRANGE page size for stream scans (janitor.py SCAN_PAGE).
-const scanPage = 500
-
 // stats is one janitor pass's counters (logged + visible in metrics).
 type stats struct {
 	RequeuedLeases int64
