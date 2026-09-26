@@ -596,10 +596,10 @@ func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch body.Scope {
-	case "shards", "embed", "full":
+	case "shards", "embed", "rechunk", "full":
 	default:
 		writeDetail(w, http.StatusUnprocessableEntity,
-			"scope must be one of shards|embed|full")
+			"scope must be one of shards|embed|rechunk|full")
 		return
 	}
 	doc, err := s.deps.DB.GetDocument(r.Context(), docID)
@@ -616,6 +616,20 @@ func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
 	case "embed":
 		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
 			return s.deps.DB.SetDocState(ctx, tx, docID, store.StateEmbedding, nil, nil)
+		})
+		if err != nil {
+			writeDetail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, err = queue.XAddJob(ctx, s.deps.Redis, queue.StreamEmbed, queue.EmbedJob{
+			SchemaVersion: queue.SchemaVersion, DocID: docID,
+		})
+	case "rechunk":
+		// Re-chunk from the parsed markdown already in S3: no re-parse, no
+		// re-split. Used to migrate a doc onto a changed chunker (BACKLOG
+		// R-26/R-27) without paying for OCR again.
+		err = s.deps.DB.Tx(ctx, func(tx pgx.Tx) error {
+			return s.deps.DB.ResetDocForRechunk(ctx, tx, docID)
 		})
 		if err != nil {
 			writeDetail(w, http.StatusInternalServerError, err.Error())
