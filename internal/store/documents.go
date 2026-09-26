@@ -71,6 +71,30 @@ func (d *DB) ResetDocForFullRetry(ctx context.Context, tx pgx.Tx, docID string) 
 	return err
 }
 
+// ResetDocForRechunk clears a doc's chunks so the embedder rebuilds them from
+// the parsed shard markdown already in S3, WITHOUT touching shards or re-parsing
+// (BACKLOG R-26/R-27 migration).
+//
+// This is the cheap re-chunk path: parse output is never deleted, so re-stitching
+// and re-chunking reuses all OCR and conversion work. Deleting the rows is
+// mandatory rather than optional — chunk hashes are whitespace-normalized, and
+// the insert is ON CONFLICT DO NOTHING, so re-chunking over the old rows would
+// skip the writes and leave stale text paired with a fresh embedding.
+//
+// The doc goes to EMBEDDING with its counters reset; the caller enqueues the
+// embed job. Shards are left untouched so `state = done` rows (and therefore
+// SettledShards) still describe the parsed shards.
+func (d *DB) ResetDocForRechunk(ctx context.Context, tx pgx.Tx, docID string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE doc_id = $1`, docID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE documents SET state = 'embedding',
+		chunk_count = NULL, completeness = NULL, error_code = NULL,
+		error_detail = NULL, ready_at = NULL, updated_at = NOW()
+		WHERE id = $1`, docID)
+	return err
+}
+
 // FindDuplicate is upload dedupe: content_sha256 unique per collection (PRD §5).
 func (d *DB) FindDuplicate(ctx context.Context, collectionID, contentSha256 string) (*Document, error) {
 	row := d.Pool.QueryRow(ctx,

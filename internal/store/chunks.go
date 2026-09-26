@@ -249,11 +249,35 @@ func (d *DB) CountChunks(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// ReadPageChunks selects chunks covering a 1-based inclusive page range,
+// ReadPageChunks selects the chunks covering a 1-based inclusive page range,
 // seq-ordered — the read_pages tool's data source.
+//
+// Parents are preferred, and children are used only when no parent overlaps the
+// range.
+//
+// Why prefer parents: children are sliding windows that OVERLAP each other by
+// design, and each child's text is a slice of its parent's, so returning both
+// would emit heavily duplicated markdown for one page range.
+//
+// Why the fallback is required: the chunker does not materialise a parent for a
+// section that yields exactly one identical child (storing both would collide on
+// the content hash, and the surviving parent row is never embedded — the doc
+// would become unsearchable). A document whose sections are all short therefore
+// has children and no parents at all, and a parents-only query would return
+// nothing for it. That is worse than duplication: an empty answer is unusable.
+//
+// The range test is overlap-aware on both ends, so a chunk that STARTS before
+// the requested range but covers part of it is included. The previous
+// page_start-only filter silently dropped those.
 func (d *DB) ReadPageChunks(ctx context.Context, docID string, pageStart, pageEnd int) ([]*Chunk, error) {
 	rows, err := d.Pool.Query(ctx, `SELECT `+chunkCols+` FROM chunks
-		WHERE doc_id = $1 AND page_start >= $2 AND page_start <= $3 ORDER BY seq`,
+		WHERE doc_id = $1
+		  AND page_start <= $3 AND page_end >= $2
+		  AND is_parent = EXISTS (
+		        SELECT 1 FROM chunks p
+		        WHERE p.doc_id = $1 AND p.is_parent = TRUE
+		          AND p.page_start <= $3 AND p.page_end >= $2)
+		ORDER BY seq`,
 		docID, pageStart, pageEnd)
 	if err != nil {
 		return nil, err
@@ -263,10 +287,17 @@ func (d *DB) ReadPageChunks(ctx context.Context, docID string, pageStart, pageEn
 
 // ChunkNeighbours selects ±window chunks by seq around one chunk — the
 // get_chunk_context tool's data source.
+//
+// Filtered to the same kind (parent vs child) as the anchor: seq is globally
+// unique across both kinds, so a window can straddle a kind boundary and a
+// caller that cannot tell them apart would splice a parent into a child's
+// context.
 func (d *DB) ChunkNeighbours(ctx context.Context, docID string, seq, window int) ([]*Chunk, error) {
 	rows, err := d.Pool.Query(ctx, `SELECT `+chunkCols+` FROM chunks
-		WHERE doc_id = $1 AND seq >= $2 AND seq <= $3 ORDER BY seq`,
-		docID, seq-window, seq+window)
+		WHERE doc_id = $1 AND seq >= $2 AND seq <= $3
+		  AND is_parent = (SELECT is_parent FROM chunks WHERE doc_id = $1 AND seq = $4)
+		ORDER BY seq`,
+		docID, seq-window, seq+window, seq)
 	if err != nil {
 		return nil, err
 	}
@@ -379,6 +410,14 @@ func (d *DB) EmbeddedChunksSince(ctx context.Context, start, end time.Time) (int
 // this; kept for tooling that deletes chunks without the doc row).
 func (d *DB) DeleteDocChunks(ctx context.Context, docID string) error {
 	_, err := d.Pool.Exec(ctx, `DELETE FROM chunks WHERE doc_id = $1`, docID)
+	return err
+}
+
+// DeleteDocChunksTx removes a doc's chunks inside an open transaction, so a
+// rebuild that fails after the delete rolls back and leaves the previous chunks
+// intact.
+func (d *DB) DeleteDocChunksTx(ctx context.Context, tx pgx.Tx, docID string) error {
+	_, err := tx.Exec(ctx, `DELETE FROM chunks WHERE doc_id = $1`, docID)
 	return err
 }
 
