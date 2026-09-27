@@ -29,7 +29,8 @@ func mustDB(t *testing.T, image string) *DB {
 	host, _ := ctr.Host(ctx)
 	port, _ := ctr.MappedPort(ctx, "5432/tcp")
 	dsn := fmt.Sprintf("postgres://rag:rag@%s:%s/rag?sslmode=disable", host, port.Port())
-	db, err := NewPool(ctx, dsn)
+	// zero Timeouts → built-in defaults (same floor as production pools)
+	db, err := NewPool(ctx, dsn, Timeouts{})
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}

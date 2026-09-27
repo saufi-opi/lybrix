@@ -152,30 +152,28 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	// writes, so a failure rolls the delete back and the previous chunks survive.
 	// That makes the handler idempotent on re-delivery (janitor requeue, PEL
 	// reclaim) and makes every retry scope safe — including `scope=embed`, which
-	// does not clear chunks itself.
-	if err := deps.DB.DeleteDocChunksTx(ctx, tx, docID); err != nil {
-		return err
-	}
+	// does not clear chunks itself. With the R-36 phase split the write tx now
+	// contains no network I/O, so its duration is milliseconds.
 
-	// Idempotent insert: UNIQUE(doc_id, chunk_hash) → ON CONFLICT DO NOTHING.
-	if err := deps.DB.InsertParents(ctx, tx, docID, docCollection(doc), toStoreParents(parents)); err != nil {
-		return err
-	}
-	storeChildren := toStoreChildren(children)
-	for i := range storeChildren {
-		parentHash := children[i].ParentHash
-		if parentHash == "" {
-			continue
-		}
-		if _, ok := surviving[parentHash]; !ok {
-			continue
-		}
-		id := deterministicUUID(docID, parentHash)
-		storeChildren[i].ParentID = &id
-	}
-	if err := deps.DB.InsertChunks(ctx, tx, docID, docCollection(doc), storeChildren); err != nil {
-		return err
-	}
+	// R-36 phase split — HandleEmbed keeps its signature but no longer uses
+	// the runner tx for writes (the runner tx commits empty). The shape is:
+	//
+	//   phase R (reads, pool): GetDocument, SettledShards, Prefetch, stitch,
+	//     chunk, dedupe, RenumberGlobal, ResolveCollectionModel — the pool
+	//     reads above, unchanged order.
+	//   phase E (network, NO tx): every client.Embed batch runs up front,
+	//     vectors collected in memory — the chunk-lock reservoir is gone;
+	//     the embed loop holds no row locks while waiting on the backend.
+	//   phase W (ONE deps.DB.TxWithRetry): DeleteDocChunksTx → InsertParents
+	//     → InsertChunks → CopyEmbeddings(assembleEmbeddingRows(…)) →
+	//     SetChunkCountAndCompleteness.
+	//   post: resetEmbedRetries (Redis), log.
+	//
+	// Memory case: phase E collects the doc's whole vector set before phase
+	// W writes it — worst case ~6k children × 2000 dims × 4 B ≈ 48 MB,
+	// acceptable against the 2 GB embedder envelope. (Per-batch txs were
+	// rejected: they break the delete+rebuild atomicity that makes
+	// re-delivery idempotent.)
 
 	// Embed children against the collection's bound model on the ingest
 	// plane in moderate batches; the backend's dynamic batcher packs them —
@@ -216,25 +214,50 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	for i, c := range children {
 		chunkIDs[i] = deterministicUUID(docID, c.ChunkHash())
 	}
-	embedIdx := 0
-	for _, batch := range batches {
+
+	// Phase E — the whole doc's embed batches run with NO tx open.
+	vectorsByBatch := make([][][]float32, len(batches))
+	for i, batch := range batches {
 		vectors, err := client.Embed(ctx, batch, m.VectorDim)
 		if err != nil {
-			return capped(ctx, deps, tx, docID, err)
+			return capped(ctx, deps, docID, err)
 		}
-		for j, vec := range vectors {
-			if embedIdx+j < len(chunkIDs) {
-				if err := deps.DB.UpdateEmbeddingTx(ctx, tx, chunkIDs[embedIdx+j], vec); err != nil {
-					return err
-				}
-			}
-		}
-		embedIdx += len(batch)
+		vectorsByBatch[i] = vectors
 	}
+	embedRows := assembleEmbeddingRows(chunkIDs, batches, vectorsByBatch)
 
-	if err := deps.DB.SetChunkCountAndCompleteness(ctx, tx, docID, len(children)); err != nil {
+	// Phase W — one short write tx, no network I/O inside. Idempotent on
+	// retry: the delete+rebuild makes a re-run produce the same rows.
+	if err := deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		if err := deps.DB.DeleteDocChunksTx(ctx, tx, docID); err != nil {
+			return err
+		}
+		if err := deps.DB.InsertParents(ctx, tx, docID, docCollection(doc), toStoreParents(parents)); err != nil {
+			return err
+		}
+		storeChildren := toStoreChildren(children)
+		for i := range storeChildren {
+			parentHash := children[i].ParentHash
+			if parentHash == "" {
+				continue
+			}
+			if _, ok := surviving[parentHash]; !ok {
+				continue
+			}
+			id := deterministicUUID(docID, parentHash)
+			storeChildren[i].ParentID = &id
+		}
+		if err := deps.DB.InsertChunks(ctx, tx, docID, docCollection(doc), storeChildren); err != nil {
+			return err
+		}
+		if err := deps.DB.CopyEmbeddings(ctx, tx, embedRows); err != nil {
+			return err
+		}
+		return deps.DB.SetChunkCountAndCompleteness(ctx, tx, docID, len(children))
+	}); err != nil {
 		return err
 	}
+
 	if err := resetEmbedRetries(ctx, deps, docID); err != nil {
 		slog.Warn("embed retry counter reset failed (ignored)", "err", err)
 	}
@@ -242,9 +265,35 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	return nil
 }
 
+// assembleEmbeddingRows concatenates the per-batch vector responses into
+// (chunk_id, vector) pairs aligned with chunkIDs — the pure seam between
+// phase E (network) and phase W (write tx). Batches were planned over texts
+// in chunk order, so batch i's vectors map onto the chunkIDs slice from the
+// running offset; misalignment is impossible by construction (PlanBatches
+// never drops or reorders texts) and asserted in tests.
+func assembleEmbeddingRows(chunkIDs []string, batches [][]string,
+	vectorsByBatch [][][]float32) []store.EmbeddingRow {
+	rows := make([]store.EmbeddingRow, 0, len(chunkIDs))
+	offset := 0
+	for i, batch := range batches {
+		for j, vec := range vectorsByBatch[i] {
+			if offset+j < len(chunkIDs) {
+				rows = append(rows, store.EmbeddingRow{
+					ChunkID: chunkIDs[offset+j],
+					Vector:  vec,
+				})
+			}
+		}
+		offset += len(batch)
+	}
+	return rows
+}
+
 // capped counts a failure; when the cap is reached mark the doc FAILED and
-// return nil (handler must return → runner ACKs → retry loop ends).
-func capped(ctx context.Context, deps Deps, tx pgx.Tx, docID string, cause error) error {
+// return nil (handler must return → runner ACKs → retry loop ends). The
+// FAILED write goes through its own short TxWithRetry — R-36: nothing here
+// rides the runner tx.
+func capped(ctx context.Context, deps Deps, docID string, cause error) error {
 	attempts, err := bumpEmbedRetries(ctx, deps, docID)
 	if err != nil {
 		attempts = 1 // fail-safe: treat as first failure
@@ -255,8 +304,10 @@ func capped(ctx context.Context, deps Deps, tx pgx.Tx, docID string, cause error
 	}
 	slog.Error("embed cap reached — marking FAILED", "attempts", attempts, "doc", docID)
 	detail := fmt.Sprintf("embed failed %dx: %v", attempts, cause)
-	return deps.DB.SetDocState(ctx, tx, docID, store.StateFailed,
-		strPtr(string(errors.CodeDocEmbedFailed)), strPtr(detail))
+	return deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		return deps.DB.SetDocState(ctx, tx, docID, store.StateFailed,
+			strPtr(string(errors.CodeDocEmbedFailed)), strPtr(detail))
+	})
 }
 
 // bumpEmbedRetries increments the per-doc embed failure counter. The

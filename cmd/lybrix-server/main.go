@@ -101,7 +101,7 @@ commands:
 // run on a fresh database leaves the default row + seed-dim HNSW behind.
 // The rerank registry seeds the same way, gated on RERANK_ENABLED.
 func infra(ctx context.Context, settings *config.Settings) (*store.DB, redisClient, *objectstore.Client, error) {
-	db, err := store.NewPool(ctx, settings.DatabaseURL)
+	db, err := store.NewPool(ctx, settings.DatabaseURL, store.TimeoutsFrom(settings))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -256,7 +256,7 @@ func runJanitor(ctx context.Context, settings *config.Settings) error {
 func runMigrate(settings *config.Settings) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	db, err := store.NewPool(ctx, settings.DatabaseURL)
+	db, err := store.NewPool(ctx, settings.DatabaseURL, store.TimeoutsFrom(settings))
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func runKeys(settings *config.Settings, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := store.NewPool(ctx, settings.DatabaseURL)
+	db, err := store.NewPool(ctx, settings.DatabaseURL, store.TimeoutsFrom(settings))
 	if err != nil {
 		return err
 	}

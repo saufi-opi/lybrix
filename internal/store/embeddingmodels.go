@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -206,45 +205,9 @@ func (d *DB) SeedDefaultEmbeddingModel(ctx context.Context, seed EmbeddingSeed) 
 	return nil
 }
 
-// EnsureDimIndex creates the per-dimension partial HNSW index
-// ix_chunks_hnsw_<dim> when absent, under the same advisory lock the schema
-// bootstrap uses. The dense CTE matches the expression + predicate or the
-// planner won't use the index.
-func (d *DB) EnsureDimIndex(ctx context.Context, dim int) error {
-	if dim < 1 || dim > 2000 {
-		return fmt.Errorf("vector_dim %d out of range 1..2000", dim)
-	}
-	name := fmt.Sprintf("ix_chunks_hnsw_%d", dim)
-	conn, err := d.Pool.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(918273645)"); err != nil {
-		return fmt.Errorf("dim index advisory lock: %w", err)
-	}
-	defer func() {
-		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock(918273645)")
-	}()
-	var exists bool
-	if err := conn.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = $1)`, name).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	// CREATE INDEX IF NOT EXISTS would race benignly anyway, but the probe
-	// keeps the common path silent; plain CREATE INDEX under the lock.
-	stmt := fmt.Sprintf(`CREATE INDEX %s ON chunks
-		USING hnsw ((embedding::vector(%d)) vector_cosine_ops)
-		WHERE is_parent = FALSE AND vector_dims(embedding) = %d`, name, dim, dim)
-	if _, err := conn.Exec(ctx, stmt); err != nil {
-		return fmt.Errorf("ensure %s: %w", name, err)
-	}
-	slog.Info("provisioned dimension index", "index", name)
-	return nil
-}
+// EnsureDimIndex lives in db.go alongside BootstrapSchema — the R-36 fix
+// gave both the same deadlock-proof shape (statement_timeout = 0, bounded
+// lock_timeout, jittered retry) and they belong together.
 
 // ResolveCollectionModel resolves the doc's/collection's bound model row —
 // the single resolution rule (PLAN.md §5, default fallback retired in

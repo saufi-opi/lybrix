@@ -65,13 +65,27 @@ func shouldSlicePDF(docFormat pipeline.Format, pageStart, pageEnd, totalPages in
 	if pageStart <= 0 || pageEnd < pageStart {
 		return false
 	}
-	return !(pageStart == 1 && pageEnd >= totalPages)
+	return !(pageStart == 1 && pageEnd >= totalPages) //nolint:staticcheck,QF1001 // clearer intent than De Morgan form
 }
 
 // SplitAndRequeue replaces a failing shard with finer sub-shards (ladder
 // attempts 2-3). The parent becomes SKIPPED; each sub-shard is a fresh
 // ParseJob. Port of parser.py _split_and_requeue.
+//
+// R-36 phase split: all DB writes (NextShardIdx/SkipShard/InsertShards/
+// total_shards UPDATE/WriteEvent) run inside ONE short TxWithRetry, and the
+// XAddJob loop runs strictly AFTER that tx commits — closing the R-32
+// follow-up (enqueue-before-commit let a racing parser ClaimShard see 0
+// rows and ACK the job into oblivion). The tx fn is idempotent on retry
+// (NextShardIdx is computed inside the tx; a retry re-reads it).
 func SplitAndRequeue(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Document, shard *store.Shard) error {
+	return resplitShard(ctx, deps, doc, shard)
+}
+
+// resplitShard is SplitAndRequeue's body with the R-36 tx shape: one short
+// tx for the DB writes, enqueue strictly after the tx returns. The runner's
+// tx parameter is unused for writes here (the runner tx commits empty).
+func resplitShard(ctx context.Context, deps Deps, doc *store.Document, shard *store.Shard) error {
 	span := shard.PageEnd - shard.PageStart + 1
 	shardPages := 1
 	if shard.Attempts < 3 {
@@ -90,40 +104,74 @@ func SplitAndRequeue(ctx context.Context, deps Deps, tx pgx.Tx, doc *store.Docum
 	for _, b := range fb {
 		bounds = append(bounds, [2]int{shard.PageStart + b.PageStart - 1, shard.PageStart + b.PageEnd - 1})
 	}
-	startIdx, err := deps.DB.NextShardIdx(ctx, tx, doc.ID)
+	// Jobs are BUILT before the tx (pure, from data already in hand) and
+	// SENT only after the tx commits — the ordering contract the pure seam
+	// test pins (TestSubShardJobs).
+	startIdx := -1
+	var jobs []queue.ParseJob
+	err = deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		var txErr error
+		startIdx, txErr = deps.DB.NextShardIdx(ctx, tx, doc.ID)
+		if txErr != nil {
+			return txErr
+		}
+		if err := deps.DB.SkipShard(ctx, tx, doc.ID, shard.Idx); err != nil {
+			return err
+		}
+		if _, err := deps.DB.InsertShards(ctx, tx, doc.ID, bounds, startIdx); err != nil {
+			return err
+		}
+		newTotal := (derefInt(doc.TotalShards)) + len(bounds)
+		if _, err := tx.Exec(ctx,
+			`UPDATE documents SET total_shards = $2, updated_at = NOW() WHERE id = $1`, doc.ID, newTotal); err != nil {
+			return err
+		}
+		return store.WriteEvent(ctx, tx, "warn", "parse",
+			fmt.Sprintf("shard %d re-split into %d sub-shards (ladder attempt %d)", shard.Idx, len(bounds), shard.Attempts),
+			strPtr(doc.ID), intPtr(shard.Idx), strPtr("SHARD_RESPLIT"), nil, nil)
+	})
 	if err != nil {
 		return err
 	}
-	if err := deps.DB.SkipShard(ctx, tx, doc.ID, shard.Idx); err != nil {
-		return err
+	jobs = subShardJobs(doc, shard, bounds, startIdx)
+	for _, job := range jobs {
+		if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
+			return err
+		}
 	}
-	if _, err := deps.DB.InsertShards(ctx, tx, doc.ID, bounds, startIdx); err != nil {
-		return err
-	}
-	newTotal := (derefInt(doc.TotalShards)) + len(bounds)
-	if _, err := tx.Exec(ctx,
-		`UPDATE documents SET total_shards = $2, updated_at = NOW() WHERE id = $1`, doc.ID, newTotal); err != nil {
-		return err
-	}
+	return nil
+}
+
+// subShardJobs builds one ParseJob per bound at startIdx — the pure enqueue
+// payload builder for resplitShard (testable without a DB or Redis; the
+// tx/enqueue ordering contract is pinned by building before and sending
+// after).
+func subShardJobs(doc *store.Document, shard *store.Shard, bounds [][2]int, startIdx int) []queue.ParseJob {
+	jobs := make([]queue.ParseJob, 0, len(bounds))
 	for i, b := range bounds {
-		job := queue.ParseJob{
+		jobs = append(jobs, queue.ParseJob{
 			SchemaVersion: queue.SchemaVersion,
 			DocID:         doc.ID,
 			Idx:           startIdx + i,
 			PageStart:     b[0],
 			PageEnd:       b[1],
 			SourceURI:     doc.SourceURI,
-		}
-		if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamParse, job); err != nil {
-			return err
-		}
+		})
 	}
-	return store.WriteEvent(ctx, tx, "warn", "parse",
-		fmt.Sprintf("shard %d re-split into %d sub-shards (ladder attempt %d)", shard.Idx, len(bounds), shard.Attempts),
-		strPtr(doc.ID), intPtr(shard.Idx), strPtr("SHARD_RESPLIT"), nil, nil)
+	return jobs
 }
 
 // HandleParse is the parser handler: THE heavy one (PRD §6.3).
+//
+// R-36 phase split (lock-ordering rule §1.3.5): the runner's tx parameter
+// is intentionally left unused for writes — the runner tx commits empty.
+// The handler runs as short tx A (claim) → NO tx for the S3/pdfcpu/
+// anydoc/docling/S3-upload work → short tx B (MarkShardDone + settled
+// re-read) → enqueue AFTER B commits. This removes the shard row lock held
+// across the entire parse — the standing lock reservoir behind the
+// 2026-09-27 deadlock storm — and makes the embed enqueue strictly
+// post-commit (the R-32 follow-up: the embedder can never stitch a doc
+// missing the just-committed last shard).
 //
 // Memory discipline, all five controls:
 //
@@ -145,6 +193,9 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return fmt.Errorf("job field %q missing", "idx")
 	}
 
+	// Phase A: reads (pool, no tx) + claim (short tx). The claim takes the
+	// shard row lock; holding it across the parse below would recreate the
+	// (A) reservoir, so the claim tx commits immediately.
 	doc, err := deps.DB.GetDocument(ctx, docID)
 	if err != nil {
 		return err
@@ -154,7 +205,7 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	}
 
 	workerID := fmt.Sprintf("parser-%s", shortID())
-	shard, err := deps.DB.ClaimShard(ctx, tx, docID, idx, workerID, s.ShardLeaseSeconds)
+	shard, err := claimShard(ctx, deps, docID, idx, workerID, s.ShardLeaseSeconds)
 	if err != nil {
 		return err
 	}
@@ -174,7 +225,6 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		// "text_only": fall through with a degraded converter config
 		textOnly = shard.Attempts >= 4
 	}
-
 	tmpDir, err := os.MkdirTemp("", "parse-")
 	if err != nil {
 		return err
@@ -278,30 +328,78 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	if result.DurationMS > 0 {
 		durationMS = int(result.DurationMS)
 	}
-	if err := deps.DB.MarkShardDone(ctx, tx, docID, idx, durationMS, result.PeakRSSMB,
-		"s3://"+s.S3BucketParsed+"/"+parsedKey, result.NeedsOCR, floatPtr(result.MeanCharsPerPage)); err != nil {
-		return err
-	}
 
-	// last shard settled → enqueue embed (§6.3 step 7). MarkShardDone
-	// increments shards_done via SQL; re-read the doc row through the same tx
-	// before checking — a pool read cannot see the uncommitted increment, so
-	// the final shard would appear missing and embedding would wait for the
-	// janitor's next pass.
-	fresh, err := deps.DB.GetDocumentTx(ctx, tx, docID)
-	if err != nil {
-		return err
-	}
-	if fresh != nil && store.BookSettled(fresh) {
-		_, err := queue.XAddJob(ctx, deps.Redis, queue.StreamEmbed, queue.EmbedJob{
-			SchemaVersion: queue.SchemaVersion, DocID: docID,
-		})
+	// Phase B: results (short tx) + enqueue AFTER the tx commits. The
+	// settle check reads the doc row through the same tx that incremented
+	// shards_done (a pool read cannot see the uncommitted increment), and
+	// the embed job is XADDed only once that tx has committed — an embedder
+	// waking on the XADD always sees the final shard (hazard (E), R-32
+	// follow-up).
+	if _, err := finishParse(ctx, deps, docID, idx, durationMS, result.PeakRSSMB,
+		"s3://"+s.S3BucketParsed+"/"+parsedKey, result.NeedsOCR, floatPtr(result.MeanCharsPerPage)); err != nil {
 		return err
 	}
 	return nil
 }
 
+// claimShard is HandleParse's phase A claim: one short TxWithRetry around
+// the atomic ClaimShard, committed before any parse work starts. Retrying
+// the whole claim is safe — ClaimShard's `state IN ('pending','failed')`
+// guard means a retry either re-claims the same row (if the failed tx
+// rolled back) or matches 0 rows (someone else got it → nil shard).
+func claimShard(ctx context.Context, deps Deps, docID string, idx int,
+	workerID string, leaseSeconds int) (*store.Shard, error) {
+	var shard *store.Shard
+	err := deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		var txErr error
+		shard, txErr = deps.DB.ClaimShard(ctx, tx, docID, idx, workerID, leaseSeconds)
+		return txErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return shard, nil
+}
+
+// finishParse is HandleParse's phase B: MarkShardDone + the settled re-read
+// inside ONE short TxWithRetry; the embed enqueue happens strictly AFTER
+// the tx returns (R-36 hazard (E) fix — an embedder waking on the XADD
+// cannot run before the last shard is committed). Returns BookSettled of
+// the freshly-read doc row.
+func finishParse(ctx context.Context, deps Deps, docID string, idx, durationMS, peakRSSMB int,
+	parsedURI string, needsOCR bool, meanChars *float64) (settled bool, err error) {
+	fresh := (*store.Document)(nil)
+	err = deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		if err := deps.DB.MarkShardDone(ctx, tx, docID, idx, durationMS, peakRSSMB,
+			parsedURI, needsOCR, meanChars); err != nil {
+			return err
+		}
+		var txErr error
+		fresh, txErr = deps.DB.GetDocumentTx(ctx, tx, docID)
+		return txErr
+	})
+	if err != nil {
+		return false, err
+	}
+	settled = settledAfterDone(fresh)
+	if settled {
+		if _, err := queue.XAddJob(ctx, deps.Redis, queue.StreamEmbed, queue.EmbedJob{
+			SchemaVersion: queue.SchemaVersion, DocID: docID,
+		}); err != nil {
+			return true, err
+		}
+	}
+	return settled, nil
+}
+
 func floatPtr(f float64) *float64 { return &f }
+
+// settledAfterDone is finishParse's settle decision as a pure seam — a thin
+// wrapper over store.BookSettled kept named here so the table test reads as
+// the handler's decision, not the store helper's.
+func settledAfterDone(doc *store.Document) bool {
+	return doc != nil && store.BookSettled(doc)
+}
 
 func copyFileLocal(dst, src string) error {
 	b, err := os.ReadFile(src)

@@ -3,10 +3,53 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// bumpShardsFailedSQL is the pure builder behind BumpShardsFailed — one
+// statement bumping shards_failed for every doc in the deltas map (R-36:
+// the escalate step's per-doc UPDATE loop becomes one statement). Returns
+// the SQL and its arguments; the empty map yields empty SQL (caller no-ops).
+func bumpShardsFailedSQL(deltas map[string]int) (string, []any) {
+	if len(deltas) == 0 {
+		return "", nil
+	}
+	ids := make([]string, 0, len(deltas))
+	for id := range deltas {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // deterministic order → stable SQL in tests and logs
+	sql := `UPDATE documents SET shards_failed = shards_failed + d.n, updated_at = NOW()
+		FROM (VALUES ` // values appended per doc
+	args := make([]any, 0, len(ids)*2)
+	for i, id := range ids {
+		if i > 0 {
+			sql += ", "
+		}
+		sql += fmt.Sprintf("($%d::uuid, $%d::int)", i*2+1, i*2+2)
+		args = append(args, id, deltas[id])
+	}
+	sql += `) AS d(id, n) WHERE documents.id = d.id`
+	return sql, args
+}
+
+// BumpShardsFailed bumps shards_failed for every doc in deltas in ONE
+// statement — the escalate step's counter update (R-36: the per-doc loop
+// held document row locks statement-by-statement and multiplied round
+// trips; one VALUES join touches each doc exactly once, documents still
+// last-touched per the lock-ordering rule).
+func (d *DB) BumpShardsFailed(ctx context.Context, tx pgx.Tx, deltas map[string]int) error {
+	sql, args := bumpShardsFailedSQL(deltas)
+	if sql == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, sql, args...)
+	return err
+}
 
 // EscalateStuckShards marks pending shards at/over max attempts as failed
 // with SHARD_TIMEOUT and bumps shards_failed per doc. Returns the number
@@ -31,12 +74,14 @@ func (d *DB) EscalateStuckShards(ctx context.Context, tx pgx.Tx, maxAttempts int
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// One batched statement for all docs (R-36): documents is the last
+	// table touched in this tx, per the lock-ordering rule.
+	deltas := make(map[string]int, len(out))
 	for _, e := range out {
-		if _, err := tx.Exec(ctx,
-			`UPDATE documents SET shards_failed = shards_failed + 1, updated_at = NOW() WHERE id = $1`,
-			e.DocID); err != nil {
-			return nil, err
-		}
+		deltas[e.DocID]++
+	}
+	if err := d.BumpShardsFailed(ctx, tx, deltas); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

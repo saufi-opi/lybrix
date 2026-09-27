@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// sec is one second, spelled short for the timeout assertions.
+const sec = time.Second
 
 func TestDefaults(t *testing.T) {
 	s, err := fromEnv([]string{})
@@ -81,5 +87,44 @@ func TestValidation(t *testing.T) {
 	s.RerankSeed.Enabled = true
 	if err := s.Validate(); err == nil {
 		t.Fatal("expected validation error for rerank without url")
+	}
+}
+
+// TestPGTimeoutDefaults pins the R-36 session-timeout defaults (60s/5s/120s).
+func TestPGTimeoutDefaults(t *testing.T) {
+	s, err := fromEnv([]string{})
+	if err != nil {
+		t.Fatalf("defaults failed validation: %v", err)
+	}
+	if s.PGStatementTimeout != 60*sec {
+		t.Fatalf("PGStatementTimeout default drifted: %v", s.PGStatementTimeout)
+	}
+	if s.PGLockTimeout != 5*sec {
+		t.Fatalf("PGLockTimeout default drifted: %v", s.PGLockTimeout)
+	}
+	if s.PGIdleTxTimeout != 120*sec {
+		t.Fatalf("PGIdleTxTimeout default drifted: %v", s.PGIdleTxTimeout)
+	}
+}
+
+// TestPGTimeoutOverrides covers both getduration shapes: bare seconds and
+// explicit Go durations.
+func TestPGTimeoutOverrides(t *testing.T) {
+	s, err := fromEnv([]string{
+		"PG_STATEMENT_TIMEOUT=90", // bare seconds
+		"PG_LOCK_TIMEOUT=2s",      // Go duration
+		"PG_IDLE_TX_TIMEOUT=10m",  // minutes
+	})
+	if err != nil {
+		t.Fatalf("env load failed: %v", err)
+	}
+	if s.PGStatementTimeout != 90*sec {
+		t.Fatalf("PG_STATEMENT_TIMEOUT=90 not applied: %v", s.PGStatementTimeout)
+	}
+	if s.PGLockTimeout != 2*sec {
+		t.Fatalf("PG_LOCK_TIMEOUT=2s not applied: %v", s.PGLockTimeout)
+	}
+	if s.PGIdleTxTimeout != 600*sec {
+		t.Fatalf("PG_IDLE_TX_TIMEOUT=10m not applied: %v", s.PGIdleTxTimeout)
 	}
 }

@@ -30,6 +30,14 @@ type Settings struct {
 
 	S3BucketParsed string
 
+	// PG session timeouts (R-36): every pooled connection self-heals under
+	// contention. Bootstrap/EnsureDimIndex connections override
+	// Statement to 0 (HNSW builds must not be killed mid-flight) and keep
+	// Lock as their contention guard.
+	PGStatementTimeout time.Duration
+	PGLockTimeout      time.Duration
+	PGIdleTxTimeout    time.Duration
+
 	// embedding plane (PRD §4.3: ingest and query planes never share one
 	// server). The legacy EMBED_* / TEI_*_URL vars are retired to a
 	// first-boot SEED: they initialize the embedding_models registry row
@@ -180,6 +188,11 @@ func DefaultSettings() *Settings {
 		S3SecretKey:    "minioadmin",
 		S3BucketRaw:    "files",
 		S3BucketParsed: "files",
+		// R-36 defaults: statement 60s / lock 5s / idle-in-tx 120s — a
+		// wedged or slow tx dies before it becomes a contention reservoir.
+		PGStatementTimeout: 60 * time.Second,
+		PGLockTimeout:      5 * time.Second,
+		PGIdleTxTimeout:    120 * time.Second,
 		EmbedSeed: EmbedSeed{
 			Provider:  "tei",
 			ModelID:   "BAAI/bge-m3",
@@ -247,6 +260,11 @@ func fromEnv(environ []string) (*Settings, error) {
 	defaultBucket := getenv(env, "S3_BUCKET", getenv(env, "S3_BUCKET_NAME", "files"))
 	s.S3BucketRaw = getenv(env, "S3_BUCKET_RAW", defaultBucket)
 	s.S3BucketParsed = getenv(env, "S3_BUCKET_PARSED", defaultBucket)
+	// R-36 session timeouts; getduration accepts seconds ("30") or Go
+	// durations ("30s"), same as the other duration vars.
+	s.PGStatementTimeout = getduration(env, "PG_STATEMENT_TIMEOUT", s.PGStatementTimeout)
+	s.PGLockTimeout = getduration(env, "PG_LOCK_TIMEOUT", s.PGLockTimeout)
+	s.PGIdleTxTimeout = getduration(env, "PG_IDLE_TX_TIMEOUT", s.PGIdleTxTimeout)
 
 	// seed-only vars: legacy names initialize the registry once on an
 	// empty table, then the UI owns the values.

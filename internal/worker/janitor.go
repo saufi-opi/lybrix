@@ -53,54 +53,102 @@ type stats struct {
 var lastRollupBucket *time.Time
 
 // Pass runs one sweep; returns counters for logging/metrics.
+//
+// R-36 structure: one SHORT TxWithRetry per step, and every piece of Redis
+// I/O runs OUTSIDE any tx. The 1.0 "the pass is transactional" shape — one
+// doc-wide tx holding shard/doc row locks across dozens of Redis round-
+// trips — was the ideal deadlock counterparty for the parsers' standing
+// shard locks (the 2026-09-27 storm). Step order is preserved exactly:
+// reclaim BEFORE the sweeps that dedup against re-added entries
+// (janitor.go comment below, R-1/R-6 semantics).
 func (j *Janitor) Pass(ctx context.Context) (map[string]int, error) {
 	now := time.Now()
 	var st stats
 
-	// 1. Reaper: expired running leases → pending (§6.6)
+	// 1. Reaper: expired running leases → pending (§6.6) — pool
+	// autocommit, as today.
 	requeued, err := j.DB.RequeueExpiredLeases(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reaper: %w", err)
 	}
 	st.RequeuedLeases = requeued
 
-	// 2-6. Everything else in one tx (like 1.0: the pass is transactional).
-	err = j.DB.Tx(ctx, func(tx pgx.Tx) error {
+	// 2. escalate — one short tx: shard UPDATEs + batched counter bump +
+	// event rows.
+	err = j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
 		var txErr error
 		st.Escalated, txErr = j.escalate(ctx, tx, now)
-		if txErr != nil {
-			return txErr
-		}
-		docs, txErr := j.DB.NonTerminalDocs(ctx)
-		if txErr != nil {
-			return txErr
-		}
-		st.Reenqueued, txErr = j.requeueSweep(ctx, tx, docs)
-		if txErr != nil {
-			return txErr
-		}
-		st.Reclaimed, st.Quarantined, txErr = j.reclaim(ctx, tx)
-		if txErr != nil {
-			return txErr
-		}
-		st.EmbedSwept, txErr = j.embedSweep(ctx, tx, docs)
-		if txErr != nil {
-			return txErr
-		}
-		st.ParseRescued, txErr = j.pendingShardSweep(ctx, tx, now)
-		if txErr != nil {
-			return txErr
-		}
-		st.StuckWarned, txErr = j.stuckWarn(ctx, tx, now)
-		if txErr != nil {
-			return txErr
-		}
-		st.Rollup, txErr = j.rollup(ctx, tx, now)
 		return txErr
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	// 3. requeueSweep — reads the docs it needs first (pool), then does the
+	// Redis scan + XADDs with NO tx open. Scan failure → skip, never
+	// blind-add (R-1/R-6).
+	docs, err := j.DB.NonTerminalDocs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.Reenqueued, err = j.requeueSweep(ctx, docs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. reclaim — the Redis loop (XAUTOCLAIM/XPENDING/XACK/XDEL/XADD) runs
+	// with NO tx; quarantines are COLLECTED as descriptors and one short tx
+	// afterwards writes all DLQ event rows. MUST run before the sweeps
+	// below: re-added entries become undelivered, so the sweeps' dedup
+	// scans see them.
+	var quarantines []quarantineEvent
+	st.Reclaimed, quarantines, err = j.reclaim(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.Quarantined = len(quarantines)
+	if len(quarantines) > 0 {
+		err = j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+			for _, q := range quarantines {
+				if err := store.WriteEvent(ctx, tx, q.Level, q.Stage, q.Message,
+					q.DocID, q.ShardIdx, q.Code, q.WorkerID, q.Context); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 5. embedSweep — pool reads + Redis scan + XADDs outside any tx; the
+	// rescue events land in one short tx. Scan failure → skip (R-1).
+	st.EmbedSwept, err = j.embedSweep(ctx, docs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. pendingShardSweep — same shape (R-32 rescue; runs after reclaim so
+	// re-added PEL entries are visible to the dedup scan).
+	st.ParseRescued, err = j.pendingShardSweep(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+
+	// 7. stuckWarn — pool read + one short tx for the events.
+	st.StuckWarned, err = j.stuckWarn(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+
+	// 8. rollup — pool reads + queue-depth (Redis) outside any tx; the
+	// upsert lands in a short tx.
+	st.Rollup, err = j.rollup(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+
 	return map[string]int{
 		"requeued_leases": int(st.RequeuedLeases),
 		"escalated":       st.Escalated,
@@ -131,8 +179,9 @@ func (j *Janitor) escalate(ctx context.Context, tx pgx.Tx, now time.Time) (int, 
 // requeue: non-terminal docs with no queue entry (Redis loss, §6.6).
 // Dedup against undelivered split jobs first (R-6): an UPLOADED doc whose
 // split job sits unacked must not be re-XADDed every pass. Scan failure →
-// skip the requeue entirely, never blind-add.
-func (j *Janitor) requeueSweep(ctx context.Context, tx pgx.Tx, docs []*store.Document) (int, error) {
+// skip the requeue entirely, never blind-add. R-36: no tx parameter — the
+// XADDs always ran tx-side work only; the sweep never wrote PG.
+func (j *Janitor) requeueSweep(ctx context.Context, docs []*store.Document) (int, error) {
 	queuedSplitIDs, err := PendingJobDocIDs(ctx, j.Redis, queue.StreamSplit)
 	if err != nil {
 		slog.Warn("doc.split requeue skipped: stream scan failed (no blind re-add)", "err", err)
@@ -166,7 +215,13 @@ func (j *Janitor) requeueSweep(ctx context.Context, tx pgx.Tx, docs []*store.Doc
 // events row + XACK/XDEL) instead of re-added. The cap read is fail-open:
 // if the XPENDING lookup fails or returns nothing, the entry re-adds as
 // before — quarantine only ever fires on a real delivery count.
-func (j *Janitor) reclaim(ctx context.Context, tx pgx.Tx) (reclaimed, quarantined int, err error) {
+//
+// R-36: the whole loop runs with NO tx open. Quarantined entries are
+// collected as quarantineEvent descriptors; the caller writes all DLQ
+// event rows in one short tx afterwards. The XACK/XDEL (the point of the
+// operation — dropping the entry from the PEL) still fires immediately, so
+// the entry cannot be re-claimed while its event row waits.
+func (j *Janitor) reclaim(ctx context.Context) (reclaimed int, quarantines []quarantineEvent, err error) {
 	deliveryCap := j.Settings.MaxShardAttempts + 1
 	if deliveryCap < 5 {
 		deliveryCap = 5
@@ -177,44 +232,88 @@ func (j *Janitor) reclaim(ctx context.Context, tx pgx.Tx) (reclaimed, quarantine
 			continue // per-stream tolerance, like 1.0
 		}
 		for _, entry := range entries {
-			job := entry.RawJob
-			if job == "" {
-				_ = j.Redis.XAck(ctx, stream, queue.ConsumerGroup, entry.ID).Err()
-				_ = j.Redis.XDel(ctx, stream, entry.ID).Err() // trim the husk too
-				continue
+			decided, q, err := reclaimDecide(ctx, j.Redis, stream, entry.ID, entry.RawJob, deliveryCap)
+			if err != nil {
+				return reclaimed, quarantines, err
 			}
-			// delivery count for THIS entry (fail-open: query trouble or an
-			// empty answer → re-add, never quarantine on a guess)
-			timesDelivered := -1
-			pending, perr := j.Redis.XPendingExt(ctx, redisPendingExtArgsPtr(stream, entry.ID)).Result()
-			if perr == nil && len(pending) > 0 {
-				timesDelivered = int(pending[0].RetryCount)
-			} else if perr != nil {
-				slog.Warn("reclaim: XPENDING failed — capping disabled for this entry",
-					"stream", stream, "entry", entry.ID, "err", perr)
+			switch decided {
+			case reclaimQuarantined:
+				quarantines = append(quarantines, q)
+			case reclaimReadded:
+				reclaimed++
 			}
-			if timesDelivered >= 0 && timesDelivered >= deliveryCap {
-				j.quarantine(ctx, tx, stream, entry.ID, job, int64(timesDelivered))
-				quarantined++
-				continue
-			}
-			if _, err := j.Redis.XAdd(ctx, &redis.XAddArgs{
-				Stream: stream, Values: map[string]any{"job": job},
-			}).Result(); err != nil {
-				return reclaimed, quarantined, err
-			}
-			_ = j.Redis.XAck(ctx, stream, queue.ConsumerGroup, entry.ID).Err()
-			_ = j.Redis.XDel(ctx, stream, entry.ID).Err() // old entry trimmed; fresh copy re-added
-			reclaimed++
 		}
 	}
-	return reclaimed, quarantined, nil
+	return reclaimed, quarantines, nil
 }
 
-// quarantine writes one DLQ events row, then drops the entry (both Redis
-// calls best-effort — dropping the stream entry is the point, the events
-// row is the durable record).
-func (j *Janitor) quarantine(ctx context.Context, tx pgx.Tx, stream, entryID, rawJob string, timesDelivered int64) {
+type reclaimDecision int
+
+const (
+	reclaimKept        reclaimDecision = iota // husk entry: acked+deleted only
+	reclaimReadded                            // under cap: fresh copy re-added
+	reclaimQuarantined                        // at/over cap: descriptor collected
+)
+
+// reclaimDecide is the per-entry reclaim decision — the seam the
+// miniredis lane can drive directly (miniredis does not implement
+// XAUTOCLAIM, so the loop's XAUTOCLAIM half is exercised in the
+// testcontainers soak lane instead). Semantics unchanged from 1.0/R-8:
+// empty job → XACK+XDEL the husk; delivery count at/over cap → quarantine
+// descriptor (XACK+XDEL fires here); otherwise re-add fresh + XACK+XDEL.
+// Delivery-count lookup is fail-open: a failed/empty XPENDING re-adds.
+func reclaimDecide(ctx context.Context, r redis.Cmdable, stream, entryID, rawJob string,
+	deliveryCap int) (reclaimDecision, quarantineEvent, error) {
+	if rawJob == "" {
+		_ = r.XAck(ctx, stream, queue.ConsumerGroup, entryID).Err()
+		_ = r.XDel(ctx, stream, entryID).Err() // trim the husk too
+		return reclaimKept, quarantineEvent{}, nil
+	}
+	// delivery count for THIS entry (fail-open: query trouble or an
+	// empty answer → re-add, never quarantine on a guess)
+	timesDelivered := -1
+	pending, perr := r.XPendingExt(ctx, redisPendingExtArgsPtr(stream, entryID)).Result()
+	if perr == nil && len(pending) > 0 {
+		timesDelivered = int(pending[0].RetryCount)
+	} else if perr != nil {
+		slog.Warn("reclaim: XPENDING failed — capping disabled for this entry",
+			"stream", stream, "entry", entryID, "err", perr)
+	}
+	if timesDelivered >= 0 && timesDelivered >= deliveryCap {
+		q := quarantineEventOf(stream, entryID, rawJob, int64(timesDelivered))
+		// XACK/XDEL fires with the collection — the entry cannot be
+		// re-claimed while its event row waits.
+		_ = r.XAck(ctx, stream, queue.ConsumerGroup, entryID).Err()
+		_ = r.XDel(ctx, stream, entryID).Err()
+		return reclaimQuarantined, q, nil
+	}
+	if _, err := r.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream, Values: map[string]any{"job": rawJob},
+	}).Result(); err != nil {
+		return reclaimKept, quarantineEvent{}, err
+	}
+	_ = r.XAck(ctx, stream, queue.ConsumerGroup, entryID).Err()
+	_ = r.XDel(ctx, stream, entryID).Err() // old entry trimmed; fresh copy re-added
+	return reclaimReadded, quarantineEvent{}, nil
+}
+
+// quarantineEvent is one DLQ record: the events-row fields for a quarantined
+// stream entry, collected by reclaim (outside any tx) and written by the
+// caller in one short tx.
+type quarantineEvent struct {
+	Level    string
+	Stage    string
+	Message  string
+	DocID    *string
+	ShardIdx *int
+	Code     *string
+	WorkerID *string
+	Context  map[string]any
+}
+
+// quarantineEventOf builds the DLQ descriptor for one quarantined entry —
+// the extraction half of the old quarantine (pure, testable).
+func quarantineEventOf(stream, entryID, rawJob string, timesDelivered int64) quarantineEvent {
 	var docID *string
 	var idx *int
 	var payload map[string]any
@@ -228,11 +327,16 @@ func (j *Janitor) quarantine(ctx context.Context, tx pgx.Tx, stream, entryID, ra
 		}
 	}
 	detail := map[string]any{"detail": rawJob}
-	_ = store.WriteEvent(ctx, tx, "error", "dlq",
-		fmt.Sprintf("job quarantined from %s after %d deliveries", stream, timesDelivered),
-		docID, idx, strPtr("DLQ"), nil, detail)
-	_ = j.Redis.XAck(ctx, stream, queue.ConsumerGroup, entryID).Err()
-	_ = j.Redis.XDel(ctx, stream, entryID).Err()
+	return quarantineEvent{
+		Level:    "error",
+		Stage:    "dlq",
+		Message:  fmt.Sprintf("job quarantined from %s after %d deliveries", stream, timesDelivered),
+		DocID:    docID,
+		ShardIdx: idx,
+		Code:     strPtr("DLQ"),
+		WorkerID: nil,
+		Context:  detail,
+	}
 }
 
 // embedSweep: settled-but-never-enqueued sweep — a parser that dies between
@@ -241,14 +345,16 @@ func (j *Janitor) quarantine(ctx context.Context, tx pgx.Tx, stream, entryID, ra
 // (chunk ON CONFLICT DO NOTHING), BUT the sweep runs every pass, so it must
 // dedup against jobs already waiting on the stream (real incident
 // 2026-09-11: no dedup + an unacked job ⇒ 3.2k dupes). Scan failure → skip
-// (no blind re-add).
-func (j *Janitor) embedSweep(ctx context.Context, tx pgx.Tx, docs []*store.Document) (int, error) {
+// (no blind re-add). R-36: Redis I/O outside any tx; rescue events land in
+// one short tx after the XADDs.
+func (j *Janitor) embedSweep(ctx context.Context, docs []*store.Document) (int, error) {
 	queuedIDs, err := PendingJobDocIDs(ctx, j.Redis, queue.StreamEmbed)
 	if err != nil {
 		slog.Warn("embed sweep skipped: stream scan failed (no blind re-add)", "err", err)
 		return 0, nil
 	}
 	n := 0
+	var events []quarantineEvent
 	for _, doc := range docs {
 		if doc.State != store.StateParsing {
 			continue
@@ -263,10 +369,29 @@ func (j *Janitor) embedSweep(ctx context.Context, tx pgx.Tx, docs []*store.Docum
 		if _, err := queue.XAddJob(ctx, j.Redis, queue.StreamEmbed, job); err != nil {
 			return n, err
 		}
-		_ = store.WriteEvent(ctx, tx, "warn", "janitor",
-			"settled book found without embed job — re-enqueued",
-			strPtr(doc.ID), nil, strPtr("EMBED_RESCUE"), nil, nil)
+		events = append(events, quarantineEvent{
+			Level:   "warn",
+			Stage:   "janitor",
+			Message: "settled book found without embed job — re-enqueued",
+			DocID:   strPtr(doc.ID),
+			Code:    strPtr("EMBED_RESCUE"),
+			Context: map[string]any{},
+		})
 		n++
+	}
+	if len(events) > 0 {
+		err = j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+			for _, ev := range events {
+				if err := store.WriteEvent(ctx, tx, ev.Level, ev.Stage, ev.Message,
+					ev.DocID, ev.ShardIdx, ev.Code, ev.WorkerID, ev.Context); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return n, err
+		}
 	}
 	return n, nil
 }
@@ -333,7 +458,7 @@ func missingParseJobs(shards []store.StalePendingShard, queued map[string]bool) 
 // skips the sweep entirely (fail-open, never blind re-add — the
 // 2026-09-11 doc.embed flood is the regression this forbids). Runs after
 // reclaim, so re-added PEL entries are visible to the dedup scan.
-func (j *Janitor) pendingShardSweep(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+func (j *Janitor) pendingShardSweep(ctx context.Context, now time.Time) (int, error) {
 	shards, err := j.DB.NeverAttemptedShards(ctx, now.Add(-shardSweepGrace))
 	if err != nil {
 		return 0, fmt.Errorf("never-attempted shard query failed: %w", err)
@@ -357,10 +482,20 @@ func (j *Janitor) pendingShardSweep(ctx context.Context, tx pgx.Tx, now time.Tim
 		}
 		rescuedByDoc[job.DocID] = true
 	}
-	for docID := range rescuedByDoc {
-		_ = store.WriteEvent(ctx, tx, "warn", "janitor",
-			fmt.Sprintf("%d never-attempted shard(s) re-enqueued — R-32 rescue", countJobs(jobs, docID)),
-			strPtr(docID), nil, strPtr("PARSE_RESCUE"), nil, nil)
+	// Rescue events in one short tx, after the XADDs (R-36: no Redis I/O
+	// inside a tx).
+	err = j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		for docID := range rescuedByDoc {
+			if err := store.WriteEvent(ctx, tx, "warn", "janitor",
+				fmt.Sprintf("%d never-attempted shard(s) re-enqueued — R-32 rescue", countJobs(jobs, docID)),
+				strPtr(docID), nil, strPtr("PARSE_RESCUE"), nil, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return len(jobs), err
 	}
 	return len(jobs), nil
 }
@@ -377,26 +512,39 @@ func countJobs(jobs []queue.ParseJob, docID string) int {
 	return n
 }
 
-// stuckWarn: stuck-document warning (§6.6) — informational only.
-func (j *Janitor) stuckWarn(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+// stuckWarn: stuck-document warning (§6.6) — informational only. R-36:
+// pool read + one short tx for the events, no Redis I/O at all.
+func (j *Janitor) stuckWarn(ctx context.Context, now time.Time) (int, error) {
 	cutoff := now.Add(-time.Duration(j.Settings.StuckMinutes) * time.Minute)
 	docs, err := j.DB.StuckDocs(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	for _, doc := range docs {
-		_ = store.WriteEvent(ctx, tx, "warn", "janitor",
-			fmt.Sprintf("document non-terminal for over %d min (state=%s)", j.Settings.StuckMinutes, doc.State),
-			strPtr(doc.ID), nil, strPtr("STUCK_DOCUMENT"), nil, nil)
+	if len(docs) == 0 {
+		return 0, nil
+	}
+	err = j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		for _, doc := range docs {
+			if err := store.WriteEvent(ctx, tx, "warn", "janitor",
+				fmt.Sprintf("document non-terminal for over %d min (state=%s)", j.Settings.StuckMinutes, doc.State),
+				strPtr(doc.ID), nil, strPtr("STUCK_DOCUMENT"), nil, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return len(docs), err
 	}
 	return len(docs), nil
 }
 
 // rollup: metrics rollup (PRD §10.1) — one row per minute bucket from real
 // data: per-minute deltas from the previous bucket's snapshot + windowed
-// p50/p95 from shards.done_at. Runs inside the pass transaction; a Redis
-// read failure is caught inside and never aborts the pass.
-func (j *Janitor) rollup(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+// p50/p95 from shards.done_at. R-36: pool reads + queue-depth (Redis)
+// outside any tx; UpsertMetricsRollup lands in a short tx. A Redis read
+// failure is caught inside and never aborts the pass.
+func (j *Janitor) rollup(ctx context.Context, now time.Time) (int, error) {
 	bucket := now.Truncate(time.Minute)
 	if lastRollupBucket != nil && !bucket.After(*lastRollupBucket) {
 		return 0, nil
@@ -444,7 +592,9 @@ func (j *Janitor) rollup(ctx context.Context, tx pgx.Tx, now time.Time) (int, er
 	p50 := pct(durations, 50)
 	p95 := pct(durations, 95)
 	rssP95 := pct(rss, 95)
-	if err := j.DB.UpsertMetricsRollup(ctx, bucket, &pages, &done, &failed, &chunksEmbedded, p50, p95, rssP95, qd); err != nil {
+	if err := j.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		return j.DB.UpsertMetricsRollup(ctx, bucket, &pages, &done, &failed, &chunksEmbedded, p50, p95, rssP95, qd)
+	}); err != nil {
 		return 0, err
 	}
 	b := bucket
