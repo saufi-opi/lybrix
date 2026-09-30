@@ -8,8 +8,8 @@ import (
 )
 
 // Format is the ingestion format family (Workstream 2's shared table). The
-// anydoc fast path maps these onto the ABI's ANYDOC_FORMAT_* tags via
-// anydocFormatFor (anydoc.go) — never via numeric codes (the old in-file
+// anydoc fast path resolves these by asking the binding (anydocFormatFor →
+// anydoc.FormatFromExtension) — never via numeric codes (the old in-file
 // table PDF=0…TXT=4 disagreed with the real ABI, where PDF=3 DOCX=1 PPTX=5
 // XLSX=8, and sent PDF as tag 0 = DOC; BACKLOG R-23).
 type Format int

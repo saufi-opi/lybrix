@@ -17,9 +17,6 @@ type ParseRequest struct {
 	TextOnly bool
 	// NeedOCR (gate verdict): skip the born-digital fast path.
 	NeedOCR bool
-	// SkipAnyDoc forces the docling tier (EPUB: anydoc cannot open a zip
-	// container; docling parses EPUB natively).
-	SkipAnyDoc bool
 	// DocFormat marks which ingestion format family this shard belongs to
 	// (office/text shards are single synthetic shards — the whole file is
 	// the unit). PDF remains the default zero value.
@@ -45,4 +42,8 @@ type ParseResult struct {
 type Parser interface {
 	Parse(ctx context.Context, req ParseRequest) (ParseResult, error)
 	Available() bool
+	// Supports reports whether this parser has a fast path for f. The
+	// routing decision is the implementation's capability, not a
+	// caller-maintained format table.
+	Supports(f Format) bool
 }

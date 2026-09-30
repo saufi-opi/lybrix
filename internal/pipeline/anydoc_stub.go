@@ -18,3 +18,7 @@ func (AnyDocParser) Parse(ctx context.Context, req ParseRequest) (ParseResult, e
 
 // Available reports whether the fast path is linked in.
 func (AnyDocParser) Available() bool { return false }
+
+// Supports reports whether the fast path handles f — no fast paths in the
+// stub build.
+func (AnyDocParser) Supports(Format) bool { return false }

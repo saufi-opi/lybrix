@@ -5,13 +5,13 @@ COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 GO ?= go
 
 .PHONY: help up-core up-ingest up down-core down-ingest down logs-core logs-ingest \
-        test lint vet build build-anydoc ps-core ps-ingest restart-core restart-ingest pull-core pull-ingest \
+        test test-anydoc lint vet build build-anydoc ps-core ps-ingest restart-core restart-ingest pull-core pull-ingest \
         keys-bootstrap
 
 help:
 	@echo "core (VM2):    make up-core / down-core / logs-core / ps-core / pull-core"
 	@echo "ingest (nsspq): make up-ingest / down-ingest / logs-ingest / ps-ingest / pull-ingest"
-	@echo "go:            make build / test / lint / vet"
+	@echo "go:            make build / test / test-anydoc / lint / vet"
 	@echo "images:        make build-anydoc  (docker, WITH_ANYDOC=1 tagged lane)"
 	@echo "first boot:    schema applies at serve boot (embedded); keys via: make keys-bootstrap"
 
@@ -26,6 +26,13 @@ build-anydoc:
 
 test:
 	$(GO) test ./...
+
+# The tagged anydoc lane (CI: test-anydoc job). Needs cargo on the host —
+# builds the Rust static archive first, then runs the pipeline tests with
+# the real CGO binding linked. Skipped lanes here mean untested routing.
+test-anydoc:
+	scripts/build-anydoc-lib.sh
+	CGO_ENABLED=1 $(GO) test -tags anydoc ./internal/pipeline/...
 
 vet:
 	$(GO) vet ./...
