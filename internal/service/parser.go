@@ -324,7 +324,6 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		Attempt:    shard.Attempts,
 		ShardPages: s.ShardPages,
 		TextOnly:   textOnly,
-		SkipAnyDoc: docFormat == pipeline.FmtEPUB,
 		DocFormat:  docFormat,
 	})
 	if err != nil {

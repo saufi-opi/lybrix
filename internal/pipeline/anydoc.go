@@ -26,9 +26,9 @@ func (AnyDocParser) Available() bool { return true }
 
 // Parse converts one shard to GFM markdown in-process. Sub-100ms per shard
 // is the expected steady state (blueprint §4.2). Format mapping is the
-// binding's job: pipeline.Format → anydoc.Format → the ABI's C tags
-// (anydoc.h ANYDOC_FORMAT_*); pdf arrives as ANYDOC_FORMAT_PDF (3), not the
-// 0 the retired fileformat.go table claimed.
+// binding's job, literally: the pipeline asks the linked binding which
+// formats it can convert (Supports / anydoc.FormatFromExtension) and routes
+// accordingly — no hand-maintained format table in between.
 func (AnyDocParser) Parse(_ context.Context, req ParseRequest) (ParseResult, error) {
 	started := time.Now()
 
@@ -58,22 +58,30 @@ func (AnyDocParser) Parse(_ context.Context, req ParseRequest) (ParseResult, err
 }
 
 // anydocFormatFor maps the pipeline format table onto the binding's Format
-// names. Single source of truth for the crossover; anything unmapped here
-// (EPUB, HTML, MD) has no fast path by design (parser.go routing).
+// names. Capability-driven: anything the binding's extension table covers
+// is mapped straight through — the routing decision is the binding's
+// capability, never a hand-maintained table (the retired switch went stale
+// and cost prod a 97s/docling EPUB tail while the binding sat there with
+// ANYDOC_FORMAT_EPUB = 7; BACKLOG R-51). The only exceptions are explicit,
+// each with a rationale:
+//
+//   - FmtTXT must never reach anydoc: the ABI has no plain-text format, and
+//     the closest extension-table neighbor, CSV, would mis-parse plain text.
+//   - FmtMD / FmtHTML have no meaningful ABI mapping.
+//
+// The two-tier parser already routes TXT/MD through the pure-Go passthrough
+// and HTML straight to docling before anydoc is consulted (parser.go), so
+// these exceptions are defense in depth, not the routing mechanism.
 func anydocFormatFor(f Format) (anydoc.Format, bool) {
 	switch f {
-	case FmtPDF:
-		return anydoc.FormatPdf, true
-	case FmtDOCX:
-		return anydoc.FormatDocx, true
-	case FmtPPTX:
-		return anydoc.FormatPptx, true
-	case FmtXLSX:
-		return anydoc.FormatXlsx, true
+	case FmtTXT, FmtMD, FmtHTML:
+		return "", false
 	}
-	// FmtTXT (and EPUB/HTML/MD) deliberately unmapped: the ABI has no plain
-	// text format (the closest, CSV, would mis-parse text), and the two-tier
-	// parser routes TXT/MD through the pure-Go passthrough before anydoc is
-	// consulted.
-	return "", false
+	return anydoc.FormatFromExtension(f.Ext())
+}
+
+// Supports reports whether the linked binding has a fast path for f.
+func (AnyDocParser) Supports(f Format) bool {
+	_, ok := anydocFormatFor(f)
+	return ok
 }

@@ -35,3 +35,7 @@ __pycache__/
 
 # Ops checkpoints
 scripts/bm25_backfill_checkpoint.json
+
+# anydoc build outputs (Rust archive + patched crate scratch)
+third_party/anydoc-go/lib/
+third_party/anydoc-go/patched-anydoc/

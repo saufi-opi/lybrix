@@ -29,3 +29,20 @@ func TestTwoTierFallsThroughToDocling(t *testing.T) {
 		t.Fatal("stub build must not select anydoc")
 	}
 }
+
+func TestStubSupportsNothing(t *testing.T) {
+	p := AnyDocParser{}
+	for _, f := range allFormats() {
+		if p.Supports(f) {
+			t.Errorf("stub Supports(%v) = true; stub claims nothing", f)
+		}
+	}
+	// tier 1 must be unreachable in the stub lane for every format
+	tp := NewTwoTierParser("http://localhost:1", 50, 20, true)
+	for _, f := range allFormats() {
+		req := ParseRequest{DocFormat: f}
+		if tp.anydocEligible(req) {
+			t.Errorf("stub anydocEligible(DocFormat=%v) = true", f)
+		}
+	}
+}

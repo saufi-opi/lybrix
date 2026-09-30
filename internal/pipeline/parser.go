@@ -48,17 +48,30 @@ func (unavailableParser) Parse(context.Context, ParseRequest) (ParseResult, erro
 	return ParseResult{}, ErrAnyDocUnavailable
 }
 func (unavailableParser) Available() bool { return false }
+func (unavailableParser) Supports(Format) bool {
+	return false
+}
+
+// anydocEligible is the tier-1 gate: the fast path is attempted only when
+// the parser is linked, the shard is born-digital, and the parser itself
+// claims the format (capability-driven; the stub claims nothing).
+func (t *TwoTierParser) anydocEligible(req ParseRequest) bool {
+	return !req.NeedOCR && t.AnyDoc.Available() && t.AnyDoc.Supports(req.DocFormat)
+}
 
 // Parse runs the two-tier flow for one shard.
 //
-// Routing (Workstream 2): PDF keeps the full gate → anydoc(0) → yield →
-// docling flow. EPUB skips the gate AND anydoc (docling parses EPUB
-// natively). DOCX/PPTX/XLSX skip the OCR gate (no pdfcpu page probe on a
-// non-PDF) but take the anydoc fast path (codes 1/2/3) with a docling
+// Routing (Workstream 2, capability-driven): the tier-1 gate asks the
+// linked parser whether it supports the shard's format — the binding's
+// capability decides routing, not a hand-maintained table. PDF keeps the
+// full gate → anydoc → yield → docling flow. EPUB now attempts anydoc
+// first too (the binding carries ANYDOC_FORMAT_EPUB) with docling as the
+// error/low-yield fallback. DOCX/PPTX/XLSX skip the OCR gate (no pdfcpu
+// page probe on a non-PDF) and take the anydoc fast path with a docling
 // fallback. TXT/MD are pure-Go passthrough (file bytes are the markdown —
-// no CGO, so the CI stub lane works). HTML goes to docling directly (anydoc
-// has no html code). Non-PDF shards are single synthetic shards — the file
-// passed whole.
+// no CGO, so the CI stub lane works). HTML goes to docling directly (the
+// binding has no html mapping). Non-PDF shards are single synthetic
+// shards — the file passed whole.
 func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResult, error) {
 	started := time.Now()
 	pages := req.PageEnd - req.PageStart + 1
@@ -125,9 +138,10 @@ func (t *TwoTierParser) Parse(ctx context.Context, req ParseRequest) (ParseResul
 		}, nil
 	}
 
-	// Tier 1: anydoc in-process — born-digital PDFs (code 0) and office
-	// docs (codes 1/2/3); skipped for EPUB (zip container).
-	if !req.SkipAnyDoc && !needOCR && t.AnyDoc.Available() {
+	// Tier 1: anydoc in-process — capability-driven: the gate consults the
+	// parser itself (EPUB included since the binding carries
+	// ANYDOC_FORMAT_EPUB = 7); born-digital only.
+	if t.anydocEligible(req) {
 		res, err := t.AnyDoc.Parse(ctx, req)
 		if err == nil && YieldOK(res.Markdown, pages, t.MinYieldCharsPerPage) {
 			res.NeedsOCR = false

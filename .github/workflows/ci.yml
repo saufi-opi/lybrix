@@ -35,6 +35,35 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  test-anydoc:
+    name: Test (anydoc CGO lane)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/anydoc-go
+
+      - name: Build anydoc static archive
+        run: scripts/build-anydoc-lib.sh
+
+      # CGO_ENABLED is set explicitly — do not rely on the runner default
+      # staying 1.
+      - name: Run tagged tests
+        run: CGO_ENABLED=1 go test -tags anydoc ./internal/pipeline/...
+
+      - name: Tagged build
+        run: CGO_ENABLED=1 go build -tags anydoc ./cmd/lybrix-server
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
@@ -99,7 +128,7 @@ jobs:
 
   publish-edge:
     name: Publish :edge
-    needs: [test, lint, govulncheck, docker-build]
+    needs: [test, test-anydoc, lint, govulncheck, docker-build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
@@ -141,7 +170,7 @@ jobs:
 
   publish-release:
     name: Publish release
-    needs: [test, lint, govulncheck, docker-build]
+    needs: [test, test-anydoc, lint, govulncheck, docker-build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     strategy:

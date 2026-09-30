@@ -133,4 +133,3 @@ func encryptedFixturePath(tb testing.TB, n int) string {
 	}
 	return dst
 }
-
