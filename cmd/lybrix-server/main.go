@@ -217,6 +217,7 @@ func runWorker(ctx context.Context, settings *config.Settings, stream, name stri
 		Parser: pipeline.NewTwoTierParser(settings.DoclingURL,
 			settings.MinYieldCharsPerPage, settings.OCRMinCharsPerPage, settings.AnyDocEnabled),
 	}
+	deps.Parser.TuneDocling(settings.DoclingHTTPTimeout, settings.DoclingMaxRetries)
 	var handler func(context.Context, service.Deps, txT, map[string]any) error
 	switch name {
 	case "splitter":

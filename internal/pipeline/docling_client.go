@@ -38,6 +38,10 @@ type DoclingClient struct {
 }
 
 // NewDoclingClient builds a client against the docling-serve base URL.
+// timeoutMS <= 0 or retries < 0 keep the historical defaults (120s / 5).
+// R-52: env-tunable (DOCLING_HTTP_TIMEOUT_S / DOCLING_MAX_RETRIES) — a
+// poison page cost 6×120s of sequential single-consumer time when both
+// were hardcoded, wedging the whole parse fleet for ~12 minutes per shard.
 func NewDoclingClient(baseURL string) *DoclingClient {
 	return &DoclingClient{
 		baseURL:          baseURL,
@@ -45,6 +49,19 @@ func NewDoclingClient(baseURL string) *DoclingClient {
 		maxRetries:       5,
 		breakerThreshold: 5,
 		breakerCooldown:  30 * time.Second,
+	}
+}
+
+// Tune overrides the retry budget and HTTP timeout after construction.
+// Zero values keep the current setting (R-52: env-tunable poison-page blast
+// radius — 6 hardcoded retries × 120s wedged the sequential parse consumer
+// for ~12 minutes per heavy page).
+func (c *DoclingClient) Tune(httpTimeout time.Duration, maxRetries int) {
+	if httpTimeout > 0 {
+		c.http.Timeout = httpTimeout
+	}
+	if maxRetries > 0 {
+		c.maxRetries = maxRetries
 	}
 }
 

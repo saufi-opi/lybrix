@@ -41,6 +41,13 @@ func NewTwoTierParser(doclingURL string, minYield, ocrMin int, anydocEnabled boo
 	}
 }
 
+// TuneDocling overrides the docling client's retry budget and HTTP timeout
+// (R-52: DOCLING_HTTP_TIMEOUT_S / DOCLING_MAX_RETRIES). Zero values keep
+// current settings. Safe to call before the parser starts serving jobs.
+func (t *TwoTierParser) TuneDocling(httpTimeout time.Duration, maxRetries int) {
+	t.Docling.Tune(httpTimeout, maxRetries)
+}
+
 // unavailableParser makes the "no fast path" choice explicit.
 type unavailableParser struct{}
 

@@ -69,6 +69,8 @@ type Settings struct {
 	ParserPDFCacheDir    string
 	OCRMinCharsPerPage   int
 	DoclingURL           string
+	DoclingHTTPTimeout   time.Duration
+	DoclingMaxRetries    int
 	AnyDocEnabled        bool
 	MinYieldCharsPerPage int
 
@@ -214,6 +216,8 @@ func DefaultSettings() *Settings {
 		ShardLeaseSeconds:    600,
 		OCRMinCharsPerPage:   20,
 		DoclingURL:           "http://localhost:5001",
+		DoclingHTTPTimeout:   120 * time.Second,
+		DoclingMaxRetries:    5,
 		AnyDocEnabled:        true,
 		MinYieldCharsPerPage: 50,
 		MaxParseBacklog:      2000,
@@ -289,6 +293,8 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.ParserPDFCacheDir = getenv(env, "PARSER_PDF_CACHE_DIR", "")
 	s.OCRMinCharsPerPage = getint(env, "OCR_MIN_CHARS_PER_PAGE", s.OCRMinCharsPerPage)
 	s.DoclingURL = getenv(env, "DOCLING_URL", s.DoclingURL)
+	s.DoclingHTTPTimeout = getduration(env, "DOCLING_HTTP_TIMEOUT_S", s.DoclingHTTPTimeout)
+	s.DoclingMaxRetries = getint(env, "DOCLING_MAX_RETRIES", s.DoclingMaxRetries)
 	s.AnyDocEnabled = getbool(env, "ANYDOC_ENABLED", s.AnyDocEnabled)
 	s.MinYieldCharsPerPage = getint(env, "MIN_YIELD_CHARS_PER_PAGE", s.MinYieldCharsPerPage)
 	s.MaxParseBacklog = getint(env, "MAX_PARSE_BACKLOG", s.MaxParseBacklog)
