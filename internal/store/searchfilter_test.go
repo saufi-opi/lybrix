@@ -26,7 +26,8 @@ func TestBuildMetadataFilterAuthor(t *testing.T) {
 	if !strings.Contains(sql, "lower(df.author) = lower($1)") {
 		t.Fatalf("author predicate drift: %s", sql)
 	}
-	if !strings.HasPrefix(sql, " AND EXISTS (SELECT 1 FROM documents df WHERE df.id = chunks.doc_id") {
+	// No leading " AND ": templates splice this as "($n = '' OR <fragment>)".
+	if !strings.HasPrefix(sql, "EXISTS (SELECT 1 FROM documents df WHERE df.id = chunks.doc_id") {
 		t.Fatalf("EXISTS wrapper drift: %s", sql)
 	}
 	if len(args) != 1 || args[0] != "Tolkien" {

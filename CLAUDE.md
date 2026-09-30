@@ -42,11 +42,11 @@ make up-ingest        # lybrix-splitter/parser×4/embedder/janitor + docling-ser
 make down-ingest      # stops consumers immediately
 ```
 
-Go is pinned to 1.25 (`go.mod`). Config lives in `.env` (copy from `deploy/.env.example`); every value is read by `internal/config` and nothing else touches the environment. Store tests boot `paradedb/paradedb:17` via testcontainers and **skip cleanly when no docker socket exists** — the CI lane is DB-free. Queue tests run on miniredis.
+Go is pinned to 1.25 (`go.mod`). Config lives in `.env` (copy from `deploy/.env.example`); every value is read by `internal/config` and nothing else touches the environment. Store tests boot the pinned `paradedb/paradedb:0.25.9-pg17` via testcontainers (prod version parity — pg_search's build participates in the BM25 leg): `mustDB` **skips only when the docker endpoint is unreachable** (dockerless dev) and **fatals on any boot error** — a silent skip on a bad tag/pull failure was the R-40 incident. The full store suite needs ~10 min on a 2-core host (36 real container boots) — pass `-timeout 45m`, not just the 10m default. Queue tests run on miniredis.
 
 Web UI (Next.js 15 App Router + Tailwind v4 + shadcn/ui, Biome lint — theme is "paper & press", dark-only, tokens in `app/globals.css`) has its own toolchain in `services/web/`: `npm run dev|build`, `npm run lint`, and `npm run generate-client` — regenerate the typed API client (`lib/client/`, generated code, never hand-edit) from `openapi.json` after changing the API contract: `curl http://localhost:8000/openapi.json > openapi.json && npm run generate-client`. Server components call the api directly via `API_URL`; browser calls ride the same-origin rewrite (`next.config.mjs`, baked at build time). Mutating browser calls go through session-gated proxies that hold bearer keys server-side: `/api/admin/*` (admin key) and `/api/playground` (MCP playground → real MCP server via `lib/mcp-proxy.ts`). See `docs/adr/0003-web-stack.md` for why api and web stay separate services.
 
-CI (`.github/workflows/ci.yml`) runs `go test ./...` (non-CGO stub lane), golangci-lint, govulncheck, and per-image docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
+CI (`.github/workflows/ci.yml`) runs `go test ./...` (the testcontainers store lane genuinely runs on GitHub-hosted runners — docker is preinstalled; only dockerless dev environments skip), golangci-lint, govulncheck, and per-image docker build validation on every push; `:edge` images publish from `main`, semver tags publish versioned images.
 
 ## Architecture
 

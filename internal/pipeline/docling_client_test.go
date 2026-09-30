@@ -2,9 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,6 +75,178 @@ func TestDoclingBreakerOpensAt5(t *testing.T) {
 		t.Fatalf("expected circuit open, got %v (calls=%d)", lastErr, calls)
 	}
 	_ = circuit
+	// after opening, further calls must be rejected without touching the
+	// server (R-38: the breaker actually gates).
+	before := calls
+	_, err := c.Convert(ctx, path, true)
+	if err == nil {
+		t.Fatal("call after open must be rejected")
+	}
+	if _, ok := err.(*ErrCircuitOpen); !ok {
+		t.Fatalf("expected ErrCircuitOpen after open, got %v", err)
+	}
+	if calls != before {
+		t.Fatalf("open breaker must not reach the server: %d -> %d", before, calls)
+	}
+}
+
+// TestDoclingBreakerCooldownRecovers (R-38): after opening, once the
+// cooldown elapses against a now-healthy server the next Convert succeeds
+// and the breaker is closed (success resets the counter).
+func TestDoclingBreakerCooldownRecovers(t *testing.T) {
+	fail := true
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		bad := fail
+		mu.Unlock()
+		if bad {
+			w.WriteHeader(503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"document":{"md_content":"# recovered"}}`)
+	}))
+	defer srv.Close()
+	c := NewDoclingClient(srv.URL)
+	c.maxRetries = 0
+	c.breakerCooldown = 10 * time.Millisecond
+	path := writeTmpPDF(t)
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		if _, err := c.Convert(ctx, path, true); err == nil {
+			t.Fatal("expected failure while unhealthy")
+		}
+	}
+	if _, err := c.Convert(ctx, path, true); err == nil {
+		t.Fatal("open breaker must reject inside the cooldown")
+	}
+	time.Sleep(30 * time.Millisecond) // let the cooldown elapse
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	md, err := c.Convert(ctx, path, true)
+	if err != nil {
+		t.Fatalf("probe against healthy server must succeed: %v", err)
+	}
+	if md == "" {
+		t.Fatal("empty markdown from recovery probe")
+	}
+	c.mu.Lock()
+	closed := c.consecutiveFailed == 0 && !c.probing
+	c.mu.Unlock()
+	if !closed {
+		t.Fatal("successful probe must close the breaker")
+	}
+}
+
+// TestDoclingBreakerProbeRetrips (R-38): cooldown elapses against a
+// still-failing server → the probe fails, the breaker re-opens with a fresh
+// cooldown, and an immediate next call is rejected without a server hit.
+func TestDoclingBreakerProbeRetrips(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+	c := NewDoclingClient(srv.URL)
+	c.maxRetries = 0
+	c.breakerCooldown = 10 * time.Millisecond
+	path := writeTmpPDF(t)
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		_, _ = c.Convert(ctx, path, true)
+	}
+	if _, err := c.Convert(ctx, path, true); err == nil {
+		t.Fatal("open breaker must reject inside the cooldown")
+	}
+	time.Sleep(30 * time.Millisecond) // cooldown elapses → probe runs
+	if _, err := c.Convert(ctx, path, true); err == nil {
+		t.Fatal("probe against failing server must fail")
+	}
+	before := calls
+	_, err := c.Convert(ctx, path, true)
+	if err == nil {
+		t.Fatal("re-opened breaker must reject immediately")
+	}
+	if _, ok := err.(*ErrCircuitOpen); !ok {
+		t.Fatalf("expected ErrCircuitOpen after probe re-trip, got %v", err)
+	}
+	if calls != before {
+		t.Fatalf("re-opened breaker must not reach the server: %d -> %d", before, calls)
+	}
+}
+
+// TestDoclingBreakerSingleProbe (R-38): with the cooldown elapsed and a slow
+// server, exactly one concurrent Convert reaches the server; the other gets
+// ErrCircuitOpen without a request.
+func TestDoclingBreakerSingleProbe(t *testing.T) {
+	requests := new(atomic.Int32)
+	held := new(atomic.Int32) // requests that reached the probe window
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// only the post-cooldown probe is held; the 5 warmup failures must
+		// answer 503 immediately or the warmup loop itself would block
+		if requests.Add(1) <= 5 {
+			w.WriteHeader(503)
+			return
+		}
+		held.Add(1)
+		<-release // hold the probe in flight
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"document":{"md_content":"# ok"}}`)
+	}))
+	defer srv.Close()
+	c := NewDoclingClient(srv.URL)
+	c.maxRetries = 0
+	c.breakerCooldown = 10 * time.Millisecond
+	path := writeTmpPDF(t)
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		_, _ = c.Convert(ctx, path, true)
+	}
+	time.Sleep(30 * time.Millisecond) // cooldown elapses
+	type result struct {
+		err error
+	}
+	results := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := c.Convert(ctx, path, true)
+			results <- result{err: err}
+		}()
+	}
+	// the probe is now blocked inside the server handler; the second call
+	// must already have been rejected. Collect the first result, then let
+	// the probe through so the goroutines can finish.
+	var circuitOpen, succeeded, failed int
+	for i := 0; i < 2; i++ {
+		r := <-results
+		switch {
+		case r.err == nil:
+			succeeded++
+		default:
+			var eo *ErrCircuitOpen
+			if errors.As(r.err, &eo) {
+				circuitOpen++
+			} else {
+				failed++
+			}
+		}
+		if i == 0 {
+			close(release)
+		}
+	}
+	if succeeded != 1 || circuitOpen != 1 || failed != 0 {
+		t.Fatalf("want exactly 1 success + 1 circuit-open, got %d/%d/%d (err mix)", succeeded, circuitOpen, failed)
+	}
+	if got := held.Load(); got != 1 {
+		t.Fatalf("exactly one probe request must reach the server, got %d", got)
+	}
+	if got := requests.Load(); got != 6 {
+		t.Fatalf("want 5 warmup failures + 1 probe, got %d requests", got)
+	}
 }
 
 func writeTmpPDF(t *testing.T) string {

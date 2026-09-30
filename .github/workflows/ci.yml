@@ -1,6 +1,6 @@
 # CI — lybrix 2.0 (Go rewrite). Go lanes + web build; the Python stack is
-# gone. The store lane is DB-free by design (testcontainers is a local /
-# staging lane — no docker on CI runners here mirrors 1.0's stance).
+# gone. The testcontainers store lane runs on GitHub-hosted runners (docker
+# preinstalled); it skips only in dockerless dev environments.
 name: CI
 
 on:

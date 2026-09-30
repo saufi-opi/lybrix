@@ -14,7 +14,7 @@ func rerankModelFixture(name, provider, modelID string) *RerankModel {
 }
 
 func TestRerankModelCRUD(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m, err := db.InsertRerankModel(ctx, rerankModelFixture("rr", "tei", "bge-reranker-v2-m3"), nil)
 	if err != nil {
@@ -50,8 +50,9 @@ func TestRerankModelCRUD(t *testing.T) {
 }
 
 func TestRerankModelInUseRefusesDelete(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
+	seedRerankFixture(t, db, "books") // bind target must exist (see mustDB note)
 	m, err := db.InsertRerankModel(ctx, rerankModelFixture("bound-rr", "tei", "bge"), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -72,8 +73,9 @@ func TestRerankModelInUseRefusesDelete(t *testing.T) {
 }
 
 func TestRerankSeedOnlyWhenEnabled(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
+	seedRerankFixture(t, db, "seedcol") // bind target must exist (see mustDB note)
 	// disabled → no row
 	if err := db.SeedDefaultRerankModel(ctx, RerankSeed{Enabled: false, ModelID: "bge-reranker-v2-m3", QueryURL: "http://q"}); err != nil {
 		t.Fatal(err)

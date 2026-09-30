@@ -155,14 +155,17 @@ func (d *DB) BindCollectionModel(ctx context.Context, collectionID, modelID stri
 	if m == nil {
 		return nil, ErrModelNotFound
 	}
+	// RETURNING must carry the binding id: Collection.EmbeddingModelID is
+	// the rebind response's binding field, and the API surfaces it — an
+	// omitted column scanned as nil read as "rebind didn't take" even
+	// though the row updated (the lane never ran before R-40).
 	row := d.Pool.QueryRow(ctx, `UPDATE collections SET
 		embedding_model_id = $2,
 		embedding_model = $3, vector_dim = $4
 		WHERE id = $1
-		RETURNING id, name, embedding_model, vector_dim, created_at`,
+		RETURNING `+collectionCols,
 		collectionID, m.ID, m.ModelID, m.VectorDim)
-	var c Collection
-	serr := row.Scan(&c.ID, &c.Name, &c.EmbeddingModel, &c.VectorDim, &c.CreatedAt)
+	c, serr := scanCollection(row)
 	if serr == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -172,7 +175,7 @@ func (d *DB) BindCollectionModel(ctx context.Context, collectionID, modelID stri
 	if err := d.EnsureDimIndex(ctx, m.VectorDim); err != nil {
 		return nil, err
 	}
-	return &c, nil
+	return c, nil
 }
 
 // CountCollectionRefs counts collections bound to a model.

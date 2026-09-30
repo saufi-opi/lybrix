@@ -105,33 +105,24 @@ CREATE INDEX IF NOT EXISTS ix_chunks_hnsw_1024 ON chunks
     USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
     WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
 
--- ParadeDB BM25 (pg_search) index. pg_search is assertion-based: wrap in a
--- DO block that checks whether the index's backing table already exists, so
--- re-running schema.sql is a no-op instead of erroring.
+-- ParadeDB BM25 (pg_search) index. Modern pg_search (>= 0.15, incl. prod's
+-- 0.25.x) is index-AM based: the index is created with plain CREATE INDEX …
+-- USING bm25 and tracked in pg_indexes — there is no paradedb.create_bm25
+-- procedure and no pd_search_index catalog table (both were removed years
+-- ago; targeting them made every boot on a current image die with 42P01
+-- inside this block). The pg_indexes probe keeps the re-run idempotent —
+-- CREATE INDEX IF NOT EXISTS would still queue the ACCESS EXCLUSIVE lock
+-- before its existence check (R-36's lock-queueing concern), so the probe
+-- short-circuits outside DDL instead.
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM paradedb.pd_search_index
-        WHERE index_name = 'chunks_bm25_idx'
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'chunks_bm25_idx'
     ) THEN
-        BEGIN
-            CALL paradedb.create_bm25(
-                index_name => 'chunks_bm25_idx',
-                schema_name => 'public',
-                table_name => 'chunks',
-                key_field => 'id',
-                text_fields => '{"text": {}, "header_breadcrumb": {}}'
-            );
-        EXCEPTION WHEN OTHERS THEN
-            IF SQLERRM NOT LIKE '%already%' THEN
-                -- pg_search versions differ on the catalog table name;
-                -- fall back to trying a direct call and swallowing only
-                -- "already exists" style errors.
-                IF SQLERRM NOT LIKE '%duplicate%' AND SQLERRM NOT LIKE '%exists%' THEN
-                    RAISE;
-                END IF;
-            END IF;
-        END;
+        CREATE INDEX chunks_bm25_idx ON chunks
+            USING bm25 (id, text, header_breadcrumb)
+            WITH (key_field = 'id');
     END IF;
 END $$;
 
@@ -253,6 +244,21 @@ ALTER TABLE collections ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFEREN
 -- are used because information_schema.columns lacks atttypid/atttypmod.
 DO $$
 BEGIN
+    -- Drop HNSW indexes on chunks BEFORE stripping the typmod: ALTER TYPE
+    -- rewrites dependent indexes, and an index whose opclass key is the
+    -- bare column cannot be rebuilt on a dimensionless `vector` (pgvector
+    -- 22023 "column does not have dimensions"). Cast-form indexes are
+    -- rebuilt from their own expressions and would survive, but the
+    -- legacy-era definitions (and any hand-made ones) key the bare column —
+    -- dropping all of them is the only safe order. Per-dimension indexes
+    -- come back via EnsureDimIndex / the schema's own CREATE INDEX below.
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
+        DROP INDEX ix_chunks_hnsw;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw_1024') THEN
+        DROP INDEX ix_chunks_hnsw_1024;
+    END IF;
+
     IF EXISTS (
         SELECT 1 FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
@@ -260,9 +266,15 @@ BEGIN
           AND format_type(a.atttypid, a.atttypmod) LIKE 'vector(%)'
     ) THEN
         ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
-        DROP INDEX ix_chunks_hnsw;
+        -- the drop above took the 1024 index with it on a legacy DB (its
+        -- CREATE IF NOT EXISTS earlier in this file short-circuited while
+        -- the typed column existed) — restore the cast-form definition so
+        -- the seed dim stays indexed after migration.
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                       WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
+            CREATE INDEX ix_chunks_hnsw_1024 ON chunks
+                USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+                WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
+        END IF;
     END IF;
 END $$;

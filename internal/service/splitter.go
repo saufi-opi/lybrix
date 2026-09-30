@@ -45,7 +45,10 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	if doc == nil {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("document %s vanished", docID))
+		// no doc row — nothing to mark terminal and events.doc_id carries an
+		// FK, so log only (R-39); nil ACKs and ends the loop.
+		slog.Warn("split for vanished doc row — acking no-op", "doc", docID)
+		return nil
 	}
 
 	// Idempotency: re-delivered split jobs (janitor requeue / PEL reclaim)
@@ -72,6 +75,12 @@ func HandleSplit(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	bucket := s.S3BucketRaw
 	key := objectstore.RawKey(docID)
 	if err := deps.S3.DownloadTo(ctx, bucket, key, localPath); err != nil {
+		if objectstore.IsNotFound(err) {
+			// the raw object is genuinely gone — terminal (R-39); a transient
+			// S3 blip stays retryable
+			return failDocTerminal(ctx, deps, docID, errors.CodePDFCorrupt,
+				fmt.Sprintf("raw source object vanished: %v", err))
+		}
 		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
 	}
 

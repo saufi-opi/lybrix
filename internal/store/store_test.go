@@ -2,28 +2,50 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	// pgx/v5/stdlib imported for its init(): registers the "pgx"
+	// database/sql driver used by wait.ForSQL below.
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func mustDB(t *testing.T, image string) *DB {
 	t.Helper()
+	if !dockerEndpointReachable(t) {
+		network, addr := dockerEndpoint()
+		t.Skipf("docker endpoint unreachable: %s://%s", network, addr)
+	}
 	ctx := context.Background()
+	// wait until Postgres actually answers SQL — port-listening is not
+	// enough (the socket opens while the database is still starting up).
+	// pgx/v5/stdlib's init registers the "pgx" database/sql driver.
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        image,
 			Env:          map[string]string{"POSTGRES_USER": "rag", "POSTGRES_PASSWORD": "rag", "POSTGRES_DB": "rag"},
 			ExposedPorts: []string{"5432/tcp"},
+			WaitingFor: wait.ForSQL("5432/tcp", "pgx", func(host string, port network.Port) string {
+				return fmt.Sprintf("postgres://rag:rag@%s:%s/rag?sslmode=disable", host, port.Port())
+			}),
 		},
 		Started: true,
 	})
 	if err != nil {
-		t.Skipf("testcontainers unavailable: %v", err)
+		// a reachable docker endpoint plus a boot error is a real failure
+		// (bad tag, pull failure, …) — never mask it as a skip (R-40).
+		t.Fatalf("testcontainers boot: %v", err)
 	}
 	t.Cleanup(func() { _ = ctr.Terminate(ctx) })
 	host, _ := ctr.Host(ctx)
@@ -38,8 +60,71 @@ func mustDB(t *testing.T, image string) *DB {
 	return db
 }
 
+// seedRerankFixture backs the rerank bind/resolve tests: the registry
+// mandates a bound embedding model at collection creation, so the tests
+// share one fixture model and the collection ids they bind against. The
+// lane never ran before R-40, so the missing fixture was invisible.
+func seedRerankFixture(t *testing.T, db *DB, collections ...string) *EmbeddingModel {
+	t.Helper()
+	ctx := context.Background()
+	m := &EmbeddingModel{
+		Name:     fmt.Sprintf("rerank-fixture-model-%d", time.Now().UnixNano()%1e12),
+		Provider: "tei", ModelID: "BAAI/bge-m3",
+		IngestURL: "http://127.0.0.1:8081", QueryURL: "http://127.0.0.1:8082",
+		VectorDim: 1024, QueryPrefix: "search_query: ",
+		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000,
+	}
+	inserted, err := db.InsertEmbeddingModel(ctx, m, nil)
+	if err != nil {
+		t.Fatalf("rerank fixture model seed: %v", err)
+	}
+	for _, id := range collections {
+		if _, err := db.InsertCollection(ctx, id, id, inserted); err != nil {
+			if _, gerr := db.GetCollection(ctx, id); gerr != nil {
+				t.Fatalf("rerank fixture collection %s: %v", id, err)
+			}
+		}
+	}
+	return inserted
+}
+
+// testDBImage is pinned (not floating) to prod's ParadeDB version: pg_search's
+// extension build participates in the BM25 leg these tests exercise.
+const testDBImage = "paradedb/paradedb:0.25.9-pg17"
+
+// dockerEndpointReachable probes the configured docker endpoint before
+// testcontainers boots anything: unreachable endpoint → skip (dockerless dev
+// environments); reachable endpoint is asserted by mustDB, which fatals on
+// any boot error instead of silently skipping.
+func dockerEndpointReachable(t *testing.T) bool {
+	t.Helper()
+	network, addr := dockerEndpoint()
+	conn, err := net.DialTimeout(network, addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// dockerEndpoint resolves the configured docker endpoint to a dialable
+// (network, address) pair from DOCKER_HOST (unix and tcp schemes), falling
+// back to the default socket path.
+func dockerEndpoint() (network, addr string) {
+	host := os.Getenv("DOCKER_HOST")
+	switch {
+	case strings.HasPrefix(host, "unix://"):
+		return "unix", strings.TrimPrefix(host, "unix://")
+	case strings.HasPrefix(host, "tcp://"):
+		return "tcp", strings.TrimPrefix(host, "tcp://")
+	case host != "":
+		return "tcp", host
+	}
+	return "unix", "/var/run/docker.sock"
+}
+
 func TestSchemaBootstrapIdempotent(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	// bootstrap runs once inside NewPool; a second application must be a
 	// no-op (IF NOT EXISTS everywhere + guarded bm25 call).
@@ -49,7 +134,7 @@ func TestSchemaBootstrapIdempotent(t *testing.T) {
 }
 
 func TestClaimShardAtomicity(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	if err := db.Tx(ctx, func(tx txType) error {
@@ -88,11 +173,14 @@ func TestClaimShardAtomicity(t *testing.T) {
 }
 
 func TestFindDuplicateAndBookSettled(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 
-	dup, err := db.FindDuplicate(ctx, "books", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	// FindDuplicate matches content_sha256 exactly — query with the seed's
+	// own hash (hashOf now sha256-encodes; the old constant was valid only
+	// under the length encoding).
+	dup, err := db.FindDuplicate(ctx, "books", hashOf(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +209,7 @@ func TestFindDuplicateAndBookSettled(t *testing.T) {
 }
 
 func TestChunkDedupeUniqueConstraint(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	chunk := ChildChunk{Seq: 0, ChunkHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Text: "body", TokenCount: 2}
@@ -148,7 +236,7 @@ func TestChunkDedupeUniqueConstraint(t *testing.T) {
 // same hash inside one call produce the same DeterministicChunkID — the
 // intra-batch filter must drop them, and no 25P02 may surface.
 func TestChunkIntraBatchDuplicate(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -160,8 +248,8 @@ func TestChunkIntraBatchDuplicate(t *testing.T) {
 			return err
 		}
 		return db.InsertParents(ctx, tx, doc, "books", []ParentChunk{
-			{Seq: 0, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
-			{Seq: 1, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
+			{Seq: 0, ChunkHash: hashOf("parent-x"), Text: "parent", TokenCount: 2},
+			{Seq: 1, ChunkHash: hashOf("parent-x"), Text: "parent", TokenCount: 2},
 		})
 	})
 	if err != nil {
@@ -171,9 +259,14 @@ func TestChunkIntraBatchDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 2 children + 2 parents → 4 rows total
-	if n != 4 {
-		t.Fatalf("expected 4 chunk rows (2 child + 2 parent), got %d", n)
+	// Each same-hash pair collapses to ONE row: the intra-batch filter drops
+	// the second row (identical DeterministicChunkID), and even without it
+	// uq_chunk_hash + the ON CONFLICT fallback would keep only the first —
+	// re-delivered and duplicate content must never double-store (R-24).
+	// The comment above ("the intra-batch filter must drop them") is the
+	// contract; 1 child + 1 parent = 2 rows.
+	if n != 2 {
+		t.Fatalf("expected 2 chunk rows (deduped child + deduped parent), got %d", n)
 	}
 }
 
@@ -182,7 +275,7 @@ func TestChunkIntraBatchDuplicate(t *testing.T) {
 // the savepoint rollback must leave the tx usable, and the fresh rows must
 // land via the row-by-row fallback.
 func TestChunkRedeliveryMidBatch(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	oldHash := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -214,7 +307,7 @@ func TestChunkRedeliveryMidBatch(t *testing.T) {
 // TestChunkFallbackTxStillUsable (BACKLOG R-24 §4.9): after a forced COPY
 // failure the tx must survive a further Exec in the same transaction.
 func TestChunkFallbackTxStillUsable(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	hash := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -244,7 +337,7 @@ func TestChunkFallbackTxStillUsable(t *testing.T) {
 // row, no 25P02. ON CONFLICT (doc_id, chunk_hash) ignores is_parent, so the
 // child cannot coexist with the parent.
 func TestChunkCrossSetCollision(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 	hash := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -279,7 +372,7 @@ func TestChunkCrossSetCollision(t *testing.T) {
 }
 
 func TestKeyAuthValidityRules(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	exp := time.Now().Add(-time.Hour) // expired
 	_, err := db.CreateKey(ctx, "expired", "hash-expired", []string{"search"}, nil, &exp)
@@ -317,8 +410,12 @@ func TestKeyAuthValidityRules(t *testing.T) {
 func seedDoc(t *testing.T, db *DB) string {
 	t.Helper()
 	ctx := context.Background()
+	// unique fixture name per call: several tests seed docs in a loop and
+	// embedding_models.name is UNIQUE — a constant collided on the second
+	// iteration (the lane never ran before R-40, so this was never caught).
 	m := &EmbeddingModel{
-		Name: "seed-test-model", Provider: "tei", ModelID: "BAAI/bge-m3",
+		Name:     fmt.Sprintf("seed-test-model-%d", time.Now().UnixNano()%1e12),
+		Provider: "tei", ModelID: "BAAI/bge-m3",
 		IngestURL: "http://127.0.0.1:8081", QueryURL: "http://127.0.0.1:8082",
 		VectorDim: 1024, QueryPrefix: "search_query: ",
 		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000,
@@ -351,7 +448,12 @@ func seedDoc(t *testing.T, db *DB) string {
 func strPtr(s string) *string { return &s }
 
 func hashOf(s string) string {
-	return fmt.Sprintf("%064x", len(s))[:64]
+	// sha256 over the input, not its length: uq_doc_content is
+	// (collection_id, content_sha256) and several seeds share string LENGTH
+	// (36-char ids), which collided when this was a length encoding. The
+	// lane never ran before R-40, so the collision was invisible.
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 type txType = txReal

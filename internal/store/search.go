@@ -63,7 +63,14 @@ func (d *DB) HybridSearch(ctx context.Context, queryVec []float32, dim int, coll
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
-	metaSQL := metaFilter
+	// paradedb.parse('') matches nothing AND drags the FULL OUTER JOIN result
+	// to zero even when the dense leg has hits — an empty query string must
+	// become parse('*') (match-all) so the bm25 leg stays well-formed and
+	// empty-query search falls back to dense-only (BACKLOG R-41).
+	if bm25Query == "" {
+		bm25Query = "*"
+	}
+	metaSQL := renumberFilterParams(metaFilter, 6)
 	if metaSQL == "" {
 		metaSQL = "TRUE"
 	}
@@ -95,7 +102,7 @@ SELECT
     COALESCE(d.id, b.id) AS chunk_id,
     COALESCE(d.parent_id, b.parent_id) AS parent_id,
     COALESCE(d.text, b.text) AS child_text,
-    p.text AS parent_text,
+    COALESCE(p.text, '') AS parent_text,
     COALESCE(d.heading_path, b.heading_path) AS heading_path,
     COALESCE(d.page_start, b.page_start) AS page_start,
     COALESCE(d.page_end, b.page_end) AS page_end,
@@ -290,14 +297,14 @@ func (d *DB) HybridDenseSearch(ctx context.Context, queryVec []float32, dim int,
 	if dim < 1 || dim > 2000 {
 		return nil, fmt.Errorf("query dim %d out of range 1..2000", dim)
 	}
-	metaSQL := metaFilter
+	metaSQL := renumberFilterParams(metaFilter, 5)
 	if metaSQL == "" {
 		metaSQL = "TRUE"
 	}
 	params := append([]any{pqTextArray(collections), pqTextArray(scope), pgvector.NewVector(queryVec), limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
-       p.text, c.text, doc.completeness
+       COALESCE(p.text, '') AS parent_text, c.text, doc.completeness
 FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
              ROW_NUMBER() OVER (ORDER BY embedding::vector(%[1]d) <=> $3) AS dense_rank
       FROM chunks
@@ -322,14 +329,14 @@ ORDER BY c.dense_rank`,
 // HybridBMSearch runs the sparse leg across all target collections: BM25
 // top-K over pg_search, filtered by collection set and key scope.
 func (d *DB) HybridBMSearch(ctx context.Context, collections, scope []string, bm25Query string, limit int, metaFilter string, metaArgs []any) ([]*SearchHit, error) {
-	metaSQL := metaFilter
+	metaSQL := renumberFilterParams(metaFilter, 5)
 	if metaSQL == "" {
 		metaSQL = "TRUE"
 	}
 	params := append([]any{bm25Query, pqTextArray(collections), pqTextArray(scope), limit, metaFilter}, metaArgs...)
 	rows, err := d.Pool.Query(ctx, fmt.Sprintf(`
 SELECT c.id, c.doc_id, doc.title, c.page_start, c.page_end, c.heading_path,
-       p.text, c.text, doc.completeness
+       COALESCE(p.text, '') AS parent_text, c.text, doc.completeness
 FROM (SELECT id, parent_id, doc_id, text, heading_path, page_start, page_end,
              ROW_NUMBER() OVER (ORDER BY paradedb.score(id) DESC) AS bm25_rank
       FROM chunks

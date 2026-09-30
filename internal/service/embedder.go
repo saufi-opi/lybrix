@@ -41,7 +41,17 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	if doc == nil {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("document %s vanished", docID))
+		// no doc row — nothing to mark terminal and events.doc_id carries an
+		// FK, so log only (R-39); nil ACKs and ends the loop.
+		slog.Warn("embed for vanished doc row — acking no-op", "doc", docID)
+		return nil
+	}
+	// terminal docs must not be re-processed: a re-delivered job for an
+	// already-failed/ready doc ACKs as a no-op instead of failing hourly
+	// (R-39).
+	if docTerminal(doc.State) {
+		slog.Warn("embed for terminal doc — acking no-op", "doc", docID, "state", doc.State)
+		return nil
 	}
 
 	shardRows, err := deps.DB.SettledShards(ctx, docID)
@@ -49,7 +59,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	if len(shardRows) == 0 {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, "no parsed shards to embed")
+		return failDocTerminal(ctx, deps, docID, errors.CodePDFCorrupt, "no parsed shards to embed")
 	}
 
 	// 1-based inclusive shard page ranges, aligned with the page_start-sorted
@@ -84,7 +94,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	res := chunker.SplitParentChild(stitched.Markdown, stitched.Pages, parentCfg, childCfg)
 	parents, children := res.Parents, res.Children
 	if len(children) == 0 && len(parents) == 0 {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
+		return failDocTerminal(ctx, deps, docID, errors.CodePDFCorrupt, "stitch/chunk produced no chunks on a settled book")
 	}
 
 	// Document-wide dedupe (BACKLOG R-24): keep the first occurrence of each
@@ -120,7 +130,7 @@ func HandleEmbed(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 	}
 	children = kept
 	if len(children) == 0 && len(parents) == 0 {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, "stitch/chunk produced no chunks")
+		return failDocTerminal(ctx, deps, docID, errors.CodePDFCorrupt, "stitch/chunk produced no chunks on a settled book")
 	}
 
 	// One monotone seq across both sets. The two dedupes above numbered parents
@@ -287,6 +297,41 @@ func assembleEmbeddingRows(chunkIDs []string, batches [][]string,
 		offset += len(batch)
 	}
 	return rows
+}
+
+// failDocTerminal drives a deterministically-terminal failure to
+// StateFailed (mirroring capped()'s terminal write) and returns nil so the
+// runner ACKs and the poison-job loop ends (BACKLOG R-39): the janitor's
+// embedSweep/requeueSweep skip failed docs on their own, so the hourly
+// re-enqueue dies with the doc's terminal state.
+func failDocTerminal(ctx context.Context, deps Deps, docID string, code errors.ErrorCode, detail string) error {
+	slog.Error("doc failed terminally — marking FAILED", "doc", docID, "code", code, "detail", detail)
+	err := deps.DB.TxWithRetry(ctx, 3, func(tx pgx.Tx) error {
+		if err := deps.DB.SetDocState(ctx, tx, docID, store.StateFailed,
+			strPtr(string(code)), strPtr(detail)); err != nil {
+			return err
+		}
+		return store.WriteEvent(ctx, tx, "error", "embed", detail, &docID, nil, strPtr(string(code)), nil, nil)
+	})
+	if err != nil {
+		// the terminal write itself failed — surface it so the PEL/janitor
+		// machinery still sees the job as failed rather than ACKing a
+		// half-written state
+		return fmt.Errorf("terminal doc write failed (doc %s): %w", docID, err)
+	}
+	return nil
+}
+
+// docTerminal reports whether the doc state ends the pipeline: no worker
+// may act on it (the UI retry affordance re-opens the doc; the API
+// re-embed/rechunk flows set state=embedding before enqueue, so they are
+// unaffected).
+func docTerminal(state store.DocState) bool {
+	switch state {
+	case store.StateFailed, store.StateReady, store.StatePartial, store.StateArchived:
+		return true
+	}
+	return false
 }
 
 // capped counts a failure; when the cap is reached mark the doc FAILED and
