@@ -60,6 +60,34 @@ func mustDB(t *testing.T, image string) *DB {
 	return db
 }
 
+// seedRerankFixture backs the rerank bind/resolve tests: the registry
+// mandates a bound embedding model at collection creation, so the tests
+// share one fixture model and the collection ids they bind against. The
+// lane never ran before R-40, so the missing fixture was invisible.
+func seedRerankFixture(t *testing.T, db *DB, collections ...string) *EmbeddingModel {
+	t.Helper()
+	ctx := context.Background()
+	m := &EmbeddingModel{
+		Name:     fmt.Sprintf("rerank-fixture-model-%d", time.Now().UnixNano()%1e12),
+		Provider: "tei", ModelID: "BAAI/bge-m3",
+		IngestURL: "http://127.0.0.1:8081", QueryURL: "http://127.0.0.1:8082",
+		VectorDim: 1024, QueryPrefix: "search_query: ",
+		BatchSize: 48, CtxBudget: 1900, TruncateChars: 6000,
+	}
+	inserted, err := db.InsertEmbeddingModel(ctx, m, nil)
+	if err != nil {
+		t.Fatalf("rerank fixture model seed: %v", err)
+	}
+	for _, id := range collections {
+		if _, err := db.InsertCollection(ctx, id, id, inserted); err != nil {
+			if _, gerr := db.GetCollection(ctx, id); gerr != nil {
+				t.Fatalf("rerank fixture collection %s: %v", id, err)
+			}
+		}
+	}
+	return inserted
+}
+
 // testDBImage is pinned (not floating) to prod's ParadeDB version: pg_search's
 // extension build participates in the BM25 leg these tests exercise.
 const testDBImage = "paradedb/paradedb:0.25.9-pg17"
