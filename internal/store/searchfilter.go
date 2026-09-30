@@ -80,7 +80,10 @@ func BuildMetadataFilter(f map[string]any) (string, []any, error) {
 			conds = append(conds, "df.metadata->>'"+key+"' = $"+n)
 		}
 	}
-	return " AND EXISTS (SELECT 1 FROM documents df WHERE df.id = chunks.doc_id AND " +
+	// No leading " AND ": every search template splices this fragment as
+	// "($n = '' OR <fragment>)" (R-14 push-down), so a leading AND produced
+	// "(… OR  AND EXISTS(…))" — SQLSTATE 42601 on every filtered search.
+	return "EXISTS (SELECT 1 FROM documents df WHERE df.id = chunks.doc_id AND " +
 		strings.Join(conds, " AND ") + ")", args, nil
 }
 
@@ -95,6 +98,34 @@ func filterNumber(v any) (float64, error) {
 		return strconv.ParseFloat(n, 64)
 	}
 	return 0, fmt.Errorf("not a number")
+}
+
+// filterParamRe matches the fragment's own placeholders. The fragment is
+// compiled with numbering from $1, but every search template already binds
+// its base params ($1..), so the store layer shifts the fragment's numbers
+// past them. Only placeholders match: values are bound parameters, the
+// regex guard is an inlined literal without '$', and keys are validated
+// identifiers — no other '$' can appear in the fragment.
+var filterParamRe = regexp.MustCompile(`\$(\d+)`)
+
+// renumberFilterParams shifts the compiled metadata filter's placeholders
+// past the search template's base params (HybridSearch binds $1..$6, the
+// dense/bm25 legs $1..$5). An empty fragment passes through unchanged.
+// Without the shift, the fragment's $1/$2 collide with the query vector and
+// collection params — Postgres resolves one type per placeholder, so the
+// filter's float8 args arrived typed as the base params' types and every
+// filtered search died with 42883 "numeric <= text".
+func renumberFilterParams(fragment string, base int) string {
+	if fragment == "" {
+		return ""
+	}
+	return filterParamRe.ReplaceAllStringFunc(fragment, func(m string) string {
+		n, err := strconv.Atoi(m[1:])
+		if err != nil {
+			return m
+		}
+		return "$" + strconv.Itoa(base+n)
+	})
 }
 
 // sortedKeys gives deterministic SQL (test assertions + stable plans).
