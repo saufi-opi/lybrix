@@ -181,11 +181,20 @@ type EmbeddingRow struct {
 
 // CopyEmbeddings batch-writes vectors: COPY into a temp table, then one
 // UPDATE ... FROM. Keeps the embed loop O(pages) requests, not O(chunks).
+//
+// The stage column is TEXT, not vector: the root pgvector-go module's Vector
+// implements only driver.Valuer (its Value() is the TEXT form "[…]"); in
+// binary COPY against an untyped vector column pgx encodes those string
+// bytes verbatim and Postgres parses them as vector binary — "[0." =
+// 0x5B30 = 23344 dims → SQLSTATE 54000 on row 1 (BACKLOG R-37). Staging as
+// text is the exact encoding that round-trips through parameterized
+// statements (UpdateEmbeddingTx), and the explicit ::vector cast in the
+// UPDATE restores typed values on the way out — one COPY per batch is kept.
 func (d *DB) CopyEmbeddings(ctx context.Context, tx pgx.Tx, rows []EmbeddingRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE embed_stage (chunk_id uuid, embedding vector) ON COMMIT DROP`); err != nil {
+	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE embed_stage (chunk_id uuid, embedding text) ON COMMIT DROP`); err != nil {
 		return err
 	}
 	src := make([][]any, 0, len(rows))
@@ -196,7 +205,7 @@ func (d *DB) CopyEmbeddings(ctx context.Context, tx pgx.Tx, rows []EmbeddingRow)
 		[]string{"chunk_id", "embedding"}, pgx.CopyFromRows(src)); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE chunks c SET embedding = e.embedding, embedded_at = NOW()
+	_, err := tx.Exec(ctx, `UPDATE chunks c SET embedding = e.embedding::vector, embedded_at = NOW()
 		FROM embed_stage e WHERE c.id = e.chunk_id`)
 	return err
 }
