@@ -246,27 +246,12 @@ DO $$
 DECLARE
     was_typed text;
 BEGIN
-    -- Drop HNSW indexes on chunks BEFORE stripping the typmod: ALTER TYPE
-    -- rewrites dependent indexes, and an index whose opclass key is the
-    -- bare column cannot be rebuilt on a dimensionless `vector` (pgvector
-    -- 22023 "column does not have dimensions"). Cast-form indexes are
-    -- rebuilt from their own expressions and would survive, but the
-    -- legacy-era definitions (and any hand-made ones) key the bare column —
-    -- dropping all of them is the only safe order. Per-dimension indexes
-    -- come back via EnsureDimIndex / the schema's own CREATE INDEX below.
-    -- R-46: the recreate must NOT be nested inside the still-typed branch —
-    -- on an already-migrated (untyped) column every boot dropped the index
-    -- and never rebuilt it, so the next boot's IF NOT EXISTS re-ran the
-    -- ~25-minute HNSW build forever. The earlier top-level CREATE INDEX IF
-    -- NOT EXISTS cannot fix this: this block runs after it and drops what
-    -- it built.
-    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
-        DROP INDEX ix_chunks_hnsw;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw_1024') THEN
-        DROP INDEX ix_chunks_hnsw_1024;
-    END IF;
-
+    -- Typmod-strip migration (R-46 v2): the DROPs only fire when the strip
+    -- will actually run. On an already-untyped column with a cast-form
+    -- index there is nothing to migrate — dropping the index every boot
+    -- caused an endless drop/rebuild cycle (~25-minute HNSW builds) and,
+    -- under concurrent booters, each run's DROP raced the previous run's
+    -- CREATE, so the rebuild never converged.
     SELECT format_type(a.atttypid, a.atttypmod)
       INTO was_typed
       FROM pg_attribute a
@@ -274,11 +259,16 @@ BEGIN
       WHERE c.relname = 'chunks' AND a.attname = 'embedding';
 
     IF was_typed LIKE 'vector(%)' THEN
+        IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
+            DROP INDEX ix_chunks_hnsw;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw_1024') THEN
+            DROP INDEX ix_chunks_hnsw_1024;
+        END IF;
         ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
     END IF;
 
-    -- Restore the cast-form definition unconditionally (R-46): after the
-    -- drops above it is always missing at this point in a given run.
+    -- Ensure the seed-dim cast-form index (always, but idempotently).
     IF NOT EXISTS (SELECT 1 FROM pg_indexes
                    WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
         CREATE INDEX ix_chunks_hnsw_1024 ON chunks
