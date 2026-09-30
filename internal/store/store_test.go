@@ -220,8 +220,8 @@ func TestChunkIntraBatchDuplicate(t *testing.T) {
 			return err
 		}
 		return db.InsertParents(ctx, tx, doc, "books", []ParentChunk{
-			{Seq: 0, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
-			{Seq: 1, ChunkHash: hash + "-p", Text: "parent", TokenCount: 2},
+			{Seq: 0, ChunkHash: hashOf("parent-x"), Text: "parent", TokenCount: 2},
+			{Seq: 1, ChunkHash: hashOf("parent-x"), Text: "parent", TokenCount: 2},
 		})
 	})
 	if err != nil {
@@ -231,9 +231,14 @@ func TestChunkIntraBatchDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 2 children + 2 parents → 4 rows total
-	if n != 4 {
-		t.Fatalf("expected 4 chunk rows (2 child + 2 parent), got %d", n)
+	// Each same-hash pair collapses to ONE row: the intra-batch filter drops
+	// the second row (identical DeterministicChunkID), and even without it
+	// uq_chunk_hash + the ON CONFLICT fallback would keep only the first —
+	// re-delivered and duplicate content must never double-store (R-24).
+	// The comment above ("the intra-batch filter must drop them") is the
+	// contract; 1 child + 1 parent = 2 rows.
+	if n != 2 {
+		t.Fatalf("expected 2 chunk rows (deduped child + deduped parent), got %d", n)
 	}
 }
 
