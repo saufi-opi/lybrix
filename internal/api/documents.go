@@ -252,8 +252,8 @@ func (s *Server) verifyRawObject(ctx context.Context, rawKey, clientSHA string) 
 			if n > 0 {
 				digest.Write(buf[:n])
 				nonPdf = append(nonPdf, buf[:n]...)
-				// bound memory: the 64 MiB ceiling mirrors ingestFromStream
-				if len(nonPdf) > nonPdfMaxBytes {
+				// bound memory: mirrors ingestFromStream's non-PDF ceiling
+				if len(nonPdf) > s.deps.Settings.MaxNonPdfBytes {
 					return 0, format, errTooLarge
 				}
 			}

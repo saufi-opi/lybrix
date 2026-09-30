@@ -75,6 +75,7 @@ type Settings struct {
 	// queues / backpressure (PRD §6.1)
 	MaxParseBacklog   int
 	MaxDocumentPages  int
+	MaxNonPdfBytes    int
 	WorkerPrefetch    int
 	WorkerConcurrency int
 
@@ -217,6 +218,7 @@ func DefaultSettings() *Settings {
 		MinYieldCharsPerPage: 50,
 		MaxParseBacklog:      2000,
 		MaxDocumentPages:     800,
+		MaxNonPdfBytes:       64 * 1024 * 1024,
 		WorkerPrefetch:       1,
 		WorkerConcurrency:    1,
 		JanitorInterval:      30 * time.Second,
@@ -291,6 +293,7 @@ func fromEnv(environ []string) (*Settings, error) {
 	s.MinYieldCharsPerPage = getint(env, "MIN_YIELD_CHARS_PER_PAGE", s.MinYieldCharsPerPage)
 	s.MaxParseBacklog = getint(env, "MAX_PARSE_BACKLOG", s.MaxParseBacklog)
 	s.MaxDocumentPages = getint(env, "MAX_DOCUMENT_PAGES", s.MaxDocumentPages)
+	s.MaxNonPdfBytes = getint(env, "MAX_NON_PDF_BYTES", s.MaxNonPdfBytes)
 	s.WorkerPrefetch = getint(env, "WORKER_PREFETCH", s.WorkerPrefetch)
 	s.WorkerConcurrency = getint(env, "WORKER_CONCURRENCY", s.WorkerConcurrency)
 	s.JanitorInterval = getduration(env, "JANITOR_INTERVAL", s.JanitorInterval)

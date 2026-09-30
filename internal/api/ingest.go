@@ -45,9 +45,10 @@ import (
 // ingest size policy (Workstream 2):
 //   - PDF: rough 40KB/page upper bound × MaxDocumentPages — the early stop
 //     fires DURING the download, before the write completes.
-//   - EPUB + office + text/HTML: hard ceiling 64 MiB, enforced by byte
-//     accounting mid-stream.
-const nonPdfMaxBytes = 64 * 1024 * 1024
+//   - EPUB + office + text/HTML: hard ceiling Settings.MaxNonPdfBytes
+//     (env MAX_NON_PDF_BYTES, default 64 MiB), enforced by byte accounting
+//     mid-stream. Was a 64 MiB compile-time constant; R-48 made it tunable
+//     after the largest library EPUB (79.8 MB) hit the ceiling.
 
 // ingestResult is the typed outcome of ingestFromStream.
 type ingestResult struct {
@@ -82,7 +83,7 @@ func (s *Server) ingestFromStream(ctx context.Context, r io.Reader, collectionID
 		// ~40KB/page upper bound; page-count probe after the download
 		maxBytes = s.deps.Settings.MaxDocumentPages * 40 * 1024
 	} else {
-		maxBytes = nonPdfMaxBytes
+		maxBytes = s.deps.Settings.MaxNonPdfBytes
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ingest-")
