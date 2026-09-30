@@ -11,7 +11,7 @@ import (
 // must filter correctly WITHOUT a Postgres cast error, and author/
 // custom-key equality must behave per the dialect table.
 func TestMetadataFilterMixedTypes(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m, err := db.InsertEmbeddingModel(ctx, modelFixture("mf", "tei", "d", 1024), nil)
 	if err != nil {
@@ -43,6 +43,19 @@ func TestMetadataFilterMixedTypes(t *testing.T) {
 			Metadata:      d.metadata,
 		}
 		if err := db.InsertDocument(ctx, doc); err != nil {
+			t.Fatal(err)
+		}
+		// one embedded child per doc — the search SQL joins hits to documents
+		// through chunk rows, so a chunkless doc can never come back as a hit
+		// (the lane never ran before R-40; the doc-only seeding could not).
+		if err := db.Tx(ctx, func(tx txType) error {
+			hash := hashOf(d.id + "chunk")
+			if err := db.InsertChunks(ctx, tx, d.id, "mfcol", []ChildChunk{{
+				Seq: 0, ChunkHash: hash, Text: "metadata test " + d.id, TokenCount: 3}}); err != nil {
+				return err
+			}
+			return db.UpdateEmbeddingTx(ctx, tx, DeterministicChunkID(d.id, hash), make([]float32, 1024))
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

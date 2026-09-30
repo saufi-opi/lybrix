@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // modelFixture returns a registry row with knobs overridden per test.
@@ -17,7 +20,7 @@ func modelFixture(name, provider, modelID string, dim int) *EmbeddingModel {
 }
 
 func TestSeedDefaultEmbeddingModelIdempotentWithIndex(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	seed := EmbeddingSeed{Provider: "tei", ModelID: "BAAI/bge-m3", Dim: 1024,
 		IngestURL: "http://i", QueryURL: "http://q"}
@@ -44,7 +47,7 @@ func TestSeedDefaultEmbeddingModelIdempotentWithIndex(t *testing.T) {
 }
 
 func TestSeedRespectsEMBEDDIM768(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	if err := db.SeedDefaultEmbeddingModel(ctx, EmbeddingSeed{Provider: "tei",
 		ModelID: "other/model", Dim: 768, IngestURL: "http://i", QueryURL: "http://q"}); err != nil {
@@ -58,7 +61,7 @@ func TestSeedRespectsEMBEDDIM768(t *testing.T) {
 func TestNoDefaultColumn(t *testing.T) {
 	// 2.0.2: is_default and its uniqueness index must be gone from the
 	// catalog after bootstrap (the migration DO block drops both).
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	var n int
 	if err := db.Pool.QueryRow(context.Background(), `SELECT count(*)
 		FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
@@ -74,7 +77,7 @@ func TestNoDefaultColumn(t *testing.T) {
 }
 
 func TestDeleteModel409s(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	free, err := db.InsertEmbeddingModel(ctx, modelFixture("free", "tei", "d", 1024), nil)
 	if err != nil {
@@ -92,7 +95,7 @@ func TestDeleteModel409s(t *testing.T) {
 	if err == nil {
 		t.Fatal("bound model delete must fail")
 	}
-	if err != ErrModelInUse {
+	if !errors.Is(err, ErrModelInUse) {
 		t.Fatalf("bound model delete must be ErrModelInUse, got %v", err)
 	}
 	// unbind then delete works — ANY unbound model is deletable now that
@@ -106,7 +109,7 @@ func TestDeleteModel409s(t *testing.T) {
 }
 
 func TestResolveCollectionModelBindingOnly(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	def, err := db.InsertEmbeddingModel(ctx, modelFixture("def", "tei", "d", 1024), nil)
 	if err != nil {
@@ -136,7 +139,7 @@ func TestResolveCollectionModelBindingOnly(t *testing.T) {
 }
 
 func TestGetModelsByCollectionIDs(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("m768", "tei", "seven", 768), nil)
 	if err != nil {
@@ -183,7 +186,7 @@ func TestGetModelsByCollectionIDs(t *testing.T) {
 }
 
 func TestBindCollectionModelSyncsLegacyColumns(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m, err := db.InsertEmbeddingModel(ctx, modelFixture("rebind-target", "tei", "rt", 768), nil)
 	if err != nil {
@@ -219,7 +222,7 @@ func TestBindCollectionModelSyncsLegacyColumns(t *testing.T) {
 }
 
 func TestApiKeyWriteOnly(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m, err := db.InsertEmbeddingModel(ctx, modelFixture("openai-row", "openai", "text-embedding-3-small", 1536), strPtr("sk-secret"))
 	if err != nil {
@@ -261,7 +264,7 @@ func indexExists(t *testing.T, db *DB, name string) bool {
 // Multi-dim coexistence: 768 + 1024 chunks in one table, dense search via
 // each dim's partial index returns only same-dim rows.
 func TestMultiDimRoundTrip(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("m768", "tei", "seven", 768), nil)
 	if err != nil {
@@ -329,7 +332,11 @@ func TestMultiDimRoundTrip(t *testing.T) {
 func seedDocWithDim(t *testing.T, db *DB, collection string) string {
 	t.Helper()
 	ctx := context.Background()
-	id := "22222222-1111-1111-1111-000000000001"
+	// documents.id is the sole PK column — two collections seeded from the
+	// same DB must get distinct doc ids (the pre-registry-era constant
+	// collided across the col768/col1024 pairs; the lane never ran before
+	// R-40 so it was never caught).
+	id := fmt.Sprintf("22222222-1111-1111-1111-%012d", time.Now().UnixNano()%1e12)
 	doc := &Document{
 		ID:            id,
 		CollectionID:  strPtr(collection),
@@ -347,7 +354,7 @@ func seedDocWithDim(t *testing.T, db *DB, collection string) string {
 // Typmod migration convergence: simulate a legacy typed column + bare
 // index, re-bootstrap, and assert both converge (criterion 15).
 func TestTypmodMigrationConvergence(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	// simulate the pre-registry state: typed column + bare index
 	if _, err := db.Pool.Exec(ctx, `ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(1024)`); err != nil {
@@ -386,7 +393,7 @@ func TestTypmodMigrationConvergence(t *testing.T) {
 // Dim-mismatch backstop: a query vector whose dim doesn't match any row's
 // embedding must return hits from BM25 only — never a Postgres error.
 func TestDimMismatchBackstop(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	big := make([]float32, 1536)
 	// empty corpus + matching filter shape: no rows, no error

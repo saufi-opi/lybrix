@@ -11,7 +11,7 @@ import (
 // db, both docs' ids, and the per-dim unit vectors used at embed time.
 func multiSearchDB(t *testing.T) (*DB, string, string, []float32, []float32) {
 	t.Helper()
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	m768, err := db.InsertEmbeddingModel(ctx, modelFixture("g768", "tei", "seven", 768), nil)
 	if err != nil {

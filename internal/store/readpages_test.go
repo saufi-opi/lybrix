@@ -34,7 +34,7 @@ func uniqHash(s string) string {
 // parents AND children — and a child's text is a slice of its parent's, so the
 // read_pages "markdown" field would be heavily duplicated. Parents only.
 func TestReadPageChunksReturnsParentsOnly(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 
@@ -67,7 +67,7 @@ func TestReadPageChunksReturnsParentsOnly(t *testing.T) {
 // the requested range but covers part of it must be included. The previous
 // page_start-only filter silently dropped those.
 func TestReadPageChunksOverlapAware(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 
@@ -102,7 +102,7 @@ func TestReadPageChunksOverlapAware(t *testing.T) {
 // TestChunkNeighboursStaysWithinKind pins that a neighbour window does not splice
 // a parent into a child's context now that seq is globally unique (R-28).
 func TestChunkNeighboursStaysWithinKind(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx := context.Background()
 	doc := seedDoc(t, db)
 

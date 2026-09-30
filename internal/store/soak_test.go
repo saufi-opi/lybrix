@@ -34,7 +34,7 @@ func soakTransientCount(t *testing.T) func(error) int {
 }
 
 func TestDeadlockSoak(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -250,7 +250,7 @@ func TestDeadlockSoak(t *testing.T) {
 //  4. writer: second UPDATE chunks in the same tx → the detector fires on
 //     whichever session PG picks
 func TestBootstrapAgainstWriters(t *testing.T) {
-	db := mustDB(t, "paradedb/paradedb:17")
+	db := mustDB(t, testDBImage)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
