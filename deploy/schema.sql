@@ -208,6 +208,27 @@ CREATE TABLE IF NOT EXISTS embedding_models (
 ALTER TABLE embedding_models DROP COLUMN IF EXISTS is_default;
 DROP INDEX IF EXISTS uq_embedding_models_single_default;
 
+-- Reranker registry (WeKnora-parity cross-encoder reranking). Separate
+-- table from embedding_models on purpose: rerankers score text pairs, so
+-- there is no vector_dim and no HNSW — only a query-plane endpoint (the
+-- two-plane rule means rerank never runs at ingest). `openai` is the
+-- /v1/rerank-compatible family (Cohere, SiliconFlow, Jina).
+CREATE TABLE IF NOT EXISTS rerank_models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL CHECK (provider IN ('tei','openai')),
+    model_id TEXT NOT NULL,
+    query_url TEXT NOT NULL,        -- query-plane only; rerank never runs at ingest
+    api_key TEXT,                   -- openai-compatible only; write-only
+    truncate_chars INT NOT NULL DEFAULT 6000 CHECK (truncate_chars >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Per-collection reranker binding (optional — search reranks only when a
+-- binding or an explicit request override exists).
+ALTER TABLE collections ADD COLUMN IF NOT EXISTS rerank_model_id UUID REFERENCES rerank_models(id);
+
 -- Collections binding. MANDATORY at creation from now on; the column stays
 -- nullable so pre-registry rows still exist, but a NULL binding resolves to
 -- no model (no dense leg for it, no ingest) until rebound.
@@ -222,6 +243,8 @@ ALTER TABLE collections ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFEREN
 -- non-1024 inserts on mixed-dim data). Catalog views pg_attribute/pg_class
 -- are used because information_schema.columns lacks atttypid/atttypmod.
 DO $$
+DECLARE
+    was_typed text;
 BEGIN
     -- Drop HNSW indexes on chunks BEFORE stripping the typmod: ALTER TYPE
     -- rewrites dependent indexes, and an index whose opclass key is the
@@ -231,6 +254,12 @@ BEGIN
     -- legacy-era definitions (and any hand-made ones) key the bare column —
     -- dropping all of them is the only safe order. Per-dimension indexes
     -- come back via EnsureDimIndex / the schema's own CREATE INDEX below.
+    -- R-46: the recreate must NOT be nested inside the still-typed branch —
+    -- on an already-migrated (untyped) column every boot dropped the index
+    -- and never rebuilt it, so the next boot's IF NOT EXISTS re-ran the
+    -- ~25-minute HNSW build forever. The earlier top-level CREATE INDEX IF
+    -- NOT EXISTS cannot fix this: this block runs after it and drops what
+    -- it built.
     IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
         DROP INDEX ix_chunks_hnsw;
     END IF;
@@ -238,22 +267,22 @@ BEGIN
         DROP INDEX ix_chunks_hnsw_1024;
     END IF;
 
-    IF EXISTS (
-        SELECT 1 FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        WHERE c.relname = 'chunks' AND a.attname = 'embedding'
-          AND format_type(a.atttypid, a.atttypmod) LIKE 'vector(%)'
-    ) THEN
+    SELECT format_type(a.atttypid, a.atttypmod)
+      INTO was_typed
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      WHERE c.relname = 'chunks' AND a.attname = 'embedding';
+
+    IF was_typed LIKE 'vector(%)' THEN
         ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
-        -- the drop above took the 1024 index with it on a legacy DB (its
-        -- CREATE IF NOT EXISTS earlier in this file short-circuited while
-        -- the typed column existed) — restore the cast-form definition so
-        -- the seed dim stays indexed after migration.
-        IF NOT EXISTS (SELECT 1 FROM pg_indexes
-                       WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
-            CREATE INDEX ix_chunks_hnsw_1024 ON chunks
-                USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
-                WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
-        END IF;
+    END IF;
+
+    -- Restore the cast-form definition unconditionally (R-46): after the
+    -- drops above it is always missing at this point in a given run.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
+        CREATE INDEX ix_chunks_hnsw_1024 ON chunks
+            USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+            WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
     END IF;
 END $$;

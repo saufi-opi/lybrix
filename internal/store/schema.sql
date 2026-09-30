@@ -243,6 +243,8 @@ ALTER TABLE collections ADD COLUMN IF NOT EXISTS embedding_model_id UUID REFEREN
 -- non-1024 inserts on mixed-dim data). Catalog views pg_attribute/pg_class
 -- are used because information_schema.columns lacks atttypid/atttypmod.
 DO $$
+DECLARE
+    was_typed text;
 BEGIN
     -- Drop HNSW indexes on chunks BEFORE stripping the typmod: ALTER TYPE
     -- rewrites dependent indexes, and an index whose opclass key is the
@@ -252,6 +254,12 @@ BEGIN
     -- legacy-era definitions (and any hand-made ones) key the bare column —
     -- dropping all of them is the only safe order. Per-dimension indexes
     -- come back via EnsureDimIndex / the schema's own CREATE INDEX below.
+    -- R-46: the recreate must NOT be nested inside the still-typed branch —
+    -- on an already-migrated (untyped) column every boot dropped the index
+    -- and never rebuilt it, so the next boot's IF NOT EXISTS re-ran the
+    -- ~25-minute HNSW build forever. The earlier top-level CREATE INDEX IF
+    -- NOT EXISTS cannot fix this: this block runs after it and drops what
+    -- it built.
     IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ix_chunks_hnsw') THEN
         DROP INDEX ix_chunks_hnsw;
     END IF;
@@ -259,22 +267,22 @@ BEGIN
         DROP INDEX ix_chunks_hnsw_1024;
     END IF;
 
-    IF EXISTS (
-        SELECT 1 FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        WHERE c.relname = 'chunks' AND a.attname = 'embedding'
-          AND format_type(a.atttypid, a.atttypmod) LIKE 'vector(%)'
-    ) THEN
+    SELECT format_type(a.atttypid, a.atttypmod)
+      INTO was_typed
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      WHERE c.relname = 'chunks' AND a.attname = 'embedding';
+
+    IF was_typed LIKE 'vector(%)' THEN
         ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
-        -- the drop above took the 1024 index with it on a legacy DB (its
-        -- CREATE IF NOT EXISTS earlier in this file short-circuited while
-        -- the typed column existed) — restore the cast-form definition so
-        -- the seed dim stays indexed after migration.
-        IF NOT EXISTS (SELECT 1 FROM pg_indexes
-                       WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
-            CREATE INDEX ix_chunks_hnsw_1024 ON chunks
-                USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
-                WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
-        END IF;
+    END IF;
+
+    -- Restore the cast-form definition unconditionally (R-46): after the
+    -- drops above it is always missing at this point in a given run.
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = 'public' AND indexname = 'ix_chunks_hnsw_1024') THEN
+        CREATE INDEX ix_chunks_hnsw_1024 ON chunks
+            USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+            WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
     END IF;
 END $$;
