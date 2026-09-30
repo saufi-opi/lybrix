@@ -27,6 +27,18 @@ import (
 // retries re-attempt the same single shard with docling backoff, and no
 // duplicate sub-shards are ever created. The explicit span-1 guard below
 // pins that contract against future threshold drift.
+// downloadTerminal wraps a raw-source download failure with the R-39
+// terminal-state rule: a genuinely-missing object (NotFound/NoSuchKey) is
+// unrecoverable → the doc is marked FAILED and the handler returns nil so
+// the runner ACKs; anything else stays the retryable PDF_CORRUPT error.
+func downloadTerminal(ctx context.Context, deps Deps, docID string, err error) error {
+	if objectstore.IsNotFound(err) {
+		return failDocTerminal(ctx, deps, docID, errors.CodePDFCorrupt,
+			fmt.Sprintf("raw source object vanished: %v", err))
+	}
+	return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
+}
+
 func LadderAction(shard *store.Shard, shardPages int) string {
 	span := shard.PageEnd - shard.PageStart + 1
 	if span < 2 {
@@ -201,7 +213,10 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 		return err
 	}
 	if doc == nil {
-		return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("document %s vanished", docID))
+		// no doc row — nothing to mark terminal and events.doc_id carries an
+		// FK, so log only (R-39); nil ACKs and ends the loop.
+		slog.Warn("parse for vanished doc row — acking no-op", "doc", docID)
+		return nil
 	}
 
 	workerID := fmt.Sprintf("parser-%s", shortID())
@@ -253,14 +268,14 @@ func HandleParse(ctx context.Context, deps Deps, tx pgx.Tx, job map[string]any) 
 			slog.Info("pdf cache HIT", "doc", docID)
 		} else {
 			if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), sourcePath); err != nil {
-				return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
+				return downloadTerminal(ctx, deps, docID, err)
 			}
 			pipeline.StorePDFCache(s.ParserPDFCacheDir, docID, sourcePath)
 			slog.Info("pdf cache MISS -> STORED", "doc", docID)
 		}
 	} else {
 		if err := deps.S3.DownloadTo(ctx, s.S3BucketRaw, objectstore.RawKey(docID), sourcePath); err != nil {
-			return errors.NewPlatformError(errors.CodePDFCorrupt, fmt.Sprintf("source missing: %v", err))
+			return downloadTerminal(ctx, deps, docID, err)
 		}
 	}
 
