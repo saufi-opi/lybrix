@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -24,9 +26,15 @@ type DoclingClient struct {
 	baseURL    string
 	http       *http.Client
 	maxRetries int
-	// breaker
+	// breaker (R-38): open → cooldown → half-open single probe. Only a
+	// successful conversion closes it; a probe failure re-trips with a
+	// fresh cooldown (the 09-27 stall shape — open forever while healthy).
 	breakerThreshold  int
+	breakerCooldown   time.Duration
 	consecutiveFailed int
+	openedAt          time.Time
+	probing           bool
+	mu                sync.Mutex
 }
 
 // NewDoclingClient builds a client against the docling-serve base URL.
@@ -36,6 +44,7 @@ func NewDoclingClient(baseURL string) *DoclingClient {
 		http:             &http.Client{Timeout: 120 * time.Second},
 		maxRetries:       5,
 		breakerThreshold: 5,
+		breakerCooldown:  30 * time.Second,
 	}
 }
 
@@ -67,7 +76,7 @@ func (c *DoclingClient) Convert(ctx context.Context, pdfPath string, doTableStru
 // must arrive as *.epub or docling-serve's format sniffing fights the
 // extension.
 func (c *DoclingClient) ConvertNamed(ctx context.Context, path, filename string, doTableStructure bool) (string, error) {
-	if c.consecutiveFailed >= c.breakerThreshold {
+	if !c.acquireOpen() {
 		return "", &ErrCircuitOpen{Failures: c.consecutiveFailed}
 	}
 	pdfBytes, err := os.ReadFile(path)
@@ -136,7 +145,7 @@ func (c *DoclingClient) ConvertNamed(ctx context.Context, path, filename string,
 				c.recordFailure()
 				lastErr = &DoclingUnavailable{Detail: "bad response body: " + err.Error()}
 			} else {
-				c.consecutiveFailed = 0
+				c.recordSuccess()
 				return payload.Document.MDContent, nil
 			}
 		}
@@ -156,11 +165,51 @@ func (c *DoclingClient) ConvertNamed(ctx context.Context, path, filename string,
 	return "", lastErr
 }
 
+// acquireOpen gates entry at the top of ConvertNamed (R-38). Returns true
+// when the caller may proceed; on true after an open breaker the caller is
+// THE half-open probe (probing stays set until it reports back). Closed
+// breaker → true. Open + inside cooldown, or a probe already in flight →
+// false.
+func (c *DoclingClient) acquireOpen() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.consecutiveFailed < c.breakerThreshold {
+		return true
+	}
+	if !c.probing && c.openedAt.Add(c.breakerCooldown).Before(time.Now()) {
+		// cooldown elapsed → admit exactly one probe (half-open)
+		c.probing = true
+		return true
+	}
+	return false
+}
+
+func (c *DoclingClient) recordSuccess() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.consecutiveFailed = 0
+	c.openedAt = time.Time{}
+	c.probing = false
+}
+
+// recordFailure advances the breaker (R-38). Crossing the threshold opens
+// the breaker; a failing half-open probe re-opens it with a fresh cooldown.
+// The warn fires once per open — either on the crossing failure or on the
+// probe failure — never per ordinary in-flight-ladder failure.
 func (c *DoclingClient) recordFailure() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	wasProbing := c.probing
+	c.probing = false
 	c.consecutiveFailed++
-	if c.consecutiveFailed >= c.breakerThreshold {
-		// the next call aborts immediately with ErrCircuitOpen
-		_ = c.consecutiveFailed
+	if c.consecutiveFailed < c.breakerThreshold {
+		return
+	}
+	freshOpen := c.consecutiveFailed == c.breakerThreshold || wasProbing || c.openedAt.IsZero()
+	c.openedAt = time.Now()
+	if freshOpen {
+		slog.Warn("docling circuit breaker open",
+			"failures", c.consecutiveFailed, "cooldown", c.breakerCooldown)
 	}
 }
 
