@@ -253,10 +253,18 @@ func (d *DB) RequeueFailedShards(ctx context.Context, tx pgx.Tx, docID string) (
 
 // SetChunkCountAndCompleteness finalizes the doc after embedding: ready or
 // partial depending on failed shards, plus chunk_count and completeness.
+//
+// completeness is clamped to [0,1] before rounding: a poisoned shards_failed
+// counter (R-53, 1.0-era double-bump left shards_failed >> total_shards on
+// some docs) would otherwise push the ratio arbitrarily negative and
+// overflow documents.completeness NUMERIC(5,4), aborting this whole write
+// tx with SQLSTATE 22003. total_shards = 0 is also treated as NULL —
+// defensive, avoids a division-by-zero on the same formula.
 func (d *DB) SetChunkCountAndCompleteness(ctx context.Context, tx pgx.Tx, docID string, chunkCount int) error {
 	if _, err := tx.Exec(ctx, `UPDATE documents SET chunk_count = $2,
-			completeness = CASE WHEN total_shards IS NULL THEN NULL
-				ELSE round((total_shards - shards_failed)::numeric / total_shards, 4) END
+			completeness = CASE WHEN total_shards IS NULL OR total_shards = 0 THEN NULL
+				ELSE round(LEAST(1, GREATEST(0,
+					(total_shards - shards_failed)::numeric / total_shards)), 4) END
 			WHERE id = $1`, docID, chunkCount); err != nil {
 		return err
 	}
