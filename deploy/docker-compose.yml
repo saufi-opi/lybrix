@@ -281,6 +281,13 @@ services:
     command: ["embedder"]
     environment:
       <<: *ingest-env
+      # R-53b: the embed write tx legitimately idles between statements on
+      # big docs (Go-side marshalling + TCP stalls while the other write
+      # session streams HNSW UPDATEs); 120s PG_IDLE_TX_TIMEOUT killed those
+      # sessions mid-write (SQLSTATE 25P03). The embedder gets its own wider
+      # ceiling; every other service keeps the shared 120s default so the
+      # runaway-tx safety net stays intact pool-wide.
+      PG_IDLE_TX_TIMEOUT: ${PG_IDLE_TX_TIMEOUT_EMBEDDER:-600s}
     mem_limit: 3g
     networks: [ingestnet]
 
