@@ -179,8 +179,22 @@ type EmbeddingRow struct {
 	Vector  []float32
 }
 
-// CopyEmbeddings batch-writes vectors: COPY into a temp table, then one
-// UPDATE ... FROM. Keeps the embed loop O(pages) requests, not O(chunks).
+// embedUpdateBatchSize bounds each UPDATE...FROM embed_stage statement so a
+// big doc's embed write never risks the statement_timeout (R-53): one
+// unbounded UPDATE over a doc's full chunk set drove HNSW-index-maintenance
+// cost past 60s on books over ~1700 chunks (chunks is a 12GB table with a
+// 7GB partial HNSW index, ix_chunks_hnsw_1024) — SQLSTATE 57014, confirmed
+// non-transient, which stuck the job in the Redis PEL until the janitor's
+// delivery-cap quarantine. 500 rows/batch keeps real margin under that
+// failure threshold while staying coarse enough that even a 6k-child doc is
+// only ~12 round trips.
+const embedUpdateBatchSize = 500
+
+// CopyEmbeddings batch-writes vectors: COPY into a temp table, then a bounded
+// UPDATE ... FROM per embedUpdateBatchSize rows. Keeps the embed loop
+// O(pages) COPY requests, not O(chunks), while keeping every single UPDATE
+// statement well under the configured statement_timeout regardless of doc
+// size.
 //
 // The stage column is TEXT, not vector: the root pgvector-go module's Vector
 // implements only driver.Valuer (its Value() is the TEXT form "[…]"); in
@@ -198,16 +212,26 @@ func (d *DB) CopyEmbeddings(ctx context.Context, tx pgx.Tx, rows []EmbeddingRow)
 		return err
 	}
 	src := make([][]any, 0, len(rows))
+	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		src = append(src, []any{r.ChunkID, pgvector.NewVector(r.Vector)})
+		ids = append(ids, r.ChunkID)
 	}
 	if _, err := tx.CopyFrom(ctx, pgx.Identifier{"embed_stage"},
 		[]string{"chunk_id", "embedding"}, pgx.CopyFromRows(src)); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE chunks c SET embedding = e.embedding::vector, embedded_at = NOW()
-		FROM embed_stage e WHERE c.id = e.chunk_id`)
-	return err
+	for i := 0; i < len(ids); i += embedUpdateBatchSize {
+		end := i + embedUpdateBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE chunks c SET embedding = e.embedding::vector, embedded_at = NOW()
+			FROM embed_stage e WHERE c.id = e.chunk_id AND c.id = ANY($1::uuid[])`, ids[i:end]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CountChunks counts every chunk row (pipeline endpoint).

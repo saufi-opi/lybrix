@@ -67,6 +67,8 @@ func main() {
 		runErr = runMigrate(settings)
 	case "rechunk":
 		runErr = runRechunk(settings, os.Args[2:])
+	case "repair-counters":
+		runErr = runRepairCounters(settings, os.Args[2:])
 	case "keys":
 		runErr = runKeys(settings, os.Args[2:])
 	default:
@@ -91,6 +93,9 @@ commands:
   keys         key management (keys bootstrap [name])
   migrate      apply schema.sql, exit
   rechunk      rebuild chunks from parsed S3 markdown, no re-parse
+                 flags: [--doc <id>] [--limit N] [--dry-run]
+  repair-counters  recount shards_done/shards_failed from shards (ground
+                 truth) for docs whose documents-table counters drifted
                  flags: [--doc <id>] [--limit N] [--dry-run]
 `)
 }
