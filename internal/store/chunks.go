@@ -221,15 +221,25 @@ func (d *DB) CopyEmbeddings(ctx context.Context, tx pgx.Tx, rows []EmbeddingRow)
 		[]string{"chunk_id", "embedding"}, pgx.CopyFromRows(src)); err != nil {
 		return err
 	}
+	// R-53b: pipeline the batches with pgx.Batch so the statements stream
+	// back-to-back on one connection. Executing them sequentially leaves the
+	// tx idle-in-transaction between statements while Go marshals each 500-id
+	// parameter array (~4s × 12+ batches on big docs); accumulated idle time
+	// crossed the 120s PG_IDLE_TX_TIMEOUT (SQLSTATE 25P03) and PG killed the
+	// session mid-write. Pipelining keeps the server busy for the whole tx —
+	// no idle gaps, same statement sizes, same semantics. Errors surface on
+	// Batch.Close, mapping to the first failed statement.
+	batch := &pgx.Batch{}
 	for i := 0; i < len(ids); i += embedUpdateBatchSize {
 		end := i + embedUpdateBatchSize
 		if end > len(ids) {
 			end = len(ids)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE chunks c SET embedding = e.embedding::vector, embedded_at = NOW()
-			FROM embed_stage e WHERE c.id = e.chunk_id AND c.id = ANY($1::uuid[])`, ids[i:end]); err != nil {
-			return err
-		}
+		batch.Queue(`UPDATE chunks c SET embedding = e.embedding::vector, embedded_at = NOW()
+			FROM embed_stage e WHERE c.id = e.chunk_id AND c.id = ANY($1::uuid[])`, ids[i:end])
+	}
+	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		return err
 	}
 	return nil
 }
