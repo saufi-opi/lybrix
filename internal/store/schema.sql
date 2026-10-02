@@ -105,6 +105,13 @@ CREATE INDEX IF NOT EXISTS ix_chunks_hnsw_1024 ON chunks
     USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
     WHERE is_parent = FALSE AND vector_dims(embedding) = 1024;
 
+-- Autovacuum tuning scoped to chunks only (R-53: rolled-back embed txs on
+-- big/poisoned docs left ~100k dead tuples; default 20% scale factor let
+-- them pile up before one 10+ min vacuum pass over the 7GB HNSW index
+-- slowed the DB and made the next embed attempt more likely to time out).
+-- Idempotent ALTER TABLE ... SET (...) — no global postgresql.conf change.
+ALTER TABLE chunks SET (autovacuum_vacuum_scale_factor = 0.02);
+
 -- ParadeDB BM25 (pg_search) index. Modern pg_search (>= 0.15, incl. prod's
 -- 0.25.x) is index-AM based: the index is created with plain CREATE INDEX …
 -- USING bm25 and tracked in pg_indexes — there is no paradedb.create_bm25
