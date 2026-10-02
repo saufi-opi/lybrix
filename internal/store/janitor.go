@@ -274,6 +274,73 @@ func (d *DB) SetChunkCountAndCompleteness(ctx context.Context, tx pgx.Tx, docID 
 	return err
 }
 
+// DriftedDocs finds docs whose documents.shards_done/shards_failed disagree
+// with a live recount from shards — ground truth for the repair-counters
+// CLI (R-53: 1.0-era double-bumped counters left some docs' shards_failed
+// far above total_shards). Auto-discovery over a hardcoded ID list: shards
+// is small and indexed by doc_id, and this same query is the post-repair
+// verification check.
+func (d *DB) DriftedDocs(ctx context.Context, limit int) ([]string, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT doc.id FROM documents doc
+		JOIN LATERAL (
+			SELECT count(*) FILTER (WHERE s.state = 'done') AS done,
+			       count(*) FILTER (WHERE s.state = 'failed') AS failed
+			FROM shards s WHERE s.doc_id = doc.id
+		) r ON TRUE
+		WHERE doc.shards_done <> r.done OR doc.shards_failed <> r.failed
+		ORDER BY doc.created_at
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// RepairDocCounters recounts one doc's shards_done/shards_failed from the
+// shards table (ground truth) and rewrites the documents counters.
+//
+// If the doc already has real chunk rows, it also recomputes
+// chunk_count/completeness/state through the now-clamped
+// SetChunkCountAndCompleteness — one formula, never duplicated — so stale
+// metadata on an already-chunked doc gets corrected too. If the doc has no
+// chunks yet (the common case: it never got past the poisoned write tx),
+// chunk_count/completeness/state are left untouched — flipping an
+// empty-chunked doc to 'ready'/'partial' here would be a lie; the normal
+// embed pipeline (janitor's SettledParsingDocs sweep → HandleEmbed) is what
+// inserts real chunks and finalizes those fields once it runs with the
+// corrected counters.
+func (d *DB) RepairDocCounters(ctx context.Context, tx pgx.Tx, docID string) (done, failed int, err error) {
+	if err := tx.QueryRow(ctx, `SELECT
+			count(*) FILTER (WHERE state = 'done'),
+			count(*) FILTER (WHERE state = 'failed')
+		FROM shards WHERE doc_id = $1`, docID).Scan(&done, &failed); err != nil {
+		return 0, 0, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE documents SET shards_done = $2,
+			shards_failed = $3, updated_at = NOW() WHERE id = $1`,
+		docID, done, failed); err != nil {
+		return done, failed, err
+	}
+	var chunkCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM chunks
+			WHERE doc_id = $1 AND is_parent = FALSE`, docID).Scan(&chunkCount); err != nil {
+		return done, failed, err
+	}
+	if chunkCount == 0 {
+		return done, failed, nil
+	}
+	return done, failed, d.SetChunkCountAndCompleteness(ctx, tx, docID, chunkCount)
+}
+
 // MetricsSnapshotRow aggregates the /pipeline counters in one round trip.
 type MetricsSnapshotRow struct {
 	DocsReady, DocsParsing, DocsFailed, DocsTotal          int64
